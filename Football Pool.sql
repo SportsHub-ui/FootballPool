@@ -1,4 +1,6 @@
-CREATE TABLE "users" (
+CREATE SCHEMA IF NOT EXISTS football_pool;
+
+CREATE TABLE "football_pool"."users" (
   "id" integer PRIMARY KEY,
   "first_name" varchar,
   "last_name" varchar,
@@ -7,7 +9,7 @@ CREATE TABLE "users" (
   "created_at" timestamp
 );
 
-CREATE TABLE "team" (
+CREATE TABLE "football_pool"."team" (
   "id" integer PRIMARY KEY,
   "team_name" varchar,
   "primary_color" varchar,
@@ -18,14 +20,14 @@ CREATE TABLE "team" (
   "created_at" timestamp
 );
 
-CREATE TABLE "player" (
+CREATE TABLE "football_pool"."player" (
   "id" integer PRIMARY KEY,
   "team_id" integer,
   "user_id" integer,
   "jersey_num" int
 );
 
-CREATE TABLE "pool" (
+CREATE TABLE "football_pool"."pool" (
   "id" integer PRIMARY KEY,
   "pool_name" varchar,
   "team_id" integer,
@@ -39,7 +41,7 @@ CREATE TABLE "pool" (
   "created_at" timestamp
 );
 
-CREATE TABLE "square" (
+CREATE TABLE "football_pool"."square" (
   "id" integer PRIMARY KEY,
   "pool_id" int,
   "square_num" int,
@@ -48,7 +50,7 @@ CREATE TABLE "square" (
   "paid_flg" boolean
 );
 
-CREATE TABLE "game" (
+CREATE TABLE "football_pool"."game" (
   "id" integer PRIMARY KEY,
   "is_simulation" boolean,
   "opponent" varchar,
@@ -64,7 +66,7 @@ CREATE TABLE "game" (
   "q4_opponent_score" int
 );
 
-CREATE TABLE "game_square_numbers" (
+CREATE TABLE "football_pool"."game_square_numbers" (
   "id" integer PRIMARY KEY,
   "game_id" integer,
   "square_id" integer,
@@ -72,7 +74,7 @@ CREATE TABLE "game_square_numbers" (
   "col_digit" integer
 );
 
-CREATE TABLE "winnings_ledger" (
+CREATE TABLE "football_pool"."winnings_ledger" (
   "id" integer PRIMARY KEY,
   "game_id" integer,
   "pool_id" integer,
@@ -82,30 +84,30 @@ CREATE TABLE "winnings_ledger" (
   "payout_status" varchar
 );
 
-ALTER TABLE "team" ADD FOREIGN KEY ("primary_contact_id") REFERENCES "users" ("id") DEFERRABLE INITIALLY IMMEDIATE;
+ALTER TABLE "football_pool"."team" ADD FOREIGN KEY ("primary_contact_id") REFERENCES "football_pool"."users" ("id") DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE "team" ADD FOREIGN KEY ("secondary_contact_id") REFERENCES "users" ("id") DEFERRABLE INITIALLY IMMEDIATE;
+ALTER TABLE "football_pool"."team" ADD FOREIGN KEY ("secondary_contact_id") REFERENCES "football_pool"."users" ("id") DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE "player" ADD FOREIGN KEY ("team_id") REFERENCES "team" ("id") DEFERRABLE INITIALLY IMMEDIATE;
+ALTER TABLE "football_pool"."player" ADD FOREIGN KEY ("team_id") REFERENCES "football_pool"."team" ("id") DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE "player" ADD FOREIGN KEY ("user_id") REFERENCES "users" ("id") DEFERRABLE INITIALLY IMMEDIATE;
+ALTER TABLE "football_pool"."player" ADD FOREIGN KEY ("user_id") REFERENCES "football_pool"."users" ("id") DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE "pool" ADD FOREIGN KEY ("team_id") REFERENCES "team" ("id") DEFERRABLE INITIALLY IMMEDIATE;
+ALTER TABLE "football_pool"."pool" ADD FOREIGN KEY ("team_id") REFERENCES "football_pool"."team" ("id") DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE "square" ADD FOREIGN KEY ("pool_id") REFERENCES "pool" ("id") DEFERRABLE INITIALLY IMMEDIATE;
+ALTER TABLE "football_pool"."square" ADD FOREIGN KEY ("pool_id") REFERENCES "football_pool"."pool" ("id") DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE "square" ADD FOREIGN KEY ("participant_id") REFERENCES "users" ("id") DEFERRABLE INITIALLY IMMEDIATE;
+ALTER TABLE "football_pool"."square" ADD FOREIGN KEY ("participant_id") REFERENCES "football_pool"."users" ("id") DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE "square" ADD FOREIGN KEY ("player_id") REFERENCES "player" ("id") DEFERRABLE INITIALLY IMMEDIATE;
+ALTER TABLE "football_pool"."square" ADD FOREIGN KEY ("player_id") REFERENCES "football_pool"."player" ("id") DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE "game" ADD FOREIGN KEY ("pool_id") REFERENCES "pool" ("id") DEFERRABLE INITIALLY IMMEDIATE;
+ALTER TABLE "football_pool"."game" ADD FOREIGN KEY ("pool_id") REFERENCES "football_pool"."pool" ("id") DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE "game_square_numbers" ADD FOREIGN KEY ("game_id") REFERENCES "game" ("id") DEFERRABLE INITIALLY IMMEDIATE;
+ALTER TABLE "football_pool"."game_square_numbers" ADD FOREIGN KEY ("game_id") REFERENCES "football_pool"."game" ("id") DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE "game_square_numbers" ADD FOREIGN KEY ("square_id") REFERENCES "square" ("id") DEFERRABLE INITIALLY IMMEDIATE;
+ALTER TABLE "football_pool"."game_square_numbers" ADD FOREIGN KEY ("square_id") REFERENCES "football_pool"."square" ("id") DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE "winnings_ledger" ADD FOREIGN KEY ("game_id") REFERENCES "game" ("id") DEFERRABLE INITIALLY IMMEDIATE;
+ALTER TABLE "football_pool"."winnings_ledger" ADD FOREIGN KEY ("game_id") REFERENCES "football_pool"."game" ("id") DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE "winnings_ledger" ADD FOREIGN KEY ("pool_id") REFERENCES "pool" ("id") DEFERRABLE INITIALLY IMMEDIATE;
+ALTER TABLE "football_pool"."winnings_ledger" ADD FOREIGN KEY ("pool_id") REFERENCES "football_pool"."pool" ("id") DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE "winnings_ledger" ADD FOREIGN KEY ("winner_user_id") REFERENCES "users" ("id") DEFERRABLE INITIALLY IMMEDIATE;
+ALTER TABLE "football_pool"."winnings_ledger" ADD FOREIGN KEY ("winner_user_id") REFERENCES "football_pool"."users" ("id") DEFERRABLE INITIALLY IMMEDIATE;
