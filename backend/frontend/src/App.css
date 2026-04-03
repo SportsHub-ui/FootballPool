@@ -615,9 +615,10 @@ button:disabled {
 }
 
 .pool-board {
-  --board-grid-offset: 116px;
-  --board-brand-width: 220px;
-  --board-brand-height: 130px;
+  --board-header-height: 42px;
+  --board-grid-offset: var(--board-header-height);
+  --board-brand-width: 145px;
+  --board-brand-height: 125px;
   border: 3px solid var(--team-secondary, #111);
   border-radius: 10px;
   overflow: hidden;
@@ -632,7 +633,12 @@ button:disabled {
   font-weight: 800;
   text-transform: uppercase;
   text-align: center;
-  padding: 0.7rem;
+  min-height: var(--board-header-height);
+  padding: 0 0.7rem;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   letter-spacing: 0.02em;
 }
 
@@ -644,8 +650,6 @@ button:disabled {
 
 .pool-board-brand {
   background: #0b0b0b;
-  border-right: 2px solid #2a2a2a;
-  border-bottom: 1px solid #888;
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -662,7 +666,7 @@ button:disabled {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  object-position: top left;
+  object-position: center;
   border-radius: 0;
   background: transparent;
 }
@@ -928,8 +932,6 @@ button:disabled {
   .pool-board-brand {
     width: var(--board-brand-width);
     height: var(--board-brand-height);
-    border-right: 2px solid #2a2a2a;
-    border-bottom: 1px solid #888;
     justify-content: center;
   }
 
