@@ -688,8 +688,9 @@ button:disabled {
   background: var(--team-primary, #fbbc04);
   font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.02em;
-  font-size: 1.06rem;
+  letter-spacing: 0;
+  font-size: 1.28rem;
+  line-height: 1;
 }
 
 .board-axis-top {
@@ -700,6 +701,9 @@ button:disabled {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
+  margin-left: calc(-1 * var(--board-grid-offset));
+  width: calc(100% + var(--board-grid-offset));
+  box-sizing: border-box;
 }
 
 .board-top-digits {
