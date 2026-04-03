@@ -266,6 +266,8 @@ function App() {
     q3Payout: 0,
     q4Payout: 0
   })
+  const [gameForm, setGameForm] = useState({ poolId: '', opponent: '', gameDate: '' })
+  const createGameFirstFieldRef = useRef<HTMLSelectElement>(null)
   const [created, setCreated] = useState<{ userId?: number; teamId?: number; poolId?: number }>({})
   const [squaresPoolId, setSquaresPoolId] = useState('')
   const [selectedSquare, setSelectedSquare] = useState<number | null>(null)
@@ -705,6 +707,41 @@ function App() {
       setIngestionHistory(result.runs)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load ingestion history')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const onCreateGame = async (event: FormEvent): Promise<void> => {
+    event.preventDefault()
+    if (!gameForm.poolId) {
+      setError('Select a pool')
+      return
+    }
+    if (!gameForm.opponent.trim()) {
+      setError('Enter an opponent name')
+      return
+    }
+    if (!gameForm.gameDate) {
+      setError('Enter a game date')
+      return
+    }
+    setBusy('create-game')
+    setError(null)
+    try {
+      await request<{ game: { id: number } }>('/api/games', {
+        method: 'POST',
+        headers: organizerHeaders,
+        body: JSON.stringify({
+          poolId: Number(gameForm.poolId),
+          opponent: gameForm.opponent.trim(),
+          gameDate: gameForm.gameDate
+        })
+      })
+      setGameForm({ poolId: '', opponent: '', gameDate: '' })
+      createGameFirstFieldRef.current?.focus()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create game')
     } finally {
       setBusy(null)
     }
@@ -1271,6 +1308,14 @@ function App() {
     return `${jersey} ${fullName || 'Unnamed player'}`
   }
 
+  const usdCurrency = new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0
+  })
+
+  const formatUsd = (value: number | null | undefined): string => usdCurrency.format(Number(value ?? 0))
+
   const primaryBrand = useMemo(() => {
     if (!organizerBoard) return null
     return resolveTeamBrand(
@@ -1484,17 +1529,49 @@ function App() {
         <article className="panel form-panel">
           <h2>Create Pool</h2>
           <form onSubmit={onCreatePool}>
-            <input ref={createPoolFirstFieldRef} value={poolForm.poolName} onChange={(e) => setPoolForm({ ...poolForm, poolName: e.target.value })} placeholder="Pool name" />
-            <select value={poolForm.teamId} onChange={(e) => setPoolForm({ ...poolForm, teamId: e.target.value })}>
-              <option value="">Team</option>
-              {existingTeams.map((team) => (
-                <option key={team.id} value={team.id}>
-                  {team.team_name ?? 'Unnamed team'}
-                </option>
-              ))}
-            </select>
-            <input type="number" value={poolForm.season} onChange={(e) => setPoolForm({ ...poolForm, season: Number(e.target.value) })} placeholder="Season" />
-            <input value={poolForm.primaryTeam} onChange={(e) => setPoolForm({ ...poolForm, primaryTeam: e.target.value })} placeholder="Primary team" />
+            <label className="field-block">
+              <span>Pool Name</span>
+              <input ref={createPoolFirstFieldRef} value={poolForm.poolName} onChange={(e) => setPoolForm({ ...poolForm, poolName: e.target.value })} placeholder="Pool name" />
+            </label>
+            <label className="field-block">
+              <span>Team</span>
+              <select value={poolForm.teamId} onChange={(e) => setPoolForm({ ...poolForm, teamId: e.target.value })}>
+                <option value="">Team</option>
+                {existingTeams.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {team.team_name ?? 'Unnamed team'}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field-block">
+              <span>Season</span>
+              <input type="number" value={poolForm.season} onChange={(e) => setPoolForm({ ...poolForm, season: Number(e.target.value) })} placeholder="Season" />
+            </label>
+            <label className="field-block">
+              <span>Primary Team</span>
+              <input value={poolForm.primaryTeam} onChange={(e) => setPoolForm({ ...poolForm, primaryTeam: e.target.value })} placeholder="Primary team" />
+            </label>
+            <label className="field-block">
+              <span>Square Cost (USD $)</span>
+              <input type="number" value={poolForm.squareCost} onChange={(e) => setPoolForm({ ...poolForm, squareCost: Number(e.target.value) })} placeholder="$ Square cost" />
+            </label>
+            <label className="field-block">
+              <span>Q1 Payout (USD $)</span>
+              <input type="number" value={poolForm.q1Payout} onChange={(e) => setPoolForm({ ...poolForm, q1Payout: Number(e.target.value) })} placeholder="$ Q1 payout" />
+            </label>
+            <label className="field-block">
+              <span>Q2 Payout (USD $)</span>
+              <input type="number" value={poolForm.q2Payout} onChange={(e) => setPoolForm({ ...poolForm, q2Payout: Number(e.target.value) })} placeholder="$ Q2 payout" />
+            </label>
+            <label className="field-block">
+              <span>Q3 Payout (USD $)</span>
+              <input type="number" value={poolForm.q3Payout} onChange={(e) => setPoolForm({ ...poolForm, q3Payout: Number(e.target.value) })} placeholder="$ Q3 payout" />
+            </label>
+            <label className="field-block">
+              <span>Q4 Payout (USD $)</span>
+              <input type="number" value={poolForm.q4Payout} onChange={(e) => setPoolForm({ ...poolForm, q4Payout: Number(e.target.value) })} placeholder="$ Q4 payout" />
+            </label>
             <button className="secondary" type="submit" disabled={busy !== null}>{busy === 'pool' ? 'Saving...' : 'Create pool'}</button>
           </form>
           <div className="inline-actions">
@@ -1721,11 +1798,11 @@ function App() {
             </select>
             <input type="number" value={editPoolForm.season} onChange={(e) => setEditPoolForm({ ...editPoolForm, season: Number(e.target.value) })} placeholder="Season" />
             <input value={editPoolForm.primaryTeam} onChange={(e) => setEditPoolForm({ ...editPoolForm, primaryTeam: e.target.value })} placeholder="Primary team" />
-            <input type="number" value={editPoolForm.squareCost} onChange={(e) => setEditPoolForm({ ...editPoolForm, squareCost: Number(e.target.value) })} placeholder="Square cost" />
-            <input type="number" value={editPoolForm.q1Payout} onChange={(e) => setEditPoolForm({ ...editPoolForm, q1Payout: Number(e.target.value) })} placeholder="Q1 payout" />
-            <input type="number" value={editPoolForm.q2Payout} onChange={(e) => setEditPoolForm({ ...editPoolForm, q2Payout: Number(e.target.value) })} placeholder="Q2 payout" />
-            <input type="number" value={editPoolForm.q3Payout} onChange={(e) => setEditPoolForm({ ...editPoolForm, q3Payout: Number(e.target.value) })} placeholder="Q3 payout" />
-            <input type="number" value={editPoolForm.q4Payout} onChange={(e) => setEditPoolForm({ ...editPoolForm, q4Payout: Number(e.target.value) })} placeholder="Q4 payout" />
+            <input type="number" value={editPoolForm.squareCost} onChange={(e) => setEditPoolForm({ ...editPoolForm, squareCost: Number(e.target.value) })} placeholder="$ Square cost" />
+            <input type="number" value={editPoolForm.q1Payout} onChange={(e) => setEditPoolForm({ ...editPoolForm, q1Payout: Number(e.target.value) })} placeholder="$ Q1 payout" />
+            <input type="number" value={editPoolForm.q2Payout} onChange={(e) => setEditPoolForm({ ...editPoolForm, q2Payout: Number(e.target.value) })} placeholder="$ Q2 payout" />
+            <input type="number" value={editPoolForm.q3Payout} onChange={(e) => setEditPoolForm({ ...editPoolForm, q3Payout: Number(e.target.value) })} placeholder="$ Q3 payout" />
+            <input type="number" value={editPoolForm.q4Payout} onChange={(e) => setEditPoolForm({ ...editPoolForm, q4Payout: Number(e.target.value) })} placeholder="$ Q4 payout" />
             <button className="secondary" type="submit" disabled={busy !== null || !editingPoolId}>
               {busy === 'update-pool' ? 'Saving...' : 'Save pool changes'}
             </button>
@@ -1898,7 +1975,7 @@ function App() {
               ['--team-secondary' as string]: organizerBoard.teamSecondaryColor
             }}
           >
-            <div className="pool-board-header">{organizerBoard.poolName}</div>
+            <div className="pool-board-header">{organizerBoard.teamName ? `${organizerBoard.teamName} - ${organizerBoard.poolName}` : organizerBoard.poolName}</div>
             <div className="pool-board-main">
               <div className="pool-board-brand">
                 {organizerBoard.teamLogo ? (
@@ -1955,7 +2032,7 @@ function App() {
                               ) : (
                                 <span className="square-open-number">{sq.square_num}</span>
                               )}
-                              {sq.wins_count > 0 ? <span className="square-win">${sq.won_total}</span> : null}
+                              {sq.wins_count > 0 ? <span className="square-win">{formatUsd(sq.won_total)}</span> : null}
                             </button>
                           )
                         })}
@@ -2096,6 +2173,22 @@ function App() {
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section className="panel">
+        <h2>Create Game</h2>
+        <p className="small">Add a game to a pool before running score ingestion.</p>
+        <form onSubmit={onCreateGame}>
+          <select ref={createGameFirstFieldRef} value={gameForm.poolId} onChange={(e) => setGameForm({ ...gameForm, poolId: e.target.value })}>
+            <option value="">Select pool</option>
+            {existingPools.map((pool) => (
+              <option key={pool.id} value={pool.id}>{pool.pool_name ?? 'Unnamed pool'}</option>
+            ))}
+          </select>
+          <input value={gameForm.opponent} onChange={(e) => setGameForm({ ...gameForm, opponent: e.target.value })} placeholder="Opponent name" />
+          <input type="date" value={gameForm.gameDate} onChange={(e) => setGameForm({ ...gameForm, gameDate: e.target.value })} />
+          <button className="primary" type="submit" disabled={busy !== null}>Create game</button>
+        </form>
       </section>
 
       <section className="panel">
