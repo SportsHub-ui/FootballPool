@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
 
@@ -30,6 +30,11 @@ type UserOption = {
   last_name: string | null
   email: string | null
   phone: string | null
+  player_teams?: Array<{
+    team_id: number
+    team_name: string | null
+    jersey_num: number
+  }>
 }
 
 type TeamOption = {
@@ -193,16 +198,22 @@ function App() {
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  const createUserFirstFieldRef = useRef<HTMLInputElement>(null)
+  const createTeamFirstFieldRef = useRef<HTMLInputElement>(null)
+  const createPoolFirstFieldRef = useRef<HTMLInputElement>(null)
+
   const [userForm, setUserForm] = useState({
-    firstName: 'Setup',
-    lastName: 'Admin',
-    email: `setup-${Date.now()}@example.com`,
-    phone: '5551234567'
+    firstName: '',
+    lastName: '',
+    email: '',
+    phone: ''
   })
+  const [createUserIsPlayer, setCreateUserIsPlayer] = useState(false)
+  const [createUserPlayerTeams, setCreateUserPlayerTeams] = useState<Array<{ teamId: string; jerseyNum: string }>>([])
   const [teamForm, setTeamForm] = useState({
-    teamName: 'Packer Juniors',
-    primaryColor: 'Green',
-    secondaryColor: 'Gold',
+    teamName: '',
+    primaryColor: '',
+    secondaryColor: '',
     logoFile: '',
     primaryContactId: ''
   })
@@ -223,6 +234,8 @@ function App() {
     email: '',
     phone: ''
   })
+  const [editUserIsPlayer, setEditUserIsPlayer] = useState(false)
+  const [editUserPlayerTeams, setEditUserPlayerTeams] = useState<Array<{ teamId: string; jerseyNum: string }>>([])
   const [editTeamForm, setEditTeamForm] = useState({
     teamName: '',
     primaryColor: '',
@@ -243,15 +256,15 @@ function App() {
   })
   const [editSelectedTeamImage, setEditSelectedTeamImage] = useState('')
   const [poolForm, setPoolForm] = useState({
-    poolName: '2026 Fundraiser',
+    poolName: '',
     teamId: '',
-    season: 2026,
-    primaryTeam: 'Packers',
-    squareCost: 20,
-    q1Payout: 200,
-    q2Payout: 200,
-    q3Payout: 200,
-    q4Payout: 400
+    season: new Date().getFullYear(),
+    primaryTeam: '',
+    squareCost: 0,
+    q1Payout: 0,
+    q2Payout: 0,
+    q3Payout: 0,
+    q4Payout: 0
   })
   const [created, setCreated] = useState<{ userId?: number; teamId?: number; poolId?: number }>({})
   const [squaresPoolId, setSquaresPoolId] = useState('')
@@ -264,6 +277,13 @@ function App() {
   })
   const [participantOptions, setParticipantOptions] = useState<UserOption[]>([])
   const [playerOptions, setPlayerOptions] = useState<PlayerOption[]>([])
+  const [playerTeamId, setPlayerTeamId] = useState('')
+  const [teamPlayers, setTeamPlayers] = useState<PlayerOption[]>([])
+  const [editingPlayerId, setEditingPlayerId] = useState('')
+  const [playerForm, setPlayerForm] = useState({
+    userId: '',
+    jerseyNum: ''
+  })
   const [ingestSource, setIngestSource] = useState<'mock' | 'payload' | 'espn'>('mock')
   const [ingestGameId, setIngestGameId] = useState('')
   const [ingestSummary, setIngestSummary] = useState<IngestionSummary | null>(null)
@@ -287,7 +307,16 @@ function App() {
     const data = await response.json()
 
     if (!response.ok) {
-      const reason = data.detail || data.message || `Request failed with status ${response.status}`
+      const validationIssues = Array.isArray(data?.error)
+        ? data.error
+            .map((issue: { path?: Array<string | number>; message?: string }) => {
+              const field = Array.isArray(issue.path) && issue.path.length > 0 ? `${issue.path.join('.')}: ` : ''
+              return `${field}${issue.message ?? 'Invalid value'}`
+            })
+            .join('; ')
+        : ''
+
+      const reason = validationIssues || data.error || data.detail || data.message || `Request failed with status ${response.status}`
       throw new Error(reason)
     }
 
@@ -321,14 +350,56 @@ function App() {
     setError(null)
 
     try {
+      const playerTeamsPayload = createUserIsPlayer
+        ? createUserPlayerTeams
+            .filter((assignment) => assignment.teamId && assignment.jerseyNum !== '')
+            .map((assignment) => ({
+              teamId: Number(assignment.teamId),
+              jerseyNum: Number(assignment.jerseyNum)
+            }))
+        : []
+
+      if (createUserIsPlayer) {
+        const uniqueTeamIds = new Set(playerTeamsPayload.map((assignment) => assignment.teamId))
+        if (uniqueTeamIds.size !== playerTeamsPayload.length) {
+          setError('A player cannot be assigned to the same team more than once.')
+          setBusy(null)
+          return
+        }
+      }
+
+      const emailNorm = userForm.email.trim().toLowerCase()
+      const isDuplicate = existingUsers.some(
+        (u) =>
+          (u.first_name ?? '').trim().toLowerCase() === userForm.firstName.trim().toLowerCase() &&
+          (u.last_name ?? '').trim().toLowerCase() === userForm.lastName.trim().toLowerCase() &&
+          (u.email ?? '').trim().toLowerCase() === emailNorm
+      )
+      if (isDuplicate) {
+        setError('A user with the same first name, last name, and email already exists.')
+        setBusy(null)
+        return
+      }
+
       const result = await request<{ id: number }>('/api/setup/users', {
         method: 'POST',
         headers: organizerHeaders,
-        body: JSON.stringify(userForm)
+        body: JSON.stringify({
+          ...userForm,
+          email: userForm.email.trim() || undefined,
+          phone: userForm.phone.trim() || undefined,
+          isPlayer: createUserIsPlayer,
+          playerTeams: playerTeamsPayload
+        })
       })
 
       setCreated((current) => ({ ...current, userId: result.id }))
       setTeamForm((current) => ({ ...current, primaryContactId: String(result.id) }))
+      setUserForm({ firstName: '', lastName: '', email: '', phone: '' })
+      setCreateUserIsPlayer(false)
+      setCreateUserPlayerTeams([])
+      await refreshSetupLookups()
+      createUserFirstFieldRef.current?.focus()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create user')
     } finally {
@@ -356,7 +427,11 @@ function App() {
 
       setCreated((current) => ({ ...current, teamId: result.id }))
       setPoolForm((current) => ({ ...current, teamId: String(result.id) }))
+      setTeamForm({ teamName: '', primaryColor: '', secondaryColor: '', logoFile: '', primaryContactId: '' })
+      setSelectedTeamImage('')
+      setTeamLogoUpload(null)
       await refreshSetupLookups()
+      createTeamFirstFieldRef.current?.focus()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create team')
     } finally {
@@ -473,7 +548,9 @@ function App() {
       })
 
       setCreated((current) => ({ ...current, poolId: result.id }))
+      setPoolForm({ poolName: '', teamId: '', season: new Date().getFullYear(), primaryTeam: '', squareCost: 0, q1Payout: 0, q2Payout: 0, q3Payout: 0, q4Payout: 0 })
       await refreshSetupLookups()
+      createPoolFirstFieldRef.current?.focus()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create pool')
     } finally {
@@ -567,9 +644,50 @@ function App() {
       if (managedPoolId) {
         await loadOrganizerBoard(managedPoolId, managedGameId ?? undefined)
       }
+      setSelectedSquare(null)
       await refreshDiagnostics()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to assign square')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const onClearSquareAssignment = async (): Promise<void> => {
+    if (!squaresPoolId || selectedSquare == null) {
+      setError('Select a square from the grid first')
+      return
+    }
+
+    setBusy('clear-square')
+    setError(null)
+
+    try {
+      await request(`/api/setup/pools/${squaresPoolId}/squares/${selectedSquare}`, {
+        method: 'PATCH',
+        headers: organizerHeaders,
+        body: JSON.stringify({
+          participantId: null,
+          playerId: null,
+          paidFlg: false,
+          reassign: true
+        })
+      })
+
+      setAssignForm({
+        participantId: '',
+        playerId: '',
+        paidFlg: false,
+        reassign: false
+      })
+      await loadSquares(squaresPoolId)
+      if (managedPoolId) {
+        await loadOrganizerBoard(managedPoolId, managedGameId ?? undefined)
+      }
+      setSelectedSquare(null)
+      await refreshDiagnostics()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to clear square assignment')
     } finally {
       setBusy(null)
     }
@@ -668,6 +786,8 @@ function App() {
 
     if (!userIdText) {
       setEditUserForm({ firstName: '', lastName: '', email: '', phone: '' })
+      setEditUserIsPlayer(false)
+      setEditUserPlayerTeams([])
       return
     }
 
@@ -680,6 +800,15 @@ function App() {
       email: user.email ?? '',
       phone: user.phone ?? ''
     })
+
+    const assignments = user.player_teams ?? []
+    setEditUserIsPlayer(assignments.length > 0)
+    setEditUserPlayerTeams(
+      assignments.map((assignment) => ({
+        teamId: String(assignment.team_id),
+        jerseyNum: String(assignment.jersey_num)
+      }))
+    )
   }
 
   const loadTeamForEdit = (teamIdText: string): void => {
@@ -753,16 +882,68 @@ function App() {
     setError(null)
 
     try {
+      const playerTeamsPayload = editUserIsPlayer
+        ? editUserPlayerTeams
+            .filter((assignment) => assignment.teamId && assignment.jerseyNum !== '')
+            .map((assignment) => ({
+              teamId: Number(assignment.teamId),
+              jerseyNum: Number(assignment.jerseyNum)
+            }))
+        : []
+
+      if (editUserIsPlayer) {
+        const uniqueTeamIds = new Set(playerTeamsPayload.map((assignment) => assignment.teamId))
+        if (uniqueTeamIds.size !== playerTeamsPayload.length) {
+          setError('A player cannot be assigned to the same team more than once.')
+          setBusy(null)
+          return
+        }
+      }
+
       await request(`/api/setup/users/${editingUserId}`, {
         method: 'PATCH',
         headers: organizerHeaders,
-        body: JSON.stringify(editUserForm)
+        body: JSON.stringify({
+          ...editUserForm,
+          email: editUserForm.email.trim() || undefined,
+          phone: editUserForm.phone.trim() || undefined,
+          isPlayer: editUserIsPlayer,
+          playerTeams: playerTeamsPayload
+        })
       })
 
       await refreshSetupLookups()
       await refreshDiagnostics()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update user')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const onDeleteUser = async (): Promise<void> => {
+    if (!editingUserId) {
+      setError('Choose a user to delete')
+      return
+    }
+
+    setBusy('delete-user')
+    setError(null)
+
+    try {
+      await request(`/api/setup/users/${editingUserId}`, {
+        method: 'DELETE',
+        headers: organizerHeaders
+      })
+
+      setEditingUserId('')
+      setEditUserForm({ firstName: '', lastName: '', email: '', phone: '' })
+      setEditUserIsPlayer(false)
+      setEditUserPlayerTeams([])
+      await refreshSetupLookups()
+      await refreshDiagnostics()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete user')
     } finally {
       setBusy(null)
     }
@@ -839,6 +1020,134 @@ function App() {
       await refreshSetupLookups()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to refresh existing records')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const loadTeamPlayers = async (teamIdText = playerTeamId): Promise<void> => {
+    if (!teamIdText) {
+      setTeamPlayers([])
+      setEditingPlayerId('')
+      setPlayerForm({ userId: '', jerseyNum: '' })
+      return
+    }
+
+    setBusy('load-team-players')
+    setError(null)
+
+    try {
+      const result = await request<{ players: PlayerOption[] }>(`/api/setup/teams/${teamIdText}/players`, {
+        headers: organizerHeaders
+      })
+
+      setTeamPlayers(result.players)
+      setEditingPlayerId('')
+      setPlayerForm({ userId: '', jerseyNum: '' })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load team players')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const onSelectPlayerTeam = async (teamIdText: string): Promise<void> => {
+    setPlayerTeamId(teamIdText)
+    await loadTeamPlayers(teamIdText)
+  }
+
+  const onSelectTeamPlayer = (playerIdText: string): void => {
+    setEditingPlayerId(playerIdText)
+
+    if (!playerIdText) {
+      setPlayerForm({ userId: '', jerseyNum: '' })
+      return
+    }
+
+    const player = teamPlayers.find((item) => item.id === Number(playerIdText))
+    if (!player) return
+
+    setPlayerForm({
+      userId: player.user_id != null ? String(player.user_id) : '',
+      jerseyNum: player.jersey_num != null ? String(player.jersey_num) : ''
+    })
+  }
+
+  const onSavePlayer = async (event: FormEvent): Promise<void> => {
+    event.preventDefault()
+
+    if (!playerTeamId) {
+      setError('Select a team first')
+      return
+    }
+
+    if (!playerForm.userId || playerForm.jerseyNum === '') {
+      setError('Choose a player name and jersey number')
+      return
+    }
+
+    setBusy('save-player')
+    setError(null)
+
+    try {
+      const body = {
+        userId: Number(playerForm.userId),
+        jerseyNum: Number(playerForm.jerseyNum)
+      }
+
+      if (editingPlayerId) {
+        await request(`/api/setup/players/${editingPlayerId}`, {
+          method: 'PATCH',
+          headers: organizerHeaders,
+          body: JSON.stringify(body)
+        })
+      } else {
+        await request('/api/setup/players', {
+          method: 'POST',
+          headers: organizerHeaders,
+          body: JSON.stringify({
+            teamId: Number(playerTeamId),
+            ...body
+          })
+        })
+        setPlayerForm({ userId: '', jerseyNum: '' })
+        setEditingPlayerId('')
+      }
+
+      await loadTeamPlayers(playerTeamId)
+      if (managedPoolId) {
+        await loadSquares(String(managedPoolId))
+      }
+      await refreshDiagnostics()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save player')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const onDeletePlayer = async (): Promise<void> => {
+    if (!editingPlayerId) {
+      setError('Choose a player to delete')
+      return
+    }
+
+    setBusy('delete-player')
+    setError(null)
+
+    try {
+      await request(`/api/setup/players/${editingPlayerId}`, {
+        method: 'DELETE',
+        headers: organizerHeaders
+      })
+
+      await loadTeamPlayers(playerTeamId)
+      if (managedPoolId) {
+        await loadSquares(String(managedPoolId))
+      }
+      await refreshDiagnostics()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete player')
     } finally {
       setBusy(null)
     }
@@ -923,6 +1232,45 @@ function App() {
     )
   }, [organizerBoard])
 
+  const selectedBoardSquare = useMemo(() => {
+    if (!organizerBoard || selectedSquare == null) return null
+    return organizerBoard.squares.find((sq) => sq.square_num === selectedSquare) ?? null
+  }, [organizerBoard, selectedSquare])
+
+  const onOpenSquareAssignment = (square: BoardSquare): void => {
+    setSelectedSquare(square.square_num)
+    setAssignForm({
+      participantId: square.participant_id != null ? String(square.participant_id) : '',
+      playerId: square.player_id != null ? String(square.player_id) : '',
+      paidFlg: Boolean(square.paid_flg),
+      reassign: false
+    })
+  }
+
+  const onCloseSquareAssignment = (): void => {
+    setSelectedSquare(null)
+  }
+
+  const formatUserName = (user: UserOption): string => {
+    const fullName = `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim()
+    if (fullName) return fullName
+    return user.email ?? 'Unnamed user'
+  }
+
+  const formatUserPlayerTeams = (user: UserOption): string => {
+    const assignments = user.player_teams ?? []
+    if (assignments.length === 0) return 'Not a player'
+    return assignments
+      .map((assignment) => `${assignment.team_name ?? 'Unnamed team'} #${assignment.jersey_num}`)
+      .join(' | ')
+  }
+
+  const formatPlayerName = (player: PlayerOption): string => {
+    const fullName = `${player.first_name ?? ''} ${player.last_name ?? ''}`.trim()
+    const jersey = player.jersey_num != null ? `#${player.jersey_num}` : '#-'
+    return `${jersey} ${fullName || 'Unnamed player'}`
+  }
+
   const primaryBrand = useMemo(() => {
     if (!organizerBoard) return null
     return resolveTeamBrand(
@@ -937,6 +1285,11 @@ function App() {
     if (!organizerBoard) return null
     return resolveTeamBrand(organizerBoard.opponent, '#0076b6', '#b0b7bc', null)
   }, [organizerBoard])
+
+  const selectedUserForEdit = useMemo(() => {
+    if (!editingUserId) return null
+    return existingUsers.find((user) => user.id === Number(editingUserId)) ?? null
+  }, [editingUserId, existingUsers])
 
   return (
     <div className="app-shell">
@@ -996,10 +1349,79 @@ function App() {
         <article className="panel form-panel">
           <h2>Create User</h2>
           <form onSubmit={onCreateUser}>
-            <input value={userForm.firstName} onChange={(e) => setUserForm({ ...userForm, firstName: e.target.value })} placeholder="First name" />
+            <input ref={createUserFirstFieldRef} value={userForm.firstName} onChange={(e) => setUserForm({ ...userForm, firstName: e.target.value })} placeholder="First name" />
             <input value={userForm.lastName} onChange={(e) => setUserForm({ ...userForm, lastName: e.target.value })} placeholder="Last name" />
             <input value={userForm.email} onChange={(e) => setUserForm({ ...userForm, email: e.target.value })} placeholder="Email" />
             <input value={userForm.phone} onChange={(e) => setUserForm({ ...userForm, phone: e.target.value })} placeholder="Phone" />
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={createUserIsPlayer}
+                onChange={(e) => {
+                  const checked = e.target.checked
+                  setCreateUserIsPlayer(checked)
+                  if (!checked) {
+                    setCreateUserPlayerTeams([])
+                  } else if (createUserPlayerTeams.length === 0) {
+                    setCreateUserPlayerTeams([{ teamId: '', jerseyNum: '' }])
+                  }
+                }}
+              />
+              Is player
+            </label>
+            {createUserIsPlayer ? (
+              <div className="player-assignments">
+                {createUserPlayerTeams.map((assignment, index) => (
+                  <div key={`create-player-team-${index}`} className="player-assignment-row">
+                    <select
+                      value={assignment.teamId}
+                      onChange={(e) => {
+                        const next = [...createUserPlayerTeams]
+                        next[index] = { ...next[index], teamId: e.target.value }
+                        setCreateUserPlayerTeams(next)
+                      }}
+                    >
+                      <option value="">Team</option>
+                      {existingTeams.map((team) => (
+                        <option key={`create-user-player-team-${team.id}`} value={team.id}>
+                          {team.team_name ?? 'Unnamed team'}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      min={0}
+                      max={99}
+                      value={assignment.jerseyNum}
+                      onChange={(e) => {
+                        const next = [...createUserPlayerTeams]
+                        next[index] = { ...next[index], jerseyNum: e.target.value }
+                        setCreateUserPlayerTeams(next)
+                      }}
+                      placeholder="Jersey #"
+                    />
+                    <button
+                      className="secondary compact"
+                      type="button"
+                      onClick={() => {
+                        setCreateUserPlayerTeams((current) => current.filter((_, rowIndex) => rowIndex !== index))
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+                <button
+                  className="secondary compact"
+                  type="button"
+                  onClick={() => {
+                    setCreateUserPlayerTeams((current) => [...current, { teamId: '', jerseyNum: '' }])
+                  }}
+                >
+                  Add team assignment
+                </button>
+              </div>
+            ) : null}
             <button className="secondary" type="submit" disabled={busy !== null}>{busy === 'user' ? 'Saving...' : 'Create user'}</button>
           </form>
           <p className="small">User ID: {created.userId ?? 'not created'}</p>
@@ -1008,7 +1430,7 @@ function App() {
         <article className="panel form-panel">
           <h2>Create Team</h2>
           <form onSubmit={onCreateTeam}>
-            <input value={teamForm.teamName} onChange={(e) => setTeamForm({ ...teamForm, teamName: e.target.value })} placeholder="Team name" />
+            <input ref={createTeamFirstFieldRef} value={teamForm.teamName} onChange={(e) => setTeamForm({ ...teamForm, teamName: e.target.value })} placeholder="Team name" />
             <input value={teamForm.primaryColor} onChange={(e) => setTeamForm({ ...teamForm, primaryColor: e.target.value })} placeholder="Primary color" />
             <input value={teamForm.secondaryColor} onChange={(e) => setTeamForm({ ...teamForm, secondaryColor: e.target.value })} placeholder="Secondary color" />
             <input type="file" accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml" onChange={(e) => setTeamLogoUpload(e.target.files?.[0] ?? null)} />
@@ -1050,7 +1472,7 @@ function App() {
               <option value="">Primary contact</option>
               {existingUsers.map((user) => (
                 <option key={user.id} value={user.id}>
-                  {user.id} - {(user.first_name ?? '').trim()} {(user.last_name ?? '').trim()}
+                  {formatUserName(user)}
                 </option>
               ))}
             </select>
@@ -1062,12 +1484,12 @@ function App() {
         <article className="panel form-panel">
           <h2>Create Pool</h2>
           <form onSubmit={onCreatePool}>
-            <input value={poolForm.poolName} onChange={(e) => setPoolForm({ ...poolForm, poolName: e.target.value })} placeholder="Pool name" />
+            <input ref={createPoolFirstFieldRef} value={poolForm.poolName} onChange={(e) => setPoolForm({ ...poolForm, poolName: e.target.value })} placeholder="Pool name" />
             <select value={poolForm.teamId} onChange={(e) => setPoolForm({ ...poolForm, teamId: e.target.value })}>
               <option value="">Team</option>
               {existingTeams.map((team) => (
                 <option key={team.id} value={team.id}>
-                  {team.id} - {team.team_name ?? 'Unnamed team'}
+                  {team.team_name ?? 'Unnamed team'}
                 </option>
               ))}
             </select>
@@ -1103,16 +1525,91 @@ function App() {
               <option value="">Select user</option>
               {existingUsers.map((user) => (
                 <option key={user.id} value={user.id}>
-                  {user.id} - {(user.first_name ?? '').trim()} {(user.last_name ?? '').trim()}
+                  {formatUserName(user)} {user.player_teams && user.player_teams.length > 0 ? `- ${formatUserPlayerTeams(user)}` : ''}
                 </option>
               ))}
             </select>
+            {selectedUserForEdit?.player_teams && selectedUserForEdit.player_teams.length > 0 ? (
+              <p className="small">Assigned teams: {formatUserPlayerTeams(selectedUserForEdit)}</p>
+            ) : null}
             <input value={editUserForm.firstName} onChange={(e) => setEditUserForm({ ...editUserForm, firstName: e.target.value })} placeholder="First name" />
             <input value={editUserForm.lastName} onChange={(e) => setEditUserForm({ ...editUserForm, lastName: e.target.value })} placeholder="Last name" />
             <input value={editUserForm.email} onChange={(e) => setEditUserForm({ ...editUserForm, email: e.target.value })} placeholder="Email" />
             <input value={editUserForm.phone} onChange={(e) => setEditUserForm({ ...editUserForm, phone: e.target.value })} placeholder="Phone" />
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={editUserIsPlayer}
+                onChange={(e) => {
+                  const checked = e.target.checked
+                  setEditUserIsPlayer(checked)
+                  if (!checked) {
+                    setEditUserPlayerTeams([])
+                  } else if (editUserPlayerTeams.length === 0) {
+                    setEditUserPlayerTeams([{ teamId: '', jerseyNum: '' }])
+                  }
+                }}
+              />
+              Is player
+            </label>
+            {editUserIsPlayer ? (
+              <div className="player-assignments">
+                {editUserPlayerTeams.map((assignment, index) => (
+                  <div key={`player-team-${index}`} className="player-assignment-row">
+                    <select
+                      value={assignment.teamId}
+                      onChange={(e) => {
+                        const next = [...editUserPlayerTeams]
+                        next[index] = { ...next[index], teamId: e.target.value }
+                        setEditUserPlayerTeams(next)
+                      }}
+                    >
+                      <option value="">Team</option>
+                      {existingTeams.map((team) => (
+                        <option key={`user-player-team-${team.id}`} value={team.id}>
+                          {team.team_name ?? 'Unnamed team'}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      min={0}
+                      max={99}
+                      value={assignment.jerseyNum}
+                      onChange={(e) => {
+                        const next = [...editUserPlayerTeams]
+                        next[index] = { ...next[index], jerseyNum: e.target.value }
+                        setEditUserPlayerTeams(next)
+                      }}
+                      placeholder="Jersey #"
+                    />
+                    <button
+                      className="secondary compact"
+                      type="button"
+                      onClick={() => {
+                        setEditUserPlayerTeams((current) => current.filter((_, rowIndex) => rowIndex !== index))
+                      }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+                <button
+                  className="secondary compact"
+                  type="button"
+                  onClick={() => {
+                    setEditUserPlayerTeams((current) => [...current, { teamId: '', jerseyNum: '' }])
+                  }}
+                >
+                  Add team assignment
+                </button>
+              </div>
+            ) : null}
             <button className="secondary" type="submit" disabled={busy !== null || !editingUserId}>
               {busy === 'update-user' ? 'Saving...' : 'Save user changes'}
+            </button>
+            <button className="secondary" type="button" disabled={busy !== null || !editingUserId} onClick={onDeleteUser}>
+              {busy === 'delete-user' ? 'Deleting...' : 'Delete user'}
             </button>
           </form>
         </article>
@@ -1125,7 +1622,7 @@ function App() {
               <option value="">Select team</option>
               {existingTeams.map((team) => (
                 <option key={team.id} value={team.id}>
-                  {team.id} - {team.team_name ?? 'Unnamed team'}
+                  {team.team_name ?? 'Unnamed team'}
                 </option>
               ))}
             </select>
@@ -1191,7 +1688,7 @@ function App() {
               <option value="">Primary contact</option>
               {existingUsers.map((user) => (
                 <option key={`edit-contact-${user.id}`} value={user.id}>
-                  {user.id} - {(user.first_name ?? '').trim()} {(user.last_name ?? '').trim()}
+                  {formatUserName(user)}
                 </option>
               ))}
             </select>
@@ -1209,7 +1706,7 @@ function App() {
               <option value="">Select pool</option>
               {existingPools.map((pool) => (
                 <option key={pool.id} value={pool.id}>
-                  {pool.id} - {pool.pool_name ?? 'Unnamed pool'}
+                  {pool.pool_name ?? 'Unnamed pool'}
                 </option>
               ))}
             </select>
@@ -1218,7 +1715,7 @@ function App() {
               <option value="">Team</option>
               {existingTeams.map((team) => (
                 <option key={`edit-team-${team.id}`} value={team.id}>
-                  {team.id} - {team.team_name ?? 'Unnamed team'}
+                  {team.team_name ?? 'Unnamed team'}
                 </option>
               ))}
             </select>
@@ -1234,6 +1731,63 @@ function App() {
             </button>
           </form>
         </article>
+
+        <article className="panel form-panel">
+          <h2>Maintain Players</h2>
+          <p className="small">Select a team, then add, update, or delete player entries.</p>
+          <form onSubmit={onSavePlayer}>
+            <select value={playerTeamId} onChange={(e) => void onSelectPlayerTeam(e.target.value)}>
+              <option value="">Select team</option>
+              {existingTeams.map((team) => (
+                <option key={`players-team-${team.id}`} value={team.id}>
+                  {team.team_name ?? 'Unnamed team'}
+                </option>
+              ))}
+            </select>
+            <select value={editingPlayerId} onChange={(e) => onSelectTeamPlayer(e.target.value)} disabled={!playerTeamId}>
+              <option value="">New player</option>
+              {teamPlayers.map((player) => (
+                <option key={`team-player-${player.id}`} value={player.id}>
+                  {formatPlayerName(player)}
+                </option>
+              ))}
+            </select>
+            <select
+              value={playerForm.userId}
+              onChange={(e) => setPlayerForm((current) => ({ ...current, userId: e.target.value }))}
+              disabled={!playerTeamId}
+            >
+              <option value="">Player name</option>
+              {existingUsers.map((user) => (
+                <option key={`player-user-${user.id}`} value={user.id}>
+                  {formatUserName(user)}
+                </option>
+              ))}
+            </select>
+            <input
+              type="number"
+              min={0}
+              max={99}
+              value={playerForm.jerseyNum}
+              onChange={(e) => setPlayerForm((current) => ({ ...current, jerseyNum: e.target.value }))}
+              placeholder="Jersey number"
+              disabled={!playerTeamId}
+            />
+            <div className="inline-actions inline-actions-tight">
+              <button className="secondary" type="submit" disabled={busy !== null || !playerTeamId}>
+                {busy === 'save-player' ? 'Saving...' : editingPlayerId ? 'Save player changes' : 'Add player'}
+              </button>
+              <button
+                className="secondary"
+                type="button"
+                onClick={onDeletePlayer}
+                disabled={busy !== null || !editingPlayerId}
+              >
+                {busy === 'delete-player' ? 'Deleting...' : 'Delete player'}
+              </button>
+            </div>
+          </form>
+        </article>
       </section>
 
       <section className="panel-grid">
@@ -1246,6 +1800,7 @@ function App() {
                 <tr>
                   <th>ID</th>
                   <th>Name</th>
+                  <th>Player Teams</th>
                 </tr>
               </thead>
               <tbody>
@@ -1253,6 +1808,7 @@ function App() {
                   <tr key={u.id}>
                     <td>{u.id}</td>
                     <td>{(u.first_name ?? '').trim()} {(u.last_name ?? '').trim()}</td>
+                    <td>{formatUserPlayerTeams(u)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1387,8 +1943,8 @@ function App() {
                             <button
                               key={sq.id}
                               type="button"
-                              className={`board-square ${sq.participant_id ? 'owned' : 'open'} ${winClass} ${selectedSquare === sq.square_num ? 'selected' : ''}`}
-                              onClick={() => setSelectedSquare(sq.square_num)}
+                              className={`board-square ${sq.participant_id ? 'owned' : 'open'} ${sq.paid_flg ? 'paid' : ''} ${winClass} ${selectedSquare === sq.square_num ? 'selected' : ''}`}
+                              onClick={() => onOpenSquareAssignment(sq)}
                             >
                               {sq.participant_id ? (
                                 <span className="square-owner">
@@ -1430,55 +1986,85 @@ function App() {
         ) : (
           <p>Select a pool above to load the board.</p>
         )}
+        <p className="small" style={{ marginTop: '1rem' }}>Click any square to edit assignment details.</p>
 
-        <form onSubmit={onAssignSquare} className="assign-form" style={{ marginTop: '1rem' }}>
-          <p className="small">Selected square: {selectedSquare ?? 'none'}</p>
-          <input
-            value={assignForm.participantId}
-            onChange={(e) => setAssignForm({ ...assignForm, participantId: e.target.value })}
-            list="participant-options"
-            placeholder="Participant user ID"
-          />
-          <datalist id="participant-options">
-            {participantOptions.map((user) => (
-              <option key={user.id} value={user.id}>
-                {(user.first_name ?? '').trim()} {(user.last_name ?? '').trim()} {user.email ? `(${user.email})` : ''}
-              </option>
-            ))}
-          </datalist>
-          <input
-            value={assignForm.playerId}
-            onChange={(e) => setAssignForm({ ...assignForm, playerId: e.target.value })}
-            list="player-options"
-            placeholder="Player ID"
-          />
-          <datalist id="player-options">
-            {playerOptions.map((player) => (
-              <option key={player.id} value={player.id}>
-                #{player.jersey_num ?? '-'} {(player.first_name ?? '').trim()} {(player.last_name ?? '').trim()}
-              </option>
-            ))}
-          </datalist>
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={assignForm.paidFlg}
-              onChange={(e) => setAssignForm({ ...assignForm, paidFlg: e.target.checked })}
-            />
-            Mark as paid
-          </label>
-          <label className="checkbox-row">
-            <input
-              type="checkbox"
-              checked={assignForm.reassign}
-              onChange={(e) => setAssignForm({ ...assignForm, reassign: e.target.checked })}
-            />
-            Allow reassign if already sold
-          </label>
-          <button className="primary" type="submit" disabled={busy !== null || !selectedSquare || !managedPoolId}>
-            {busy === 'assign-square' ? 'Saving...' : 'Assign square'}
-          </button>
-        </form>
+        {selectedSquare != null ? (
+          <div className="modal-backdrop" onClick={onCloseSquareAssignment}>
+            <div
+              className="modal-card"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="square-modal-title"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="modal-header">
+                <h3 id="square-modal-title">Square {selectedSquare}</h3>
+                <button type="button" className="secondary compact" onClick={onCloseSquareAssignment}>Close</button>
+              </div>
+
+              <p className="small">
+                Current owner:{' '}
+                {selectedBoardSquare?.participant_id
+                  ? `${selectedBoardSquare.participant_first_name ?? ''} ${selectedBoardSquare.participant_last_name ?? ''}`.trim() || `User #${selectedBoardSquare.participant_id}`
+                  : 'Unassigned'}
+              </p>
+
+              <form onSubmit={onAssignSquare} className="assign-form modal-assign-form">
+                <select
+                  value={assignForm.participantId}
+                  onChange={(e) => setAssignForm({ ...assignForm, participantId: e.target.value })}
+                >
+                  <option value="">Unassigned participant</option>
+                  {participantOptions.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {formatUserName(user)}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={assignForm.playerId}
+                  onChange={(e) => setAssignForm({ ...assignForm, playerId: e.target.value })}
+                >
+                  <option value="">No player</option>
+                  {playerOptions.map((player) => (
+                    <option key={player.id} value={player.id}>
+                      {formatPlayerName(player)}
+                    </option>
+                  ))}
+                </select>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={assignForm.paidFlg}
+                    onChange={(e) => setAssignForm({ ...assignForm, paidFlg: e.target.checked })}
+                  />
+                  Mark as paid
+                </label>
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={assignForm.reassign}
+                    onChange={(e) => setAssignForm({ ...assignForm, reassign: e.target.checked })}
+                  />
+                  Allow reassign if already sold
+                </label>
+                <div className="modal-actions">
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={onClearSquareAssignment}
+                    disabled={busy !== null || !managedPoolId}
+                  >
+                    {busy === 'clear-square' ? 'Clearing...' : 'Clear cell'}
+                  </button>
+                  <button className="primary" type="submit" disabled={busy !== null || !managedPoolId}>
+                    {busy === 'assign-square' ? 'Saving...' : 'Save assignment'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <section className="panel">

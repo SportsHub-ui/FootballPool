@@ -35,14 +35,47 @@ const upload = multer({
   }
 });
 
+const optionalEmailSchema = z
+  .string()
+  .trim()
+  .email()
+  .optional()
+  .or(z.literal(''));
+
+const optionalPhoneSchema = z
+  .string()
+  .trim()
+  .min(7)
+  .optional()
+  .or(z.literal(''));
+
 const createUserSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
-  email: z.string().email(),
-  phone: z.string().min(7).optional()
+  email: optionalEmailSchema,
+  phone: optionalPhoneSchema,
+  isPlayer: z.boolean().optional(),
+  playerTeams: z
+    .array(
+      z.object({
+        teamId: z.number().int().positive(),
+        jerseyNum: z.number().int().min(0).max(99)
+      })
+    )
+    .optional()
 });
 
-const updateUserSchema = createUserSchema;
+const updateUserSchema = createUserSchema.extend({
+  isPlayer: z.boolean().optional(),
+  playerTeams: z
+    .array(
+      z.object({
+        teamId: z.number().int().positive(),
+        jerseyNum: z.number().int().min(0).max(99)
+      })
+    )
+    .optional()
+});
 
 const createTeamSchema = z.object({
   teamName: z.string().min(1),
@@ -75,6 +108,11 @@ const createPlayerSchema = z.object({
   jerseyNum: z.number().int().min(0).max(99)
 });
 
+const updatePlayerSchema = z.object({
+  userId: z.number().int().positive(),
+  jerseyNum: z.number().int().min(0).max(99)
+});
+
 const poolIdParams = z.object({
   poolId: z.coerce.number().int().positive()
 });
@@ -85,6 +123,10 @@ const userIdParams = z.object({
 
 const teamIdParams = z.object({
   teamId: z.coerce.number().int().positive()
+});
+
+const playerIdParams = z.object({
+  playerId: z.coerce.number().int().positive()
 });
 
 const squareParams = z.object({
@@ -143,6 +185,18 @@ const nextId = async (client: PoolClient, tableName: string): Promise<number> =>
   return idResult.rows[0].next_id;
 };
 
+const hasDuplicateTeamAssignments = (assignments: Array<{ teamId: number; jerseyNum: number }>): boolean => {
+  const uniqueTeamIds = new Set<number>();
+  for (const assignment of assignments) {
+    if (uniqueTeamIds.has(assignment.teamId)) {
+      return true;
+    }
+    uniqueTeamIds.add(assignment.teamId);
+  }
+
+  return false;
+};
+
 setupRouter.post('/users', async (req, res) => {
   const parsed = createUserSchema.safeParse(req.body);
 
@@ -151,9 +205,27 @@ setupRouter.post('/users', async (req, res) => {
     return;
   }
 
+  if (parsed.data.isPlayer && hasDuplicateTeamAssignments(parsed.data.playerTeams ?? [])) {
+    res.status(400).json({ error: 'A player cannot be assigned to the same team more than once.' });
+    return;
+  }
+
   const client = await db.connect();
 
   try {
+    const dupCheck = await client.query<{ id: number }>(
+      `SELECT id FROM football_pool.users
+       WHERE lower(first_name) = lower($1)
+         AND lower(last_name)  = lower($2)
+         AND lower(coalesce(email, '')) = lower(coalesce($3, ''))`,
+      [parsed.data.firstName, parsed.data.lastName, parsed.data.email ?? null]
+    );
+    if (dupCheck.rows.length > 0) {
+      client.release();
+      res.status(409).json({ error: 'A user with the same first name, last name, and email already exists.' });
+      return;
+    }
+
     await client.query('BEGIN');
     const id = await nextId(client, 'users');
 
@@ -162,8 +234,36 @@ setupRouter.post('/users', async (req, res) => {
         INSERT INTO football_pool.users (id, first_name, last_name, email, phone, created_at)
         VALUES ($1, $2, $3, $4, $5, NOW())
       `,
-      [id, parsed.data.firstName, parsed.data.lastName, parsed.data.email, parsed.data.phone ?? null]
+      [
+        id,
+        parsed.data.firstName,
+        parsed.data.lastName,
+        parsed.data.email ? parsed.data.email : null,
+        parsed.data.phone ? parsed.data.phone : null
+      ]
     );
+
+    if (parsed.data.isPlayer) {
+      const assignments = parsed.data.playerTeams ?? [];
+      if (assignments.length > 0) {
+        await client.query('LOCK TABLE football_pool.player IN EXCLUSIVE MODE');
+        const idBaseResult = await client.query<{ id_base: number }>(
+          'SELECT COALESCE(MAX(id), 0) AS id_base FROM football_pool.player'
+        );
+
+        let nextPlayerId = idBaseResult.rows[0].id_base + 1;
+        for (const assignment of assignments) {
+          await client.query(
+            `
+              INSERT INTO football_pool.player (id, team_id, user_id, jersey_num)
+              VALUES ($1, $2, $3, $4)
+            `,
+            [nextPlayerId, assignment.teamId, id, assignment.jerseyNum]
+          );
+          nextPlayerId += 1;
+        }
+      }
+    }
 
     await client.query('COMMIT');
     res.status(201).json({ id });
@@ -242,6 +342,24 @@ setupRouter.post('/players', async (req, res) => {
 
   try {
     await client.query('BEGIN');
+
+    const duplicateCheck = await client.query<{ id: number }>(
+      `
+        SELECT id
+        FROM football_pool.player
+        WHERE team_id = $1
+          AND user_id = $2
+        LIMIT 1
+      `,
+      [parsed.data.teamId, parsed.data.userId]
+    );
+
+    if ((duplicateCheck.rowCount ?? 0) > 0) {
+      await client.query('ROLLBACK');
+      res.status(409).json({ error: 'Player is already assigned to this team.' });
+      return;
+    }
+
     const id = await nextId(client, 'player');
 
     await client.query(
@@ -262,6 +380,123 @@ setupRouter.post('/players', async (req, res) => {
     });
   } finally {
     client.release();
+  }
+});
+
+setupRouter.patch('/players/:playerId', async (req, res) => {
+  const parsedParams = playerIdParams.safeParse(req.params);
+  const parsedBody = updatePlayerSchema.safeParse(req.body);
+
+  if (!parsedParams.success) {
+    res.status(400).json({ error: parsedParams.error.issues });
+    return;
+  }
+
+  if (!parsedBody.success) {
+    res.status(400).json({ error: parsedBody.error.issues });
+    return;
+  }
+
+  const client = await db.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const targetPlayer = await client.query<{ team_id: number }>(
+      `
+        SELECT team_id
+        FROM football_pool.player
+        WHERE id = $1
+        FOR UPDATE
+      `,
+      [parsedParams.data.playerId]
+    );
+
+    if (targetPlayer.rowCount === 0) {
+      await client.query('ROLLBACK');
+      res.status(404).json({ error: 'Player not found' });
+      return;
+    }
+
+    const duplicateCheck = await client.query<{ id: number }>(
+      `
+        SELECT id
+        FROM football_pool.player
+        WHERE team_id = $1
+          AND user_id = $2
+          AND id <> $3
+        LIMIT 1
+      `,
+      [targetPlayer.rows[0].team_id, parsedBody.data.userId, parsedParams.data.playerId]
+    );
+
+    if ((duplicateCheck.rowCount ?? 0) > 0) {
+      await client.query('ROLLBACK');
+      res.status(409).json({ error: 'Player is already assigned to this team.' });
+      return;
+    }
+
+    const result = await client.query(
+      `
+        UPDATE football_pool.player
+        SET
+          user_id = $2,
+          jersey_num = $3
+        WHERE id = $1
+        RETURNING id
+      `,
+      [parsedParams.data.playerId, parsedBody.data.userId, parsedBody.data.jerseyNum]
+    );
+
+    if (result.rowCount === 0) {
+      await client.query('ROLLBACK');
+      res.status(404).json({ error: 'Player not found' });
+      return;
+    }
+
+    await client.query('COMMIT');
+
+    res.json({ id: parsedParams.data.playerId, message: 'Player updated' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    res.status(500).json({
+      error: 'Failed to update player',
+      detail: error instanceof Error ? error.message : 'Unknown error'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+setupRouter.delete('/players/:playerId', async (req, res) => {
+  const parsedParams = playerIdParams.safeParse(req.params);
+
+  if (!parsedParams.success) {
+    res.status(400).json({ error: parsedParams.error.issues });
+    return;
+  }
+
+  try {
+    const result = await db.query(
+      `
+        DELETE FROM football_pool.player
+        WHERE id = $1
+        RETURNING id
+      `,
+      [parsedParams.data.playerId]
+    );
+
+    if (result.rowCount === 0) {
+      res.status(404).json({ error: 'Player not found' });
+      return;
+    }
+
+    res.json({ id: parsedParams.data.playerId, message: 'Player deleted' });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to delete player',
+      detail: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 });
 
@@ -399,18 +634,58 @@ setupRouter.get('/users', async (_req, res) => {
     const result = await db.query(
       `
         SELECT
-          id,
-          first_name,
-          last_name,
-          email,
-          phone
+          u.id,
+          u.first_name,
+          u.last_name,
+          u.email,
+          u.phone,
+          p.team_id,
+          p.jersey_num,
+          t.team_name
         FROM football_pool.users
-        ORDER BY last_name, first_name, id
+        u
+        LEFT JOIN football_pool.player p ON p.user_id = u.id
+        LEFT JOIN football_pool.team t ON t.id = p.team_id
+        ORDER BY u.last_name, u.first_name, u.id, p.team_id
         LIMIT 500
       `
     );
 
-    res.json({ users: result.rows });
+    type UserWithTeams = {
+      id: number;
+      first_name: string | null;
+      last_name: string | null;
+      email: string | null;
+      phone: string | null;
+      player_teams: Array<{ team_id: number; team_name: string | null; jersey_num: number }>;
+    };
+
+    const usersMap = new Map<number, UserWithTeams>();
+
+    for (const row of result.rows) {
+      const id = Number(row.id);
+      const existing: UserWithTeams = usersMap.get(id) ?? {
+        id,
+        first_name: row.first_name,
+        last_name: row.last_name,
+        email: row.email,
+        phone: row.phone,
+        player_teams: []
+      };
+
+      if (row.team_id != null) {
+        existing.player_teams.push({
+          team_id: Number(row.team_id),
+          team_name: row.team_name,
+          jersey_num: Number(row.jersey_num)
+        });
+      }
+
+      usersMap.set(id, existing);
+    }
+
+    const users = Array.from(usersMap.values());
+    res.json({ users });
   } catch (error) {
     res.status(500).json({
       error: 'Failed to load users',
@@ -433,8 +708,17 @@ setupRouter.patch('/users/:userId', async (req, res) => {
     return;
   }
 
+  if (parsedBody.data.isPlayer && hasDuplicateTeamAssignments(parsedBody.data.playerTeams ?? [])) {
+    res.status(400).json({ error: 'A player cannot be assigned to the same team more than once.' });
+    return;
+  }
+
+  const client = await db.connect();
+
   try {
-    const result = await db.query(
+    await client.query('BEGIN');
+
+    const result = await client.query(
       `
         UPDATE football_pool.users
         SET
@@ -449,20 +733,186 @@ setupRouter.patch('/users/:userId', async (req, res) => {
         parsedParams.data.userId,
         parsedBody.data.firstName,
         parsedBody.data.lastName,
-        parsedBody.data.email,
-        parsedBody.data.phone ?? null
+        parsedBody.data.email ? parsedBody.data.email : null,
+        parsedBody.data.phone ? parsedBody.data.phone : null
       ]
     );
 
     if (result.rowCount === 0) {
+      await client.query('ROLLBACK');
       res.status(404).json({ error: 'User not found' });
       return;
     }
 
+    if (parsedBody.data.isPlayer === false) {
+      await client.query(
+        `
+          UPDATE football_pool.square AS sq
+          SET player_id = NULL
+          FROM football_pool.player AS pl
+          WHERE sq.player_id = pl.id
+            AND pl.user_id = $1
+        `,
+        [parsedParams.data.userId]
+      );
+
+      const remainingSquareRefs = await client.query<{ ref_count: number }>(
+        `
+          SELECT COUNT(*)::int AS ref_count
+          FROM football_pool.square AS sq
+          JOIN football_pool.player AS pl
+            ON pl.id = sq.player_id
+          WHERE pl.user_id = $1
+        `,
+        [parsedParams.data.userId]
+      );
+
+      if ((remainingSquareRefs.rows[0]?.ref_count ?? 0) > 0) {
+        await client.query('ROLLBACK');
+        res.status(409).json({ error: 'Cannot remove player team assignments while squares are still linked to this player.' });
+        return;
+      }
+
+      await client.query('DELETE FROM football_pool.player WHERE user_id = $1', [parsedParams.data.userId]);
+    }
+
+    if (parsedBody.data.isPlayer === true) {
+      await client.query(
+        `
+          UPDATE football_pool.square AS sq
+          SET player_id = NULL
+          FROM football_pool.player AS pl
+          WHERE sq.player_id = pl.id
+            AND pl.user_id = $1
+        `,
+        [parsedParams.data.userId]
+      );
+
+      const remainingSquareRefs = await client.query<{ ref_count: number }>(
+        `
+          SELECT COUNT(*)::int AS ref_count
+          FROM football_pool.square AS sq
+          JOIN football_pool.player AS pl
+            ON pl.id = sq.player_id
+          WHERE pl.user_id = $1
+        `,
+        [parsedParams.data.userId]
+      );
+
+      if ((remainingSquareRefs.rows[0]?.ref_count ?? 0) > 0) {
+        await client.query('ROLLBACK');
+        res.status(409).json({ error: 'Cannot reassign player teams while squares are still linked to this player.' });
+        return;
+      }
+
+      await client.query('DELETE FROM football_pool.player WHERE user_id = $1', [parsedParams.data.userId]);
+
+      const assignments = parsedBody.data.playerTeams ?? [];
+      if (assignments.length > 0) {
+        await client.query('LOCK TABLE football_pool.player IN EXCLUSIVE MODE');
+        const idBaseResult = await client.query<{ id_base: number }>(
+          'SELECT COALESCE(MAX(id), 0) AS id_base FROM football_pool.player'
+        );
+
+        let nextPlayerId = idBaseResult.rows[0].id_base + 1;
+        for (const assignment of assignments) {
+          await client.query(
+            `
+              INSERT INTO football_pool.player (id, team_id, user_id, jersey_num)
+              VALUES ($1, $2, $3, $4)
+            `,
+            [nextPlayerId, assignment.teamId, parsedParams.data.userId, assignment.jerseyNum]
+          );
+          nextPlayerId += 1;
+        }
+      }
+    }
+
+    await client.query('COMMIT');
+
     res.json({ id: parsedParams.data.userId, message: 'User updated' });
   } catch (error) {
+    await client.query('ROLLBACK');
     res.status(500).json({
       error: 'Failed to update user',
+      detail: error instanceof Error ? error.message : 'Unknown error'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+setupRouter.delete('/users/:userId', async (req, res) => {
+  const parsedParams = userIdParams.safeParse(req.params);
+
+  if (!parsedParams.success) {
+    res.status(400).json({ error: parsedParams.error.issues });
+    return;
+  }
+
+  try {
+    const [teamAssignmentResult, playerAssignmentResult, poolAssignmentResult] = await Promise.all([
+      db.query<{ assignment_count: number }>(
+        `
+          SELECT COUNT(*)::int AS assignment_count
+          FROM football_pool.team
+          WHERE primary_contact_id = $1
+             OR secondary_contact_id = $1
+        `,
+        [parsedParams.data.userId]
+      ),
+      db.query<{ assignment_count: number }>(
+        `
+          SELECT COUNT(*)::int AS assignment_count
+          FROM football_pool.player
+          WHERE user_id = $1
+        `,
+        [parsedParams.data.userId]
+      ),
+      db.query<{ assignment_count: number }>(
+        `
+          SELECT COUNT(*)::int AS assignment_count
+          FROM football_pool.square
+          WHERE participant_id = $1
+        `,
+        [parsedParams.data.userId]
+      )
+    ]);
+
+    const teamAssignments = teamAssignmentResult.rows[0]?.assignment_count ?? 0;
+    const playerAssignments = playerAssignmentResult.rows[0]?.assignment_count ?? 0;
+    const poolAssignments = poolAssignmentResult.rows[0]?.assignment_count ?? 0;
+
+    if (teamAssignments > 0 || playerAssignments > 0 || poolAssignments > 0) {
+      res.status(409).json({
+        error: 'User cannot be deleted while assigned to teams or pools.',
+        assignments: {
+          teamContacts: teamAssignments,
+          playerTeams: playerAssignments,
+          poolSquares: poolAssignments
+        }
+      });
+      return;
+    }
+
+    const deleteResult = await db.query(
+      `
+        DELETE FROM football_pool.users
+        WHERE id = $1
+        RETURNING id
+      `,
+      [parsedParams.data.userId]
+    );
+
+    if ((deleteResult.rowCount ?? 0) === 0) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    res.json({ id: parsedParams.data.userId, message: 'User deleted' });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to delete user',
       detail: error instanceof Error ? error.message : 'Unknown error'
     });
   }
@@ -655,6 +1105,40 @@ setupRouter.get('/images', async (_req, res) => {
   } catch (error) {
     res.status(500).json({
       error: 'Failed to load images',
+      detail: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+setupRouter.get('/teams/:teamId/players', async (req, res) => {
+  const parsedParams = teamIdParams.safeParse(req.params);
+
+  if (!parsedParams.success) {
+    res.status(400).json({ error: parsedParams.error.issues });
+    return;
+  }
+
+  try {
+    const result = await db.query(
+      `
+        SELECT
+          pl.id,
+          pl.user_id,
+          pl.jersey_num,
+          u.first_name,
+          u.last_name
+        FROM football_pool.player pl
+        LEFT JOIN football_pool.users u ON u.id = pl.user_id
+        WHERE pl.team_id = $1
+        ORDER BY pl.jersey_num, pl.id
+      `,
+      [parsedParams.data.teamId]
+    );
+
+    res.json({ players: result.rows });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to load team players',
       detail: error instanceof Error ? error.message : 'Unknown error'
     });
   }
