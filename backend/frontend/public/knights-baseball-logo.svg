@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 280" role="img" aria-label="Knights Baseball logo">
+  <rect width="240" height="280" fill="#000000"/>
+  <path d="M120 18 L210 56 L183 230 L120 264 L57 230 L30 56 Z" fill="#101010" stroke="#fbbc04" stroke-width="6"/>
+  <path d="M120 42 L186 70 L165 214 L120 238 L75 214 L54 70 Z" fill="#151515" stroke="#ffffff" stroke-width="2"/>
+  <text x="120" y="78" text-anchor="middle" font-family="Arial, sans-serif" font-size="34" font-weight="900" fill="#fbbc04" transform="rotate(-8 120 78)">KNIGHTS</text>
+  <text x="120" y="118" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" font-weight="900" fill="#ffffff">BASEBALL</text>
+  <path d="M95 170 C95 150, 145 150, 145 170 C145 200, 120 214, 120 214 C120 214, 95 200, 95 170 Z" fill="#222" stroke="#fbbc04" stroke-width="3"/>
+  <path d="M108 164 L128 164 L134 172 L126 183 L113 183 L105 173 Z" fill="#d9d9d9" stroke="#000" stroke-width="2"/>
+  <path d="M120 183 L120 205" stroke="#fbbc04" stroke-width="4"/>
+  <circle cx="120" cy="154" r="8" fill="#fbbc04"/>
+</svg>
