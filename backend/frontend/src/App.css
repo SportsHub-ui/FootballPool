@@ -1183,6 +1183,10 @@ button:disabled {
   box-shadow: 0 14px 26px rgba(34, 51, 66, 0.14);
 }
 
+.landing-board-content > .landing-hero-bar {
+  margin-left: calc(var(--landing-opponent-width) + 0.55rem + var(--landing-axis-width) + var(--landing-grid-gap));
+}
+
 .landing-hero-bar.is-empty {
   background: #8a8f98;
 }
@@ -1807,6 +1811,7 @@ button:disabled {
   }
 
   .landing-logo-card-frame {
+    width: 100%;
     min-height: 120px;
   }
 
@@ -1814,6 +1819,10 @@ button:disabled {
   .landing-board-row-layout {
     grid-template-columns: 1fr;
     display: grid;
+  }
+
+  .landing-board-content > .landing-hero-bar {
+    margin-left: 0;
   }
 
   .landing-hero-controls {
