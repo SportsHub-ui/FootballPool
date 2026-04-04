@@ -28,6 +28,7 @@ const loadAccessiblePools = async (client: PoolClient, userId: number | null) =>
             p.pool_name,
             p.season,
             p.primary_team,
+            p.square_cost,
             COALESCE(p.default_flg, FALSE) AS default_flg,
             COALESCE(p.sign_in_req_flg, FALSE) AS sign_in_req_flg,
             t.team_name,
@@ -57,6 +58,7 @@ const loadAccessiblePool = async (client: PoolClient, poolId: number, userId: nu
             p.pool_name,
             p.season,
             p.primary_team,
+            p.square_cost,
             COALESCE(p.default_flg, FALSE) AS default_flg,
             COALESCE(p.sign_in_req_flg, FALSE) AS sign_in_req_flg,
             t.team_name,
@@ -431,6 +433,218 @@ landingRouter.get('/pools/:poolId/games', async (req, res) => {
   } catch (error) {
     console.error('Landing games error:', error);
     res.status(500).json({ error: 'Failed to fetch games' });
+  }
+});
+
+landingRouter.get('/pools/:poolId/metrics', async (req, res) => {
+  try {
+    const { poolId } = z.object({ poolId: z.coerce.number().int().positive() }).parse(req.params);
+    const userId = getSignedInUserId(req);
+
+    const client = await db.connect();
+    try {
+      const pool = await loadAccessiblePool(client, poolId, userId);
+
+      if (!pool) {
+        return res.status(404).json({ error: 'Pool not found or unavailable' });
+      }
+
+      try {
+        await ensurePoolSquaresInitialized(client, poolId);
+      } catch (squareInitError) {
+        console.warn(`[landing-metrics] continuing without auto-initialized squares for pool=${poolId}`, squareInitError);
+      }
+
+      const [summaryResult, gameResult, payoutResult] = await Promise.all([
+        client.query(
+          `SELECT
+              COUNT(*)::int AS total_squares,
+              COUNT(*) FILTER (WHERE s.participant_id IS NOT NULL)::int AS sold_squares,
+              COUNT(*) FILTER (WHERE s.participant_id IS NULL)::int AS open_squares,
+              COUNT(*) FILTER (WHERE COALESCE(s.paid_flg, FALSE) = TRUE)::int AS paid_squares,
+              COUNT(*) FILTER (WHERE s.participant_id IS NOT NULL AND COALESCE(s.paid_flg, FALSE) = FALSE)::int AS unpaid_squares,
+              COUNT(DISTINCT s.participant_id)::int AS unique_participants,
+              COUNT(DISTINCT s.player_id)::int AS unique_players
+           FROM football_pool.square s
+           WHERE s.pool_id = $1`,
+          [poolId]
+        ),
+        client.query(
+          `SELECT
+              COUNT(*)::int AS total_games,
+              COUNT(*) FILTER (
+                WHERE g.q4_primary_score IS NOT NULL
+                  AND g.q4_opponent_score IS NOT NULL
+              )::int AS completed_games
+           FROM football_pool.game g
+           WHERE g.pool_id = $1`,
+          [poolId]
+        ),
+        client.query(
+          `SELECT
+              COALESCE(SUM(wl.amount_won), 0)::int AS total_awarded,
+              COALESCE(SUM(wl.amount_won) FILTER (WHERE lower(COALESCE(wl.payout_status, 'pending')) = 'paid'), 0)::int AS total_paid_out,
+              COALESCE(SUM(wl.amount_won) FILTER (WHERE lower(COALESCE(wl.payout_status, 'pending')) <> 'paid'), 0)::int AS total_pending
+           FROM football_pool.winnings_ledger wl
+           WHERE wl.pool_id = $1`,
+          [poolId]
+        )
+      ]);
+
+      let playerRows: Array<Record<string, unknown>> = [];
+      let participantRows: Array<Record<string, unknown>> = [];
+
+      try {
+        const [playerResult, participantResult] = await Promise.all([
+          client.query(
+            `WITH season_winners AS (
+               SELECT ((g.q1_opponent_score % 10) * 10 + (g.q1_primary_score % 10) + 1) AS square_num,
+                      p.q1_payout AS amount
+               FROM football_pool.game g
+               JOIN football_pool.pool p ON p.id = g.pool_id
+               WHERE g.pool_id = $1
+                 AND g.q1_primary_score IS NOT NULL
+                 AND g.q1_opponent_score IS NOT NULL
+
+               UNION ALL
+
+               SELECT ((g.q2_opponent_score % 10) * 10 + (g.q2_primary_score % 10) + 1) AS square_num,
+                      p.q2_payout AS amount
+               FROM football_pool.game g
+               JOIN football_pool.pool p ON p.id = g.pool_id
+               WHERE g.pool_id = $1
+                 AND g.q2_primary_score IS NOT NULL
+                 AND g.q2_opponent_score IS NOT NULL
+
+               UNION ALL
+
+               SELECT ((g.q3_opponent_score % 10) * 10 + (g.q3_primary_score % 10) + 1) AS square_num,
+                      p.q3_payout AS amount
+               FROM football_pool.game g
+               JOIN football_pool.pool p ON p.id = g.pool_id
+               WHERE g.pool_id = $1
+                 AND g.q3_primary_score IS NOT NULL
+                 AND g.q3_opponent_score IS NOT NULL
+
+               UNION ALL
+
+               SELECT ((g.q4_opponent_score % 10) * 10 + (g.q4_primary_score % 10) + 1) AS square_num,
+                      p.q4_payout AS amount
+               FROM football_pool.game g
+               JOIN football_pool.pool p ON p.id = g.pool_id
+               WHERE g.pool_id = $1
+                 AND g.q4_primary_score IS NOT NULL
+                 AND g.q4_opponent_score IS NOT NULL
+             )
+             SELECT
+               pt.id AS player_id,
+               COALESCE(
+                 NULLIF(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), ''),
+                 CONCAT('Player #', pt.id::text)
+               ) AS player_name,
+               pt.jersey_num,
+               COUNT(DISTINCT s.id) FILTER (WHERE s.participant_id IS NOT NULL)::int AS squares_sold,
+               COUNT(sw.square_num)::int AS wins_count,
+               COALESCE(SUM(sw.amount), 0)::int AS total_won
+             FROM football_pool.square s
+             JOIN football_pool.player_team pt ON pt.id = s.player_id
+             LEFT JOIN football_pool.users u ON u.id = pt.user_id
+             LEFT JOIN season_winners sw ON sw.square_num = s.square_num
+             WHERE s.pool_id = $1
+             GROUP BY pt.id, u.first_name, u.last_name, pt.jersey_num
+             ORDER BY squares_sold DESC, total_won DESC, wins_count DESC, pt.jersey_num NULLS LAST`,
+            [poolId]
+          ),
+          client.query(
+            `WITH square_ownership AS (
+               SELECT
+                 s.participant_id,
+                 COUNT(*)::int AS squares_owned,
+                 COUNT(*) FILTER (WHERE COALESCE(s.paid_flg, FALSE) = TRUE)::int AS squares_paid
+               FROM football_pool.square s
+               WHERE s.pool_id = $1
+                 AND s.participant_id IS NOT NULL
+               GROUP BY s.participant_id
+             )
+             SELECT
+               u.id AS participant_id,
+               COALESCE(
+                 NULLIF(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), ''),
+                 COALESCE(u.email, CONCAT('Participant #', u.id::text))
+               ) AS participant_name,
+               COALESCE(so.squares_owned, 0)::int AS squares_owned,
+               COALESCE(so.squares_paid, 0)::int AS squares_paid,
+               COUNT(wl.id)::int AS wins_count,
+               COALESCE(SUM(wl.amount_won), 0)::int AS amount_won
+             FROM football_pool.users u
+             LEFT JOIN square_ownership so ON so.participant_id = u.id
+             LEFT JOIN football_pool.winnings_ledger wl
+               ON wl.pool_id = $1
+              AND wl.winner_user_id = u.id
+             WHERE so.participant_id IS NOT NULL
+                OR wl.winner_user_id IS NOT NULL
+             GROUP BY u.id, u.first_name, u.last_name, u.email, so.squares_owned, so.squares_paid
+             ORDER BY amount_won DESC, wins_count DESC, participant_name`,
+            [poolId]
+          )
+        ]);
+
+        playerRows = playerResult.rows;
+        participantRows = participantResult.rows;
+      } catch (metricsDetailError) {
+        console.warn(`[landing-metrics] analytics detail fallback for pool=${poolId}`, metricsDetailError);
+      }
+
+      const summaryRow = summaryResult.rows[0] ?? {};
+      const gameRow = gameResult.rows[0] ?? {};
+      const payoutRow = payoutResult.rows[0] ?? {};
+
+      return res.json({
+        pool: {
+          id: Number(pool.id),
+          pool_name: pool.pool_name ?? null,
+          season: pool.season != null ? Number(pool.season) : null,
+          primary_team: pool.primary_team ?? null,
+          team_name: pool.team_name ?? null,
+          square_cost: pool.square_cost != null ? Number(pool.square_cost) : null
+        },
+        summary: {
+          totalSquares: Number(summaryRow.total_squares ?? 100),
+          soldSquares: Number(summaryRow.sold_squares ?? 0),
+          openSquares: Number(summaryRow.open_squares ?? Math.max(100 - Number(summaryRow.sold_squares ?? 0), 0)),
+          paidSquares: Number(summaryRow.paid_squares ?? 0),
+          unpaidSquares: Number(summaryRow.unpaid_squares ?? 0),
+          uniqueParticipants: Number(summaryRow.unique_participants ?? 0),
+          uniquePlayers: Number(summaryRow.unique_players ?? 0),
+          totalGames: Number(gameRow.total_games ?? 0),
+          completedGames: Number(gameRow.completed_games ?? 0),
+          totalAwarded: Number(payoutRow.total_awarded ?? 0),
+          totalPaidOut: Number(payoutRow.total_paid_out ?? 0),
+          totalPending: Number(payoutRow.total_pending ?? 0)
+        },
+        playerMetrics: playerRows.map((row) => ({
+          playerId: Number(row.player_id),
+          playerName: row.player_name ?? 'Unnamed player',
+          jerseyNum: row.jersey_num != null ? Number(row.jersey_num) : null,
+          squaresSold: Number(row.squares_sold ?? 0),
+          winsCount: Number(row.wins_count ?? 0),
+          totalWon: Number(row.total_won ?? 0)
+        })),
+        participantMetrics: participantRows.map((row) => ({
+          participantId: Number(row.participant_id),
+          participantName: row.participant_name ?? 'Unnamed participant',
+          squaresOwned: Number(row.squares_owned ?? 0),
+          squaresPaid: Number(row.squares_paid ?? 0),
+          winsCount: Number(row.wins_count ?? 0),
+          amountWon: Number(row.amount_won ?? 0)
+        }))
+      });
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error('Landing metrics error:', error);
+    return res.status(500).json({ error: 'Failed to fetch metrics' });
   }
 });
 

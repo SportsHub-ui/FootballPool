@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
+import { LandingMetrics } from './LandingMetrics'
 import { LandingPlayerMaintenance } from './LandingPlayerMaintenance'
 import { LandingPoolMaintenance } from './LandingPoolMaintenance'
 import { LandingScheduleMaintenance } from './LandingScheduleMaintenance'
@@ -258,7 +259,7 @@ const getApiErrorMessage = (payload: unknown, fallback: string): string => {
 export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('auth-token'))
   const [showLogin, setShowLogin] = useState(false)
-  const [activePage, setActivePage] = useState<'Squares' | 'Players' | 'Teams' | 'Pools' | 'Schedules' | 'Users'>('Squares')
+  const [activePage, setActivePage] = useState<'Squares' | 'Metrics' | 'Players' | 'Teams' | 'Pools' | 'Schedules' | 'Users'>('Squares')
   const [busy, setBusy] = useState<string | null>(null)
   const [loginError, setLoginError] = useState<string | null>(null)
   const [pageError, setPageError] = useState<string | null>(null)
@@ -694,6 +695,13 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
           <button type="button" className="landing-nav-link landing-nav-admin" onClick={onOpenAdmin}>
             Admin
           </button>
+          <button
+            type="button"
+            className={`landing-nav-link ${activePage === 'Metrics' ? 'is-active' : ''}`}
+            onClick={() => setActivePage('Metrics')}
+          >
+            Metrics
+          </button>
         </div>
 
         <button
@@ -949,6 +957,16 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
             </div>
           ) : null}
         </section>
+      ) : activePage === 'Metrics' ? (
+        <LandingMetrics
+          pools={pools}
+          token={token}
+          authHeaders={authHeaders}
+          apiBase={API_BASE}
+          selectedPoolId={selectedPoolId}
+          onSelectPool={handlePoolChange}
+          onRequireSignIn={() => setShowLogin(true)}
+        />
       ) : activePage === 'Players' ? (
         <LandingPlayerMaintenance
           pools={pools}
