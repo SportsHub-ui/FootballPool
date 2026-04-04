@@ -1366,7 +1366,8 @@ button:disabled {
 }
 
 .landing-placeholder-card,
-.player-maintenance-shell {
+.player-maintenance-shell,
+.user-maintenance-shell {
   display: grid;
   gap: 0.85rem;
 }
@@ -1390,6 +1391,31 @@ button:disabled {
   font-weight: 800;
 }
 
+.landing-summary-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.landing-summary-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.landing-collapse-btn {
+  width: 1.7rem;
+  height: 1.7rem;
+  border: 1px solid #cfd8e3;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #233042;
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+}
+
 .landing-collapsible summary::-webkit-details-marker {
   display: none;
 }
@@ -1406,6 +1432,33 @@ button:disabled {
 
 .landing-player-list-wrap {
   padding: 0 1rem 1rem;
+}
+
+.landing-player-list-wrap.is-scrollable {
+  overflow: auto;
+}
+
+.landing-resize-bar {
+  height: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ns-resize;
+  user-select: none;
+}
+
+.landing-resize-bar span {
+  width: min(180px, 50%);
+  height: 6px;
+  border-radius: 999px;
+  background: #cfd8e3;
+  box-shadow: inset 0 0 0 1px rgba(35, 48, 66, 0.08);
+}
+
+.landing-list-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0.25rem 0 0.75rem;
 }
 
 .landing-player-table tbody tr {
@@ -1450,6 +1503,36 @@ button:disabled {
   margin: 0;
 }
 
+.landing-selected-summary {
+  display: grid;
+  gap: 0.1rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid #e7edf4;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #233042;
+}
+
+.landing-selected-summary-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.35rem;
+}
+
+.landing-selected-summary strong {
+  font-size: 0.9rem;
+}
+
+.landing-selected-summary-header .small {
+  margin: 0.2rem 0 0;
+}
+
+.landing-selected-team-inline,
+.landing-selected-team-empty {
+  margin: 0;
+}
+
 .landing-player-fields {
   display: grid;
   gap: 0.7rem;
@@ -1458,6 +1541,21 @@ button:disabled {
 
 .landing-player-fields .field-block {
   margin: 0;
+}
+
+.landing-inline-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-weight: 600;
+}
+
+.landing-inline-checkbox.compact {
+  font-size: 0.85rem;
+}
+
+.landing-field-span {
+  grid-column: 1 / -1;
 }
 
 .landing-maintenance-actions {
@@ -1493,6 +1591,36 @@ button:disabled {
   grid-template-columns: minmax(0, 1fr) 120px;
   gap: 0.75rem;
   align-items: center;
+}
+
+.landing-checkbox-card {
+  border: 1px solid #e7edf4;
+  border-radius: 12px;
+  padding: 0.65rem 0.75rem;
+  background: #f8fafc;
+}
+
+.landing-readonly-panel {
+  display: grid;
+  gap: 0.75rem;
+  border-top: 1px solid #e7edf4;
+  padding-top: 0.9rem;
+}
+
+.landing-readonly-list {
+  margin: 0;
+  padding-left: 1rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.landing-readonly-list li {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.landing-readonly-note {
+  margin: 0;
 }
 
 .landing-player-hero {
@@ -1551,7 +1679,8 @@ button:disabled {
   }
 
   .landing-team-assignment-row,
-  .landing-maintenance-header {
+  .landing-maintenance-header,
+  .landing-selected-summary-header {
     grid-template-columns: 1fr;
     display: grid;
   }

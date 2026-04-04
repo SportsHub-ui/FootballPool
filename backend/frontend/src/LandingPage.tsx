@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
 import { LandingPlayerMaintenance } from './LandingPlayerMaintenance'
+import { LandingUserMaintenance } from './LandingUserMaintenance'
 
 type LandingPool = {
   id: number
@@ -644,13 +645,22 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
           apiBase={API_BASE}
           onRequireSignIn={() => setShowLogin(true)}
         />
+      ) : activePage === 'Users' ? (
+        <LandingUserMaintenance
+          pools={pools}
+          token={token}
+          authHeaders={authHeaders}
+          apiBase={API_BASE}
+          onRequireSignIn={() => setShowLogin(true)}
+          onOpenPlayerMaintenance={() => setActivePage('Players')}
+        />
       ) : (
         <section className="landing-placeholder-card">
           <div className="landing-hero-bar is-empty">
             <div>
               <p className="landing-eyebrow">Coming Soon</p>
               <h1>{activePage}</h1>
-              <p>This section is not wired up yet. Use `Squares`, `Players`, or `Admin` for now.</p>
+              <p>This section is not wired up yet. Use `Squares`, `Players`, `Users`, or `Admin` for now.</p>
             </div>
           </div>
         </section>

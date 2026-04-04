@@ -62,7 +62,8 @@ const createUserSchema = z.object({
         jerseyNum: z.number().int().min(0).max(99)
       })
     )
-    .optional()
+    .optional(),
+  poolIds: z.array(z.number().int().positive()).optional()
 });
 
 const updateUserSchema = createUserSchema.extend({
@@ -197,6 +198,8 @@ const hasDuplicateTeamAssignments = (assignments: Array<{ teamId: number; jersey
   return false;
 };
 
+const hasDuplicateIds = (ids: number[]): boolean => new Set(ids).size !== ids.length;
+
 const syncUserPlayerFlag = async (client: PoolClient, userId: number): Promise<void> => {
   const assignmentCount = await client.query<{ assignment_count: number }>(
     `
@@ -215,6 +218,30 @@ const syncUserPlayerFlag = async (client: PoolClient, userId: number): Promise<v
     `,
     [userId, (assignmentCount.rows[0]?.assignment_count ?? 0) > 0]
   );
+};
+
+const syncUserPoolAssignments = async (client: PoolClient, userId: number, poolIds: number[]): Promise<void> => {
+  const uniquePoolIds = Array.from(new Set(poolIds));
+
+  await client.query(
+    `
+      DELETE FROM football_pool.user_pool
+      WHERE user_id = $1
+    `,
+    [userId]
+  );
+
+  for (const poolId of uniquePoolIds) {
+    const userPoolId = await nextId(client, 'user_pool');
+
+    await client.query(
+      `
+        INSERT INTO football_pool.user_pool (id, user_id, pool_id, created_at)
+        VALUES ($1, $2, $3, NOW())
+      `,
+      [userPoolId, userId, poolId]
+    );
+  }
 };
 
 const createPlayerTeamAssignment = async (
@@ -273,6 +300,11 @@ setupRouter.post('/users', async (req, res) => {
     return;
   }
 
+  if (hasDuplicateIds(parsed.data.poolIds ?? [])) {
+    res.status(400).json({ error: 'A user cannot be assigned to the same pool more than once.' });
+    return;
+  }
+
   const client = await db.connect();
 
   try {
@@ -312,6 +344,10 @@ setupRouter.post('/users', async (req, res) => {
       for (const assignment of assignments) {
         await createPlayerTeamAssignment(client, id, assignment.teamId, assignment.jerseyNum);
       }
+    }
+
+    if (parsed.data.poolIds) {
+      await syncUserPoolAssignments(client, id, parsed.data.poolIds);
     }
 
     await client.query('COMMIT');
@@ -793,6 +829,11 @@ setupRouter.patch('/users/:userId', async (req, res) => {
     return;
   }
 
+  if (hasDuplicateIds(parsedBody.data.poolIds ?? [])) {
+    res.status(400).json({ error: 'A user cannot be assigned to the same pool more than once.' });
+    return;
+  }
+
   const client = await db.connect();
 
   try {
@@ -872,6 +913,10 @@ setupRouter.patch('/users/:userId', async (req, res) => {
       }
     }
 
+    if (parsedBody.data.poolIds !== undefined) {
+      await syncUserPoolAssignments(client, parsedParams.data.userId, parsedBody.data.poolIds);
+    }
+
     await client.query('COMMIT');
 
     res.json({ id: parsedParams.data.userId, message: 'User updated' });
@@ -895,7 +940,7 @@ setupRouter.delete('/users/:userId', async (req, res) => {
   }
 
   try {
-    const [teamAssignmentResult, playerAssignmentResult, poolAssignmentResult] = await Promise.all([
+    const [teamAssignmentResult, playerAssignmentResult, userPoolAssignmentResult, squareAssignmentResult] = await Promise.all([
       db.query<{ assignment_count: number }>(
         `
           SELECT COUNT(*)::int AS assignment_count
@@ -916,6 +961,14 @@ setupRouter.delete('/users/:userId', async (req, res) => {
       db.query<{ assignment_count: number }>(
         `
           SELECT COUNT(*)::int AS assignment_count
+          FROM football_pool.user_pool
+          WHERE user_id = $1
+        `,
+        [parsedParams.data.userId]
+      ),
+      db.query<{ assignment_count: number }>(
+        `
+          SELECT COUNT(*)::int AS assignment_count
           FROM football_pool.square
           WHERE participant_id = $1
         `,
@@ -925,15 +978,17 @@ setupRouter.delete('/users/:userId', async (req, res) => {
 
     const teamAssignments = teamAssignmentResult.rows[0]?.assignment_count ?? 0;
     const playerAssignments = playerAssignmentResult.rows[0]?.assignment_count ?? 0;
-    const poolAssignments = poolAssignmentResult.rows[0]?.assignment_count ?? 0;
+    const userPoolAssignments = userPoolAssignmentResult.rows[0]?.assignment_count ?? 0;
+    const squareAssignments = squareAssignmentResult.rows[0]?.assignment_count ?? 0;
 
-    if (teamAssignments > 0 || playerAssignments > 0 || poolAssignments > 0) {
+    if (teamAssignments > 0 || playerAssignments > 0 || userPoolAssignments > 0 || squareAssignments > 0) {
       res.status(409).json({
-        error: 'User cannot be deleted while assigned to teams or pools.',
+        error: 'User cannot be deleted while assigned to teams, pools, or squares.',
         assignments: {
           teamContacts: teamAssignments,
           playerTeams: playerAssignments,
-          poolSquares: poolAssignments
+          userPools: userPoolAssignments,
+          poolSquares: squareAssignments
         }
       });
       return;

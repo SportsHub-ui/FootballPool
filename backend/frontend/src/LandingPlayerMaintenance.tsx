@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { MouseEvent as ReactMouseEvent } from 'react'
 
 type LandingPool = {
   id: number
@@ -70,6 +71,9 @@ type Props = {
 
 const DEFAULT_HERO_COLOR = '#8a8f98'
 const DEFAULT_HERO_ACCENT = '#ffffff'
+const PLAYER_LIST_MIN_HEIGHT = 120
+const PLAYER_LIST_MAX_HEIGHT = 360
+const PLAYER_LIST_DEFAULT_HEIGHT = 170
 
 const normalizeValue = (value: string | null | undefined): string => (value ?? '').trim().toLowerCase()
 
@@ -105,6 +109,8 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
     phone: ''
   })
   const [playerAssignments, setPlayerAssignments] = useState<TeamAssignmentDraft[]>([])
+  const [isPlayerListExpanded, setIsPlayerListExpanded] = useState(true)
+  const [playerListHeight, setPlayerListHeight] = useState(PLAYER_LIST_DEFAULT_HEIGHT)
   const [isCreatingNew, setIsCreatingNew] = useState(false)
 
   const canManagePlayers = Boolean(token)
@@ -218,6 +224,32 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
   const onAddPlayer = (): void => {
     setError(null)
     loadPlayerIntoForm(null)
+  }
+
+  const togglePlayerListExpanded = (): void => {
+    setIsPlayerListExpanded((current) => !current)
+  }
+
+  const startPlayerListResize = (event: ReactMouseEvent<HTMLDivElement>): void => {
+    event.preventDefault()
+
+    const startY = event.clientY
+    const startHeight = playerListHeight
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const nextHeight = Math.min(
+        PLAYER_LIST_MAX_HEIGHT,
+        Math.max(PLAYER_LIST_MIN_HEIGHT, startHeight + (moveEvent.clientY - startY))
+      )
+      setPlayerListHeight(nextHeight)
+    }
+
+    const handleMouseUp = () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp, { once: true })
   }
 
   const updateAssignment = (teamId: number, changes: Partial<TeamAssignmentDraft>): void => {
@@ -394,13 +426,32 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
 
       {error ? <div className="error-banner landing-error-banner">{error}</div> : null}
 
-      <details className="landing-collapsible" open>
-        <summary>
-          <span>Players</span>
+      <details className="landing-collapsible" open={isPlayerListExpanded}>
+        <summary
+          onClick={(event) => {
+            event.preventDefault()
+            togglePlayerListExpanded()
+          }}
+        >
+          <span className="landing-summary-main">
+            <button
+              type="button"
+              className="landing-collapse-btn"
+              aria-label={isPlayerListExpanded ? 'Collapse players list' : 'Expand players list'}
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                togglePlayerListExpanded()
+              }}
+            >
+              {isPlayerListExpanded ? '−' : '+'}
+            </button>
+            <span>Players</span>
+          </span>
           <span className="landing-collapsible-count">{players.length}</span>
         </summary>
 
-        <div className="landing-player-list-wrap">
+        <div className="landing-player-list-wrap is-scrollable" style={isPlayerListExpanded ? { height: `${playerListHeight}px` } : undefined}>
           {loading ? (
             <p className="small">Loading players...</p>
           ) : players.length === 0 ? (
@@ -438,6 +489,19 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
         </div>
       </details>
 
+      {isPlayerListExpanded ? (
+        <div
+          className="landing-resize-bar"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize players list"
+          onMouseDown={startPlayerListResize}
+          title="Drag to resize the players list"
+        >
+          <span />
+        </div>
+      ) : null}
+
       <div className="landing-player-maintenance-grid">
         <article className="landing-maintenance-card">
           <div className="landing-maintenance-header">
@@ -445,9 +509,22 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
               <h2>Player Maintenance</h2>
               <p className="small">Select a player row to edit, or add a new player record.</p>
             </div>
-            <button type="button" className="secondary compact" onClick={onAddPlayer}>
-              Add
-            </button>
+            <div className="landing-maintenance-actions">
+              <button type="button" className="secondary compact" onClick={onAddPlayer}>
+                Add
+              </button>
+              <button type="button" className="primary" onClick={() => void onSavePlayer()} disabled={saving}>
+                {saving ? 'Saving...' : isCreatingNew ? 'Save new player' : 'Save player'}
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => void onDeletePlayer()}
+                disabled={saving || selectedPlayerId == null || playerAssignments.some((assignment) => assignment.assigned)}
+              >
+                {saving ? 'Working...' : 'Delete'}
+              </button>
+            </div>
           </div>
 
           <div className="landing-player-fields">
@@ -486,20 +563,6 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
                 placeholder="(555) 555-1234"
               />
             </label>
-          </div>
-
-          <div className="landing-maintenance-actions">
-            <button type="button" className="primary" onClick={() => void onSavePlayer()} disabled={saving}>
-              {saving ? 'Saving...' : isCreatingNew ? 'Save new player' : 'Save player'}
-            </button>
-            <button
-              type="button"
-              className="secondary"
-              onClick={() => void onDeletePlayer()}
-              disabled={saving || selectedPlayerId == null || playerAssignments.some((assignment) => assignment.assigned)}
-            >
-              {saving ? 'Working...' : 'Delete'}
-            </button>
           </div>
 
           {!canManagePlayers ? <p className="small">Sign in to add, update, or delete player records.</p> : null}
