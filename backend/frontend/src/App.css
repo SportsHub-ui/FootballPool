@@ -1071,11 +1071,11 @@ button:disabled {
 .landing-page-shell {
   --landing-gap: clamp(0.3rem, 0.75vh, 0.75rem);
   --landing-side-width: clamp(120px, 12vw, 160px);
-  --landing-opponent-width: clamp(42px, 4.8vw, 52px);
-  --landing-axis-width: clamp(2rem, 2.4vw, 2.5rem);
-  --landing-grid-gap: 0.25rem;
-  --landing-digit-size: clamp(2rem, 3.2vh, 2.4rem);
-  --landing-square-size: clamp(2.7rem, 4.9vh, 3.45rem);
+  --landing-opponent-width: clamp(36px, 4vw, 44px);
+  --landing-axis-width: clamp(1.7rem, 2vw, 2rem);
+  --landing-grid-gap: 0.18rem;
+  --landing-digit-size: clamp(1.55rem, 2.4vh, 1.85rem);
+  --landing-square-size: clamp(2.05rem, 3.8vh, 2.65rem);
   min-height: 100vh;
   min-height: 100dvh;
   background: linear-gradient(180deg, #eef2f7 0%, #f8fafc 42%, #eef4f8 100%);
