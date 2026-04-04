@@ -1,7 +1,20 @@
 const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');
-require('dotenv').config();
+const dotenv = require('dotenv');
+
+const envPaths = [
+  path.resolve(process.cwd(), '.env'),
+  path.resolve(process.cwd(), 'backend/.env'),
+  path.resolve(__dirname, '..', '.env')
+];
+
+for (const envPath of envPaths) {
+  const result = dotenv.config({ path: envPath, override: true });
+  if (!result.error) {
+    break;
+  }
+}
 
 async function run() {
   const databaseUrl = process.env.DATABASE_URL;
