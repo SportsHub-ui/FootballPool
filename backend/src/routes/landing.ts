@@ -79,7 +79,23 @@ const loadAccessiblePool = async (client: PoolClient, poolId: number, userId: nu
   return result.rows[0] ?? null;
 };
 
-const loadAccessibleTeams = async (client: PoolClient, userId: number | null) => {
+const loadLandingTeams = async (client: PoolClient, userId: number | null, canManage: boolean) => {
+  if (canManage) {
+    const result = await client.query(
+      `SELECT
+          id,
+          team_name,
+          primary_color,
+          secondary_color,
+          logo_file,
+          FALSE AS default_flg
+       FROM football_pool.team
+       ORDER BY team_name NULLS LAST, id`
+    );
+
+    return result.rows;
+  }
+
   const result = await client.query(
     `SELECT *
      FROM (
@@ -131,13 +147,14 @@ landingRouter.get('/pools', async (req, res) => {
 landingRouter.get('/players', async (req, res) => {
   try {
     const userId = getSignedInUserId(req);
+    const canManage = canManageLandingMaintenance(req);
     const client = await db.connect();
 
     try {
-      const teams = await loadAccessibleTeams(client, userId);
+      const teams = await loadLandingTeams(client, userId, canManage);
       const teamIds = teams.map((team) => Number(team.id)).filter((teamId) => Number.isFinite(teamId));
 
-      if (teamIds.length === 0) {
+      if (!canManage && teamIds.length === 0) {
         return res.json({
           signedIn: userId !== null,
           teams,
@@ -159,16 +176,19 @@ landingRouter.get('/players', async (req, res) => {
          FROM football_pool.users u
          LEFT JOIN football_pool.player_team pt
            ON pt.user_id = u.id
-          AND pt.team_id = ANY($1::int[])
+          AND ($2::boolean = TRUE OR pt.team_id = ANY($1::int[]))
          LEFT JOIN football_pool.team t
            ON t.id = pt.team_id
          WHERE pt.user_id IS NOT NULL
             OR (
               COALESCE(u.is_player_flg, FALSE) = TRUE
-              AND NOT EXISTS (
-                SELECT 1
-                FROM football_pool.player_team other_pt
-                WHERE other_pt.user_id = u.id
+              AND (
+                $2::boolean = TRUE
+                OR NOT EXISTS (
+                  SELECT 1
+                  FROM football_pool.player_team other_pt
+                  WHERE other_pt.user_id = u.id
+                )
               )
             )
          ORDER BY u.last_name NULLS LAST,
@@ -176,7 +196,7 @@ landingRouter.get('/players', async (req, res) => {
                   u.id,
                   t.team_name NULLS LAST,
                   pt.team_id NULLS LAST`,
-        [teamIds]
+        [teamIds, canManage]
       );
 
       type LandingPlayerSummary = {
@@ -236,7 +256,7 @@ landingRouter.get('/users', async (req, res) => {
 
     try {
       const pools = await loadAccessiblePools(client, userId);
-      const teams = await loadAccessibleTeams(client, userId);
+      const teams = await loadLandingTeams(client, userId, canManage);
       const poolIds = pools.map((pool) => Number(pool.id)).filter((poolId) => Number.isFinite(poolId));
       const teamIds = teams.map((team) => Number(team.id)).filter((teamId) => Number.isFinite(teamId));
 
