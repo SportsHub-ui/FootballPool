@@ -31,6 +31,7 @@ type PoolRecord = {
 type GameRecord = {
   id: number
   pool_id: number
+  week_num: number | null
   opponent: string
   game_dt: string
   is_simulation: boolean
@@ -58,6 +59,7 @@ const SCHEDULE_LIST_MIN_HEIGHT = 120
 const SCHEDULE_LIST_MAX_HEIGHT = 360
 const SCHEDULE_LIST_DEFAULT_HEIGHT = 170
 const NFL_TEAMS = [
+  'BYE',
   'Arizona Cardinals',
   'Atlanta Falcons',
   'Baltimore Ravens',
@@ -92,7 +94,10 @@ const NFL_TEAMS = [
   'Washington Commanders'
 ] as const
 
-const formatScheduleName = (game: GameRecord): string => `${new Date(game.game_dt).toLocaleDateString()} • ${game.opponent}`
+const formatScheduleName = (game: GameRecord): string => {
+  const weekLabel = game.week_num != null ? `Week ${game.week_num} • ` : ''
+  return `${weekLabel}${new Date(game.game_dt).toLocaleDateString()} • ${game.opponent}`
+}
 const toDateInputValue = (value: string): string => {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ''
@@ -111,6 +116,7 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
   const [scheduleListHeight, setScheduleListHeight] = useState(SCHEDULE_LIST_DEFAULT_HEIGHT)
   const [scheduleForm, setScheduleForm] = useState({
     poolId: '',
+    weekNum: '',
     opponent: '',
     gameDate: '',
     isSimulation: false
@@ -135,6 +141,7 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
     setIsCreatingNew(game == null)
     setScheduleForm({
       poolId: game?.pool_id != null ? String(game.pool_id) : '',
+      weekNum: game?.week_num != null ? String(game.week_num) : '',
       opponent: game?.opponent ?? '',
       gameDate: game?.game_dt ? toDateInputValue(game.game_dt) : '',
       isSimulation: Boolean(game?.is_simulation)
@@ -168,7 +175,11 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
 
       const nextGames = gameGroups
         .flat()
-        .sort((left, right) => new Date(right.game_dt).getTime() - new Date(left.game_dt).getTime())
+        .sort(
+          (left, right) =>
+            (left.week_num ?? Number.MAX_SAFE_INTEGER) - (right.week_num ?? Number.MAX_SAFE_INTEGER) ||
+            new Date(left.game_dt).getTime() - new Date(right.game_dt).getTime()
+        )
 
       setPoolRecords(nextPools)
       setGames(nextGames)
@@ -264,8 +275,8 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
   }
 
   const onSaveSchedule = async (): Promise<void> => {
-    if (!scheduleForm.poolId || !scheduleForm.opponent.trim() || !scheduleForm.gameDate) {
-      setError('Pool, opponent, and game date are required.')
+    if (!scheduleForm.poolId || !scheduleForm.weekNum || !scheduleForm.opponent.trim() || !scheduleForm.gameDate) {
+      setError('Pool, week number, opponent, and game date are required.')
       return
     }
 
@@ -281,6 +292,7 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
     try {
       const payload = {
         poolId: Number(scheduleForm.poolId),
+        weekNum: Number(scheduleForm.weekNum),
         opponent: scheduleForm.opponent.trim(),
         gameDate: scheduleForm.gameDate,
         isSimulation: scheduleForm.isSimulation
@@ -397,6 +409,7 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
             <table className="landing-player-table">
               <thead>
                 <tr>
+                  <th>Week</th>
                   <th>Date</th>
                   <th>Opponent</th>
                   <th>Pool</th>
@@ -413,6 +426,7 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
                       className={game.id === selectedGameId ? 'is-selected' : ''}
                       onClick={() => onSelectGame(game.id)}
                     >
+                      <td>{game.week_num ?? '—'}</td>
                       <td>{new Date(game.game_dt).toLocaleDateString()}</td>
                       <td>{game.opponent}</td>
                       <td>{pool?.pool_name?.trim() || 'Unnamed pool'}</td>
@@ -487,6 +501,18 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
             </label>
 
             <label className="field-block">
+              <span>Week number</span>
+              <input
+                type="number"
+                min="1"
+                max="25"
+                value={scheduleForm.weekNum}
+                onChange={(event) => setScheduleForm((current) => ({ ...current, weekNum: event.target.value }))}
+                disabled={saving}
+              />
+            </label>
+
+            <label className="field-block">
               <span>Opponent</span>
               <select
                 value={scheduleForm.opponent}
@@ -540,6 +566,11 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
             <div className="landing-selected-summary">
               <strong>Pool</strong>
               <p className="small">{selectedPool?.pool_name ?? 'No pool selected'}</p>
+            </div>
+
+            <div className="landing-selected-summary">
+              <strong>Week</strong>
+              <p className="small">{(selectedGame?.week_num ?? scheduleForm.weekNum) || 'No week selected'}</p>
             </div>
 
             <div className="landing-selected-summary">

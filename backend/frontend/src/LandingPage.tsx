@@ -24,6 +24,7 @@ type LandingPool = {
 type LandingGame = {
   id: number
   pool_id: number
+  week_num: number | null
   opponent: string
   game_dt: string
   is_simulation: boolean
@@ -179,12 +180,18 @@ const isCompletedGame = (game: LandingGame | null): boolean => {
 
 const formatGameOption = (game: LandingGame, primaryTeam: string): string => {
   const dateLabel = formatDate(game.game_dt)
+  const weekLabel = game.week_num != null ? `Week ${game.week_num} • ` : ''
+  const isByeWeek = game.opponent.trim().toUpperCase() === 'BYE'
 
   if (isCompletedGame(game)) {
-    return `${dateLabel} • ${primaryTeam} ${game.q4_primary_score}-${game.q4_opponent_score} ${game.opponent}`
+    return `${weekLabel}${dateLabel} • ${primaryTeam} ${game.q4_primary_score}-${game.q4_opponent_score} ${game.opponent}`
   }
 
-  return `${dateLabel} • ${primaryTeam} vs ${game.opponent}`
+  if (isByeWeek) {
+    return `${weekLabel}${dateLabel} • ${primaryTeam} BYE`
+  }
+
+  return `${weekLabel}${dateLabel} • ${primaryTeam} vs ${game.opponent}`
 }
 
 const normalizeDigits = (value: Array<number | string> | null | undefined): Array<number | string> => {

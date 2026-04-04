@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS football_pool.game (
   opponent VARCHAR,
   game_dt DATE,
   pool_id INTEGER,
+  week_num INTEGER,
   q1_primary_score INTEGER,
   q2_primary_score INTEGER,
   q3_primary_score INTEGER,

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../config/db';
 import { requireRole } from '../middleware/auth';
+import { importPoolScheduleFromEspn } from '../services/scheduleImport';
 import { processGameScores } from '../services/scoreProcessing';
 
 export const gamesRouter = Router();
@@ -11,6 +12,7 @@ gamesRouter.use(requireRole('organizer'));
 
 const createGameSchema = z.object({
   poolId: z.number().int().positive(),
+  weekNum: z.number().int().min(1).max(25).nullable().optional(),
   opponent: z.string().min(1),
   gameDate: z.string().refine((d) => !isNaN(Date.parse(d)), 'Invalid date format'),
   isSimulation: z.boolean().optional().default(false)
@@ -46,12 +48,12 @@ gamesRouter.post('/', async (req, res) => {
 
       const result = await client.query(
         `INSERT INTO football_pool.game 
-         (id, pool_id, opponent, game_dt, is_simulation)
-         VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, pool_id, opponent, game_dt, is_simulation, 
+         (id, pool_id, week_num, opponent, game_dt, is_simulation)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id, pool_id, week_num, opponent, game_dt, is_simulation, 
                    q1_primary_score, q1_opponent_score, q2_primary_score, q2_opponent_score,
                    q3_primary_score, q3_opponent_score, q4_primary_score, q4_opponent_score`,
-        [gameId, input.poolId, input.opponent, input.gameDate, input.isSimulation]
+        [gameId, input.poolId, input.weekNum ?? null, input.opponent, input.gameDate, input.isSimulation]
       );
 
       res.json({ message: 'Game created', game: result.rows[0] });
@@ -68,6 +70,39 @@ gamesRouter.post('/', async (req, res) => {
   }
 });
 
+// POST /api/games/import/pool/:poolId - Look up and auto-fill the season schedule for the pool's preferred team
+gamesRouter.post('/import/pool/:poolId', async (req, res) => {
+  try {
+    const { poolId } = z.object({ poolId: z.coerce.number().int().positive() }).parse(req.params);
+
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await importPoolScheduleFromEspn(client, poolId);
+      await client.query('COMMIT');
+
+      return res.json({
+        message: `Fill Schedule complete for ${result.teamName} (${result.season}). Added ${result.created} missing game(s) and skipped ${result.skipped} existing game(s).`,
+        result
+      });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({ error: error.errors });
+    }
+
+    console.error('Game schedule import error:', error);
+    return res.status(500).json({
+      error: error instanceof Error ? error.message : 'Failed to import schedule'
+    });
+  }
+});
+
 // PATCH /api/games/:gameId - Update a game schedule
 gamesRouter.patch('/:gameId', async (req, res) => {
   try {
@@ -79,14 +114,15 @@ gamesRouter.patch('/:gameId', async (req, res) => {
       const result = await client.query(
         `UPDATE football_pool.game
          SET pool_id = $2,
-             opponent = $3,
-             game_dt = $4,
-             is_simulation = $5
+             week_num = $3,
+             opponent = $4,
+             game_dt = $5,
+             is_simulation = $6
          WHERE id = $1
-         RETURNING id, pool_id, opponent, game_dt, is_simulation,
+         RETURNING id, pool_id, week_num, opponent, game_dt, is_simulation,
                    q1_primary_score, q1_opponent_score, q2_primary_score, q2_opponent_score,
                    q3_primary_score, q3_opponent_score, q4_primary_score, q4_opponent_score`,
-        [gameId, input.poolId, input.opponent, input.gameDate, input.isSimulation]
+        [gameId, input.poolId, input.weekNum ?? null, input.opponent, input.gameDate, input.isSimulation]
       );
 
       if (result.rows.length === 0) {
@@ -198,12 +234,12 @@ gamesRouter.get('/', async (req, res) => {
     const client = await db.connect();
     try {
       const result = await client.query(
-        `SELECT id, pool_id, opponent, game_dt, is_simulation,
+        `SELECT id, pool_id, week_num, opponent, game_dt, is_simulation,
                 q1_primary_score, q1_opponent_score, q2_primary_score, q2_opponent_score,
                 q3_primary_score, q3_opponent_score, q4_primary_score, q4_opponent_score
          FROM football_pool.game
          WHERE pool_id = $1
-         ORDER BY game_dt DESC`,
+         ORDER BY COALESCE(week_num, 999), game_dt ASC, id ASC`,
         [poolId]
       );
 
@@ -229,7 +265,7 @@ gamesRouter.get('/:gameId', async (req, res) => {
     const client = await db.connect();
     try {
       const result = await client.query(
-        `SELECT id, pool_id, opponent, game_dt, is_simulation,
+        `SELECT id, pool_id, week_num, opponent, game_dt, is_simulation,
                 q1_primary_score, q1_opponent_score, q2_primary_score, q2_opponent_score,
                 q3_primary_score, q3_opponent_score, q4_primary_score, q4_opponent_score
          FROM football_pool.game

@@ -118,6 +118,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [teamOptions, setTeamOptions] = useState<TeamRecord[]>([])
   const [poolRecords, setPoolRecords] = useState<PoolRecord[]>([])
   const [poolGames, setPoolGames] = useState<GameRecord[]>([])
@@ -173,11 +174,13 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
       setTeamOptions([])
       loadPoolIntoForm(null)
       setError(null)
+      setNotice(null)
       return
     }
 
     setLoading(true)
     setError(null)
+    setNotice(null)
 
     try {
       const [teamResult, poolResult] = await Promise.all([
@@ -395,6 +398,56 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     }
   }
 
+  const onFillSchedule = async (): Promise<void> => {
+    if (!selectedPoolId) {
+      setError('Save or select a pool first before filling its schedule.')
+      return
+    }
+
+    if (!canManagePools) {
+      setError('Sign in as an organizer to fill schedules.')
+      onRequireSignIn()
+      return
+    }
+
+    const confirmed = window.confirm(
+      `Fill in the missing schedule games for ${formatPoolName(selectedPool ?? { id: selectedPoolId, pool_name: null })}? Existing games will be skipped.`
+    )
+
+    if (!confirmed) {
+      return
+    }
+
+    setSaving(true)
+    setError(null)
+    setNotice(null)
+
+    try {
+      const result = await request<{
+        message?: string
+        result?: { created?: number; skipped?: number; byeWeeks?: number[]; teamName?: string; season?: number }
+      }>(`/api/games/import/pool/${selectedPoolId}`, {
+        method: 'POST',
+        headers: authHeaders
+      })
+
+      const created = result.result?.created ?? 0
+      const skipped = result.result?.skipped ?? 0
+      const byeWeeks = result.result?.byeWeeks ?? []
+      const byeLabel = byeWeeks.length > 0 ? ` BYE week${byeWeeks.length === 1 ? '' : 's'}: ${byeWeeks.join(', ')}.` : ''
+
+      await loadPoolData(selectedPoolId)
+
+      setNotice(
+        result.message ?? `Fill Schedule complete. Added ${created} missing game${created === 1 ? '' : 's'} and skipped ${skipped} existing game${skipped === 1 ? '' : 's'}.${byeLabel}`
+      )
+    } catch (fillError) {
+      setError(fillError instanceof Error ? fillError.message : 'Failed to fill schedule')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const onDeletePool = async (): Promise<void> => {
     if (!selectedPoolId) {
       setError('Select a pool to delete.')
@@ -439,6 +492,11 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
       </div>
 
       {error ? <div className="error-banner landing-error-banner">{error}</div> : null}
+      {notice ? (
+        <article className="panel">
+          <p className="small landing-readonly-note">{notice}</p>
+        </article>
+      ) : null}
 
       <details className="landing-collapsible" open={isPoolListExpanded}>
         <summary
@@ -526,6 +584,9 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
               <button type="button" className="secondary compact" onClick={onAddPool} disabled={saving}>
                 Add
               </button>
+              <button type="button" className="secondary" onClick={onFillSchedule} disabled={saving || !selectedPoolId}>
+                {saving ? 'Filling...' : 'Fill Schedule'}
+              </button>
               <button type="button" className="primary" onClick={onSavePool} disabled={saving}>
                 {saving ? 'Saving...' : 'Save'}
               </button>
@@ -539,7 +600,11 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
             <div className="landing-selected-summary-header">
               <div>
                 <strong>{selectedPool ? formatPoolName(selectedPool) : 'New pool'}</strong>
-                <p className="small">{selectedPool ? 'Update the pool details below.' : 'Enter the pool details below.'}</p>
+                <p className="small">
+                  {selectedPool
+                    ? 'Update the pool details below or use Fill Schedule to add only the missing weeks.'
+                    : 'Enter the pool details below. Save the pool before using Fill Schedule.'}
+                </p>
               </div>
             </div>
           </div>

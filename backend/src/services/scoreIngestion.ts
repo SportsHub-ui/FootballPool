@@ -70,6 +70,10 @@ const getScoresFromEspn = async (gameId: number): Promise<QuarterScoresInput> =>
       primary_team: string;
     };
 
+    if (normalize(game.opponent) === 'bye') {
+      throw new Error('BYE weeks do not have scores to ingest');
+    }
+
     const dateParam = toYyyyMmDd(new Date(game.game_dt));
     const response = await fetch(
       `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${dateParam}`
@@ -163,6 +167,7 @@ export const listEligibleGamesForIngestion = async (): Promise<number[]> => {
       `SELECT id
        FROM football_pool.game
        WHERE game_dt <= CURRENT_DATE
+         AND UPPER(COALESCE(opponent, '')) <> 'BYE'
        ORDER BY game_dt DESC
        LIMIT 25`
     );

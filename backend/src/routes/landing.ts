@@ -407,6 +407,7 @@ landingRouter.get('/pools/:poolId/games', async (req, res) => {
       const result = await client.query(
         `SELECT g.id,
                 g.pool_id,
+                g.week_num,
                 g.opponent,
                 g.game_dt,
                 g.is_simulation,
@@ -422,7 +423,7 @@ landingRouter.get('/pools/:poolId/games', async (req, res) => {
                 g.q4_opponent_score
          FROM football_pool.game g
          WHERE g.pool_id = $1
-         ORDER BY g.game_dt ASC, g.id ASC`,
+         ORDER BY COALESCE(g.week_num, 999), g.game_dt ASC, g.id ASC`,
         [poolId]
       );
 
