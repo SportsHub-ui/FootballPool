@@ -19,6 +19,22 @@ type TeamRecord = {
   team_name: string | null
 }
 
+type GameRecord = {
+  id: number
+  pool_id: number
+  opponent: string
+  game_dt: string
+  is_simulation: boolean
+  q1_primary_score: number | null
+  q1_opponent_score: number | null
+  q2_primary_score: number | null
+  q2_opponent_score: number | null
+  q3_primary_score: number | null
+  q3_opponent_score: number | null
+  q4_primary_score: number | null
+  q4_opponent_score: number | null
+}
+
 type PoolRecord = {
   id: number
   pool_name: string | null
@@ -46,11 +62,57 @@ const DEFAULT_HERO_ACCENT = '#ffffff'
 const POOL_LIST_MIN_HEIGHT = 120
 const POOL_LIST_MAX_HEIGHT = 360
 const POOL_LIST_DEFAULT_HEIGHT = 170
+const TOTAL_SQUARES = 100
+const NFL_SEASON_GAMES = 17
+const NFL_TEAMS = [
+  'Arizona Cardinals',
+  'Atlanta Falcons',
+  'Baltimore Ravens',
+  'Buffalo Bills',
+  'Carolina Panthers',
+  'Chicago Bears',
+  'Cincinnati Bengals',
+  'Cleveland Browns',
+  'Dallas Cowboys',
+  'Denver Broncos',
+  'Detroit Lions',
+  'Green Bay Packers',
+  'Houston Texans',
+  'Indianapolis Colts',
+  'Jacksonville Jaguars',
+  'Kansas City Chiefs',
+  'Las Vegas Raiders',
+  'Los Angeles Chargers',
+  'Los Angeles Rams',
+  'Miami Dolphins',
+  'Minnesota Vikings',
+  'New England Patriots',
+  'New Orleans Saints',
+  'New York Giants',
+  'New York Jets',
+  'Philadelphia Eagles',
+  'Pittsburgh Steelers',
+  'San Francisco 49ers',
+  'Seattle Seahawks',
+  'Tampa Bay Buccaneers',
+  'Tennessee Titans',
+  'Washington Commanders'
+] as const
 
 const formatCurrency = (value: number | null | undefined): string =>
   value == null ? '—' : `$${value.toLocaleString()}`
 
-const formatPoolName = (pool: Pick<PoolRecord, 'id' | 'pool_name'>): string => pool.pool_name ?? `Pool ${pool.id}`
+const formatCurrencyInput = (value: number | null | undefined): string => `$${Math.max(0, Number(value ?? 0)).toLocaleString()}`
+
+const parseCurrencyInput = (value: string): number => {
+  const digits = value.replace(/[^\d]/g, '')
+  return digits ? Number(digits) : 0
+}
+
+const hasRecordedQuarter = (primaryScore: number | null, opponentScore: number | null): boolean =>
+  primaryScore != null && opponentScore != null
+
+const formatPoolName = (pool: Pick<PoolRecord, 'id' | 'pool_name'>): string => pool.pool_name?.trim() || 'Unnamed Pool'
 
 export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onRequireSignIn }: Props) {
   const [loading, setLoading] = useState(false)
@@ -58,6 +120,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   const [error, setError] = useState<string | null>(null)
   const [teamOptions, setTeamOptions] = useState<TeamRecord[]>([])
   const [poolRecords, setPoolRecords] = useState<PoolRecord[]>([])
+  const [poolGames, setPoolGames] = useState<GameRecord[]>([])
   const [selectedPoolId, setSelectedPoolId] = useState<number | null>(null)
   const [isCreatingNew, setIsCreatingNew] = useState(false)
   const [isPoolListExpanded, setIsPoolListExpanded] = useState(true)
@@ -66,7 +129,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     poolName: '',
     teamId: '',
     season: new Date().getFullYear(),
-    primaryTeam: '',
+    primaryTeam: 'Green Bay Packers',
     squareCost: 0,
     q1Payout: 0,
     q2Payout: 0,
@@ -95,7 +158,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
       poolName: pool?.pool_name ?? '',
       teamId: pool?.team_id != null ? String(pool.team_id) : '',
       season: pool?.season ?? new Date().getFullYear(),
-      primaryTeam: pool?.primary_team ?? '',
+      primaryTeam: pool?.primary_team ?? 'Green Bay Packers',
       squareCost: pool?.square_cost ?? 0,
       q1Payout: pool?.q1_payout ?? 0,
       q2Payout: pool?.q2_payout ?? 0,
@@ -173,6 +236,70 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     () => poolRecords.find((pool) => pool.id === selectedPoolId) ?? null,
     [poolRecords, selectedPoolId]
   )
+
+  useEffect(() => {
+    if (!token || !selectedPoolId) {
+      setPoolGames([])
+      return
+    }
+
+    let isActive = true
+
+    const loadPoolGames = async (): Promise<void> => {
+      try {
+        const games = await request<GameRecord[]>(`/api/games?poolId=${selectedPoolId}`, {
+          headers: authHeaders
+        })
+
+        if (isActive) {
+          setPoolGames(games)
+        }
+      } catch (fetchError) {
+        if (isActive) {
+          setPoolGames([])
+          setError((current) => current ?? (fetchError instanceof Error ? fetchError.message : 'Failed to load payout progress'))
+        }
+      }
+    }
+
+    void loadPoolGames()
+
+    return () => {
+      isActive = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPoolId, token])
+
+  const payoutSummary = useMemo(() => {
+    const squareCost = Math.max(0, Number(poolForm.squareCost) || 0)
+    const q1Payout = Math.max(0, Number(poolForm.q1Payout) || 0)
+    const q2Payout = Math.max(0, Number(poolForm.q2Payout) || 0)
+    const q3Payout = Math.max(0, Number(poolForm.q3Payout) || 0)
+    const q4Payout = Math.max(0, Number(poolForm.q4Payout) || 0)
+
+    const totalRevenue = squareCost * TOTAL_SQUARES
+    const totalPayout = (q1Payout + q2Payout + q3Payout + q4Payout) * NFL_SEASON_GAMES
+
+    const rawPaidOutToDate = poolGames.reduce((sum, game) => {
+      return (
+        sum +
+        (hasRecordedQuarter(game.q1_primary_score, game.q1_opponent_score) ? q1Payout : 0) +
+        (hasRecordedQuarter(game.q2_primary_score, game.q2_opponent_score) ? q2Payout : 0) +
+        (hasRecordedQuarter(game.q3_primary_score, game.q3_opponent_score) ? q3Payout : 0) +
+        (hasRecordedQuarter(game.q4_primary_score, game.q4_opponent_score) ? q4Payout : 0)
+      )
+    }, 0)
+
+    const paidOutToDate = Math.min(rawPaidOutToDate, totalPayout)
+
+    return {
+      totalRevenue,
+      totalPayout,
+      totalRaisedForTeam: totalRevenue - totalPayout,
+      paidOutToDate,
+      remainingToBePaid: Math.max(0, totalPayout - paidOutToDate)
+    }
+  }, [poolForm.q1Payout, poolForm.q2Payout, poolForm.q3Payout, poolForm.q4Payout, poolForm.squareCost, poolGames])
 
   const onSelectPool = (poolId: number): void => {
     const pool = poolRecords.find((entry) => entry.id === poolId) ?? null
@@ -412,7 +539,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
             <div className="landing-selected-summary-header">
               <div>
                 <strong>{selectedPool ? formatPoolName(selectedPool) : 'New pool'}</strong>
-                <p className="small">{selectedPool ? `Pool ID ${selectedPool.id}` : 'Enter the pool details below.'}</p>
+                <p className="small">{selectedPool ? 'Update the pool details below.' : 'Enter the pool details below.'}</p>
               </div>
             </div>
           </div>
@@ -454,20 +581,27 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
             </label>
 
             <label className="field-block">
-              <span>Primary team label</span>
-              <input
+              <span>Primary Team</span>
+              <select
                 value={poolForm.primaryTeam}
                 onChange={(event) => setPoolForm((current) => ({ ...current, primaryTeam: event.target.value }))}
                 disabled={saving}
-              />
+              >
+                {NFL_TEAMS.map((teamName) => (
+                  <option key={teamName} value={teamName}>
+                    {teamName}
+                  </option>
+                ))}
+              </select>
             </label>
 
             <label className="field-block">
               <span>Square cost</span>
               <input
-                type="number"
-                value={poolForm.squareCost}
-                onChange={(event) => setPoolForm((current) => ({ ...current, squareCost: Number(event.target.value) }))}
+                type="text"
+                inputMode="numeric"
+                value={formatCurrencyInput(poolForm.squareCost)}
+                onChange={(event) => setPoolForm((current) => ({ ...current, squareCost: parseCurrencyInput(event.target.value) }))}
                 disabled={saving}
               />
             </label>
@@ -475,9 +609,10 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
             <label className="field-block">
               <span>Q1 payout</span>
               <input
-                type="number"
-                value={poolForm.q1Payout}
-                onChange={(event) => setPoolForm((current) => ({ ...current, q1Payout: Number(event.target.value) }))}
+                type="text"
+                inputMode="numeric"
+                value={formatCurrencyInput(poolForm.q1Payout)}
+                onChange={(event) => setPoolForm((current) => ({ ...current, q1Payout: parseCurrencyInput(event.target.value) }))}
                 disabled={saving}
               />
             </label>
@@ -485,9 +620,10 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
             <label className="field-block">
               <span>Q2 payout</span>
               <input
-                type="number"
-                value={poolForm.q2Payout}
-                onChange={(event) => setPoolForm((current) => ({ ...current, q2Payout: Number(event.target.value) }))}
+                type="text"
+                inputMode="numeric"
+                value={formatCurrencyInput(poolForm.q2Payout)}
+                onChange={(event) => setPoolForm((current) => ({ ...current, q2Payout: parseCurrencyInput(event.target.value) }))}
                 disabled={saving}
               />
             </label>
@@ -495,9 +631,10 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
             <label className="field-block">
               <span>Q3 payout</span>
               <input
-                type="number"
-                value={poolForm.q3Payout}
-                onChange={(event) => setPoolForm((current) => ({ ...current, q3Payout: Number(event.target.value) }))}
+                type="text"
+                inputMode="numeric"
+                value={formatCurrencyInput(poolForm.q3Payout)}
+                onChange={(event) => setPoolForm((current) => ({ ...current, q3Payout: parseCurrencyInput(event.target.value) }))}
                 disabled={saving}
               />
             </label>
@@ -505,9 +642,10 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
             <label className="field-block">
               <span>Q4 payout</span>
               <input
-                type="number"
-                value={poolForm.q4Payout}
-                onChange={(event) => setPoolForm((current) => ({ ...current, q4Payout: Number(event.target.value) }))}
+                type="text"
+                inputMode="numeric"
+                value={formatCurrencyInput(poolForm.q4Payout)}
+                onChange={(event) => setPoolForm((current) => ({ ...current, q4Payout: parseCurrencyInput(event.target.value) }))}
                 disabled={saving}
               />
             </label>
@@ -524,17 +662,35 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
           </div>
 
           <div className="landing-readonly-panel">
-            <div className="landing-selected-summary">
-              <strong>Square cost</strong>
-              <p className="small">{formatCurrency(poolForm.squareCost)}</p>
+            <div className="landing-payout-summary-block">
+              <div className="landing-payout-summary-line">
+                <span>Total Revenue:</span>
+                <strong>{formatCurrency(payoutSummary.totalRevenue)}</strong>
+              </div>
+
+              <div className="landing-payout-summary-line">
+                <span>Total Payout:</span>
+                <strong>{formatCurrency(payoutSummary.totalPayout)}</strong>
+              </div>
+
+              <div className="landing-payout-summary-divider" />
+
+              <div className="landing-payout-summary-line is-total">
+                <span>Total Raised:</span>
+                <strong>{formatCurrency(payoutSummary.totalRaisedForTeam)}</strong>
+              </div>
             </div>
 
-            <div className="landing-selected-summary">
-              <strong>Quarter payouts</strong>
-              <p className="small">Q1: {formatCurrency(poolForm.q1Payout)}</p>
-              <p className="small">Q2: {formatCurrency(poolForm.q2Payout)}</p>
-              <p className="small">Q3: {formatCurrency(poolForm.q3Payout)}</p>
-              <p className="small">Q4: {formatCurrency(poolForm.q4Payout)}</p>
+            <div className="landing-payout-summary-block">
+              <div className="landing-payout-summary-line">
+                <span>Total Paid To Date:</span>
+                <strong>{formatCurrency(payoutSummary.paidOutToDate)}</strong>
+              </div>
+
+              <div className="landing-payout-summary-line">
+                <span>Remaining To Be Paid:</span>
+                <strong>{formatCurrency(payoutSummary.remainingToBePaid)}</strong>
+              </div>
             </div>
           </div>
         </aside>

@@ -381,7 +381,7 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
                     >
                       <td>{new Date(game.game_dt).toLocaleDateString()}</td>
                       <td>{game.opponent}</td>
-                      <td>{pool?.pool_name ?? `Pool ${game.pool_id}`}</td>
+                      <td>{pool?.pool_name?.trim() || 'Unnamed pool'}</td>
                       <td>{game.is_simulation ? 'Simulation' : 'Live'}</td>
                     </tr>
                   )
@@ -430,7 +430,7 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
             <div className="landing-selected-summary-header">
               <div>
                 <strong>{selectedGame ? formatScheduleName(selectedGame) : 'New schedule'}</strong>
-                <p className="small">{selectedGame ? `Game ID ${selectedGame.id}` : 'Enter the schedule details below.'}</p>
+                <p className="small">{selectedGame ? 'Update the schedule details below.' : 'Enter the schedule details below.'}</p>
               </div>
             </div>
           </div>
@@ -446,7 +446,7 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
                 <option value="">Select pool</option>
                 {poolRecords.map((pool) => (
                   <option key={pool.id} value={pool.id}>
-                    {(pool.team_name ?? pool.primary_team ?? `Pool ${pool.id}`) + ' — ' + (pool.pool_name ?? `Pool ${pool.id}`)}
+                    {(pool.team_name?.trim() || pool.primary_team?.trim() || 'Unnamed team') + ' — ' + (pool.pool_name?.trim() || 'Unnamed pool')}
                   </option>
                 ))}
               </select>

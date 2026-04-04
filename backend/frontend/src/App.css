@@ -1717,6 +1717,37 @@ button:disabled {
   padding-top: 0.9rem;
 }
 
+.landing-payout-summary-block {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid #e7edf4;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.landing-payout-summary-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: baseline;
+  font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace;
+}
+
+.landing-payout-summary-line span:first-child {
+  white-space: nowrap;
+}
+
+.landing-payout-summary-line.is-total {
+  font-weight: 700;
+}
+
+.landing-payout-summary-divider {
+  height: 1px;
+  background: #cfd8e3;
+  margin: 0.05rem 0;
+}
+
 .landing-readonly-list {
   margin: 0;
   padding-left: 1rem;
