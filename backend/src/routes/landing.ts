@@ -48,6 +48,34 @@ const loadAccessiblePool = async (client: PoolClient, poolId: number, userId: nu
   return result.rows[0] ?? null;
 };
 
+const loadAccessibleTeams = async (client: PoolClient, userId: number | null) => {
+  const result = await client.query(
+    `SELECT *
+     FROM (
+       SELECT DISTINCT
+              t.id,
+              t.team_name,
+              t.primary_color,
+              t.secondary_color,
+              t.logo_file,
+              COALESCE(p.default_flg, FALSE) AS default_flg
+       FROM football_pool.pool p
+       JOIN football_pool.team t ON t.id = p.team_id
+       LEFT JOIN football_pool.user_pool up
+         ON up.pool_id = p.id
+        AND up.user_id = $1
+       WHERE COALESCE(p.sign_in_req_flg, FALSE) = FALSE
+          OR ($1::int IS NOT NULL AND up.user_id IS NOT NULL)
+     ) accessible_teams
+     ORDER BY default_flg DESC,
+              team_name NULLS LAST,
+              id`,
+    [userId]
+  );
+
+  return result.rows;
+};
+
 landingRouter.get('/pools', async (req, res) => {
   try {
     const userId = getSignedInUserId(req);
@@ -89,6 +117,106 @@ landingRouter.get('/pools', async (req, res) => {
   } catch (error) {
     console.error('Landing pools error:', error);
     res.status(500).json({ error: 'Failed to fetch landing pools' });
+  }
+});
+
+landingRouter.get('/players', async (req, res) => {
+  try {
+    const userId = getSignedInUserId(req);
+    const client = await db.connect();
+
+    try {
+      const teams = await loadAccessibleTeams(client, userId);
+      const teamIds = teams.map((team) => Number(team.id)).filter((teamId) => Number.isFinite(teamId));
+
+      if (teamIds.length === 0) {
+        return res.json({
+          signedIn: userId !== null,
+          teams,
+          players: []
+        });
+      }
+
+      const result = await client.query(
+        `SELECT
+            u.id,
+            u.first_name,
+            u.last_name,
+            u.email,
+            u.phone,
+            COALESCE(u.is_player_flg, FALSE) AS is_player_flg,
+            pt.team_id,
+            t.team_name,
+            pt.jersey_num
+         FROM football_pool.users u
+         LEFT JOIN football_pool.player_team pt
+           ON pt.user_id = u.id
+          AND pt.team_id = ANY($1::int[])
+         LEFT JOIN football_pool.team t
+           ON t.id = pt.team_id
+         WHERE pt.user_id IS NOT NULL
+            OR (
+              COALESCE(u.is_player_flg, FALSE) = TRUE
+              AND NOT EXISTS (
+                SELECT 1
+                FROM football_pool.player_team other_pt
+                WHERE other_pt.user_id = u.id
+              )
+            )
+         ORDER BY u.last_name NULLS LAST,
+                  u.first_name NULLS LAST,
+                  u.id,
+                  t.team_name NULLS LAST,
+                  pt.team_id NULLS LAST`,
+        [teamIds]
+      );
+
+      type LandingPlayerSummary = {
+        id: number;
+        first_name: string | null;
+        last_name: string | null;
+        email: string | null;
+        phone: string | null;
+        is_player_flg: boolean;
+        player_teams: Array<{ team_id: number; team_name: string | null; jersey_num: number | null }>;
+      };
+
+      const playersMap = new Map<number, LandingPlayerSummary>();
+
+      for (const row of result.rows) {
+        const id = Number(row.id);
+        const existing: LandingPlayerSummary = playersMap.get(id) ?? {
+          id,
+          first_name: row.first_name ?? null,
+          last_name: row.last_name ?? null,
+          email: row.email ?? null,
+          phone: row.phone ?? null,
+          is_player_flg: Boolean(row.is_player_flg),
+          player_teams: []
+        };
+
+        if (row.team_id != null) {
+          existing.player_teams.push({
+            team_id: Number(row.team_id),
+            team_name: row.team_name ?? null,
+            jersey_num: row.jersey_num != null ? Number(row.jersey_num) : null
+          });
+        }
+
+        playersMap.set(id, existing);
+      }
+
+      return res.json({
+        signedIn: userId !== null,
+        teams,
+        players: Array.from(playersMap.values())
+      });
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error('Landing players error:', error);
+    return res.status(500).json({ error: 'Failed to fetch player maintenance data' });
   }
 });
 
