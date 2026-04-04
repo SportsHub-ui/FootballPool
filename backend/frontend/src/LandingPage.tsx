@@ -557,6 +557,7 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
             </div>
 
             <div className="landing-score-bar top">
+              <div className="landing-score-bar-spacer" aria-hidden="true" />
               {topDigits.map((digit, index) => (
                 <div key={`top-digit-${index}`} className="landing-score-cell">
                   {digit}
@@ -599,8 +600,6 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
 
                       return (
                         <div key={square.square_num} className={`landing-square-card ${squareClass}`}>
-                          <span className="landing-square-num">#{square.square_num}</span>
-
                           {hasActiveSelection && square.current_game_won > 0 ? (
                             <span className="landing-square-chip top-left">${square.current_game_won}</span>
                           ) : null}

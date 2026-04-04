@@ -1051,6 +1051,9 @@ button:disabled {
 .landing-page-shell {
   --landing-gap: clamp(0.3rem, 0.75vh, 0.75rem);
   --landing-side-width: clamp(120px, 12vw, 160px);
+  --landing-opponent-width: clamp(112px, 12vw, 150px);
+  --landing-axis-width: clamp(2rem, 2.4vw, 2.5rem);
+  --landing-grid-gap: 0.25rem;
   --landing-digit-size: clamp(2rem, 3.2vh, 2.4rem);
   --landing-square-size: clamp(2.7rem, 4.9vh, 3.45rem);
   min-height: 100vh;
@@ -1235,8 +1238,13 @@ button:disabled {
 
 .landing-score-bar.top {
   display: grid;
-  grid-template-columns: repeat(10, minmax(0, 1fr));
-  gap: 0.25rem;
+  grid-template-columns: var(--landing-axis-width) repeat(10, minmax(0, 1fr));
+  gap: var(--landing-grid-gap);
+  margin-left: calc(var(--landing-opponent-width) + 0.55rem);
+}
+
+.landing-score-bar-spacer {
+  min-height: var(--landing-digit-size);
 }
 
 .landing-score-cell,
@@ -1254,7 +1262,7 @@ button:disabled {
 
 .landing-board-row-layout {
   display: grid;
-  grid-template-columns: clamp(112px, 12vw, 150px) minmax(0, 1fr);
+  grid-template-columns: var(--landing-opponent-width) minmax(0, 1fr);
   gap: 0.55rem;
   align-items: start;
 }
@@ -1267,14 +1275,14 @@ button:disabled {
 
 .landing-squares-panel {
   display: grid;
-  gap: 0.25rem;
+  gap: var(--landing-grid-gap);
   min-height: 0;
 }
 
 .landing-squares-row {
   display: grid;
-  grid-template-columns: clamp(2rem, 2.4vw, 2.5rem) repeat(10, minmax(0, 1fr));
-  gap: 0.25rem;
+  grid-template-columns: var(--landing-axis-width) repeat(10, minmax(0, 1fr));
+  gap: var(--landing-grid-gap);
 }
 
 .landing-row-score {
@@ -1639,6 +1647,10 @@ button:disabled {
   .landing-player-maintenance-grid,
   .landing-player-fields {
     grid-template-columns: 1fr;
+  }
+
+  .landing-score-bar.top {
+    margin-left: 0;
   }
 
   .landing-logo-panel {
