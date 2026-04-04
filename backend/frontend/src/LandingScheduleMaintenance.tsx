@@ -57,6 +57,40 @@ const DEFAULT_HERO_ACCENT = '#ffffff'
 const SCHEDULE_LIST_MIN_HEIGHT = 120
 const SCHEDULE_LIST_MAX_HEIGHT = 360
 const SCHEDULE_LIST_DEFAULT_HEIGHT = 170
+const NFL_TEAMS = [
+  'Arizona Cardinals',
+  'Atlanta Falcons',
+  'Baltimore Ravens',
+  'Buffalo Bills',
+  'Carolina Panthers',
+  'Chicago Bears',
+  'Cincinnati Bengals',
+  'Cleveland Browns',
+  'Dallas Cowboys',
+  'Denver Broncos',
+  'Detroit Lions',
+  'Green Bay Packers',
+  'Houston Texans',
+  'Indianapolis Colts',
+  'Jacksonville Jaguars',
+  'Kansas City Chiefs',
+  'Las Vegas Raiders',
+  'Los Angeles Chargers',
+  'Los Angeles Rams',
+  'Miami Dolphins',
+  'Minnesota Vikings',
+  'New England Patriots',
+  'New Orleans Saints',
+  'New York Giants',
+  'New York Jets',
+  'Philadelphia Eagles',
+  'Pittsburgh Steelers',
+  'San Francisco 49ers',
+  'Seattle Seahawks',
+  'Tampa Bay Buccaneers',
+  'Tennessee Titans',
+  'Washington Commanders'
+] as const
 
 const formatScheduleName = (game: GameRecord): string => `${new Date(game.game_dt).toLocaleDateString()} • ${game.opponent}`
 const toDateInputValue = (value: string): string => {
@@ -454,11 +488,21 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
 
             <label className="field-block">
               <span>Opponent</span>
-              <input
+              <select
                 value={scheduleForm.opponent}
                 onChange={(event) => setScheduleForm((current) => ({ ...current, opponent: event.target.value }))}
                 disabled={saving}
-              />
+              >
+                <option value="">Select opponent</option>
+                {scheduleForm.opponent && !NFL_TEAMS.includes(scheduleForm.opponent as (typeof NFL_TEAMS)[number]) ? (
+                  <option value={scheduleForm.opponent}>{scheduleForm.opponent}</option>
+                ) : null}
+                {NFL_TEAMS.map((teamName) => (
+                  <option key={teamName} value={teamName}>
+                    {teamName}
+                  </option>
+                ))}
+              </select>
             </label>
 
             <label className="field-block">
