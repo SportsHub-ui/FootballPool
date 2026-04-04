@@ -413,9 +413,17 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
               <h2>{isCreatingNew ? 'Add Schedule' : 'Maintain Schedule'}</h2>
               <p className="small">Create a new game or update the selected one.</p>
             </div>
-            <button type="button" className="secondary" onClick={onAddSchedule} disabled={saving}>
-              Add Schedule
-            </button>
+            <div className="landing-maintenance-actions">
+              <button type="button" className="secondary compact" onClick={onAddSchedule} disabled={saving}>
+                Add
+              </button>
+              <button type="button" className="primary" onClick={onSaveSchedule} disabled={saving}>
+                {saving ? 'Saving...' : 'Save'}
+              </button>
+              <button type="button" className="secondary" onClick={onDeleteSchedule} disabled={saving || !selectedGameId}>
+                Delete
+              </button>
+            </div>
           </div>
 
           <div className="landing-selected-summary">
@@ -474,14 +482,6 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
             </label>
           </div>
 
-          <div className="landing-maintenance-actions">
-            <button type="button" className="primary" onClick={onSaveSchedule} disabled={saving}>
-              {saving ? 'Saving...' : 'Save Schedule'}
-            </button>
-            <button type="button" className="secondary" onClick={onDeleteSchedule} disabled={saving || !selectedGameId}>
-              Delete Schedule
-            </button>
-          </div>
         </article>
 
         <aside className="landing-maintenance-card">

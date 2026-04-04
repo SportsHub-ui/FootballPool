@@ -395,9 +395,17 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
               <h2>{isCreatingNew ? 'Add Pool' : 'Maintain Pool'}</h2>
               <p className="small">Create a new pool or update the selected one.</p>
             </div>
-            <button type="button" className="secondary" onClick={onAddPool} disabled={saving}>
-              Add Pool
-            </button>
+            <div className="landing-maintenance-actions">
+              <button type="button" className="secondary compact" onClick={onAddPool} disabled={saving}>
+                Add
+              </button>
+              <button type="button" className="primary" onClick={onSavePool} disabled={saving}>
+                {saving ? 'Saving...' : 'Save'}
+              </button>
+              <button type="button" className="secondary" onClick={onDeletePool} disabled={saving || !selectedPoolId}>
+                Delete
+              </button>
+            </div>
           </div>
 
           <div className="landing-selected-summary">
@@ -505,14 +513,6 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
             </label>
           </div>
 
-          <div className="landing-maintenance-actions">
-            <button type="button" className="primary" onClick={onSavePool} disabled={saving}>
-              {saving ? 'Saving...' : 'Save Pool'}
-            </button>
-            <button type="button" className="secondary" onClick={onDeletePool} disabled={saving || !selectedPoolId}>
-              Delete Pool
-            </button>
-          </div>
         </article>
 
         <aside className="landing-maintenance-card">

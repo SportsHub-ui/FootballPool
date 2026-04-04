@@ -517,9 +517,17 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
               <h2>{isCreatingNew ? 'Add Team' : 'Maintain Team'}</h2>
               <p className="small">Create a new team or update the selected one.</p>
             </div>
-            <button type="button" className="secondary" onClick={onAddTeam} disabled={saving}>
-              Add Team
-            </button>
+            <div className="landing-maintenance-actions">
+              <button type="button" className="secondary compact" onClick={onAddTeam} disabled={saving}>
+                Add
+              </button>
+              <button type="button" className="primary" onClick={onSaveTeam} disabled={saving}>
+                {saving ? 'Saving...' : 'Save'}
+              </button>
+              <button type="button" className="secondary" onClick={onDeleteTeam} disabled={saving || !selectedTeamId}>
+                Delete
+              </button>
+            </div>
           </div>
 
           <div className="landing-selected-summary">
@@ -669,14 +677,6 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
             </label>
           </div>
 
-          <div className="landing-maintenance-actions">
-            <button type="button" className="primary" onClick={onSaveTeam} disabled={saving}>
-              {saving ? 'Saving...' : 'Save Team'}
-            </button>
-            <button type="button" className="secondary" onClick={onDeleteTeam} disabled={saving || !selectedTeamId}>
-              Delete Team
-            </button>
-          </div>
         </article>
 
         <aside className="landing-maintenance-card">

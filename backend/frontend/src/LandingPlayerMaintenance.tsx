@@ -515,7 +515,7 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
                 Add
               </button>
               <button type="button" className="primary" onClick={() => void onSavePlayer()} disabled={saving}>
-                {saving ? 'Saving...' : isCreatingNew ? 'Save new player' : 'Save player'}
+                {saving ? 'Saving...' : 'Save'}
               </button>
               <button
                 type="button"

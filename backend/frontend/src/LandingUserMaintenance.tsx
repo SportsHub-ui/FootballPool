@@ -505,7 +505,7 @@ export function LandingUserMaintenance({
                 Add
               </button>
               <button type="button" className="primary" onClick={() => void onSaveUser()} disabled={saving}>
-                {saving ? 'Saving...' : isCreatingNew ? 'Save new user' : 'Save user'}
+                {saving ? 'Saving...' : 'Save'}
               </button>
               <button
                 type="button"
