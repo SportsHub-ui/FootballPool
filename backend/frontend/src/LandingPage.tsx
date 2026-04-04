@@ -741,156 +741,135 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
       {pageError ? <div className="error-banner landing-error-banner">{pageError}</div> : null}
 
       {activePage === 'Squares' ? (
-        <section className="landing-board-shell">
-          <aside className="landing-logo-panel">
-            <div className="landing-logo-card-frame">
-              <img src={logoSrc} alt={selectedPool?.team_name ?? 'Football Pool'} />
-            </div>
-          </aside>
+        <section className="landing-placeholder-card">
+          <div className="board-game-selector landing-board-selector-bar">
+            <label className="field-block">
+              <span>Pool</span>
+              <select
+                value={selectedPoolId ?? ''}
+                onChange={(event) => {
+                  const value = event.target.value ? Number(event.target.value) : null
+                  void handlePoolChange(value)
+                }}
+                disabled={busy === 'loading' || pools.length === 0}
+              >
+                <option value="">{pools.length > 0 ? 'Select Pool' : 'No Pools Available'}</option>
+                {pools.map((pool) => (
+                  <option key={pool.id} value={pool.id}>
+                    {pool.team_name ?? pool.primary_team ?? 'Team'} • {pool.pool_name}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-          <div className="landing-board-content">
-            <div className={`landing-hero-bar ${selectedPool ? '' : 'is-empty'}`}>
-              <div>
-                <h1>{heroTitle}</h1>
-                <p>{selectedPool ? `Game date: ${heroDate}` : `Today: ${heroDate}`}</p>
-              </div>
-
-              <div className="landing-hero-controls">
-                {pools.length > 1 ? (
-                  <select
-                    value={selectedPoolId ?? ''}
-                    onChange={(event) => {
-                      const value = event.target.value ? Number(event.target.value) : null
-                      void handlePoolChange(value)
-                    }}
-                  >
-                    <option value="">Select Pool</option>
-                    {pools.map((pool) => (
-                      <option key={pool.id} value={pool.id}>
-                        {pool.team_name ?? pool.primary_team ?? 'Team'} • {pool.pool_name}
-                      </option>
-                    ))}
-                  </select>
-                ) : null}
-
-                {selectedPool && games.length > 0 ? (
-                  <select
-                    value={selectedGameId ?? ''}
-                    onChange={(event) => {
-                      const value = event.target.value ? Number(event.target.value) : null
-                      void handleGameChange(value)
-                    }}
-                  >
-                    {games.map((game) => (
+            <label className="field-block">
+              <span>Week / Game</span>
+              <select
+                value={selectedGameId ?? ''}
+                onChange={(event) => {
+                  const value = event.target.value ? Number(event.target.value) : null
+                  void handleGameChange(value)
+                }}
+                disabled={busy === 'loading' || !selectedPool || games.length === 0}
+              >
+                {!selectedPool ? <option value="">Select pool first</option> : null}
+                {selectedPool && games.length === 0 ? <option value="">No games available</option> : null}
+                {selectedPool
+                  ? games.map((game) => (
                       <option key={game.id} value={game.id}>
                         {formatGameOption(game, board?.primaryTeam ?? selectedPool.primary_team ?? selectedPool.team_name ?? 'Team')}
                       </option>
-                    ))}
-                  </select>
-                ) : null}
-              </div>
-            </div>
-
-            <div
-              className={`landing-team-bar preferred ${selectedPool ? '' : 'is-empty'}`}
-              style={selectedPool ? { backgroundColor: primaryBrand.color, color: primaryBrand.accent } : undefined}
-            >
-              {selectedPool ? (
-                <>
-                  {primaryBrand.logo ? <img src={primaryBrand.logo} alt={board?.primaryTeam ?? 'Preferred team'} /> : null}
-                  <span>{board?.primaryTeam ?? selectedPool.primary_team ?? selectedPool.team_name ?? 'Preferred Team'}</span>
-                </>
-              ) : (
-                <span>&nbsp;</span>
-              )}
-            </div>
-
-            <div className="landing-score-bar top">
-              <div className="landing-score-bar-spacer" aria-hidden="true" />
-              {topDigits.map((digit, index) => (
-                <div key={`top-digit-${index}`} className="landing-score-cell">
-                  {digit}
-                </div>
-              ))}
-            </div>
-
-            <div className="landing-board-row-layout">
-              <div
-                className={`landing-team-bar opponent ${selectedGame ? '' : 'is-empty'}`}
-                style={selectedGame ? { backgroundColor: opponentBrand.color, color: opponentBrand.accent } : undefined}
-              >
-                {selectedGame ? (
-                  <>
-                    {opponentBrand.logo ? <img src={opponentBrand.logo} alt={selectedGame.opponent} /> : null}
-                    <span>{selectedGame.opponent}</span>
-                  </>
-                ) : (
-                  <span>&nbsp;</span>
-                )}
-              </div>
-
-              <div className="landing-squares-panel">
-                {boardRows.map((row, rowIndex) => (
-                  <div key={`landing-row-${rowIndex}`} className="landing-squares-row">
-                    <div className="landing-row-score">{leftDigits[rowIndex]}</div>
-
-                    {row.map((square) => {
-                      const squareClass = !hasActiveSelection
-                        ? 'is-neutral'
-                        : square.current_game_won > 0
-                          ? 'is-current-win'
-                          : square.season_won_total > 0
-                            ? 'is-season-win'
-                            : !square.participant_id
-                              ? 'is-open'
-                              : square.paid_flg === false
-                                ? 'is-unpaid'
-                                : 'is-filled'
-
-                      const isSelectedSquare = selectedSquare === square.square_num
-
-                      return (
-                        <div
-                          key={square.square_num}
-                          className={`landing-square-card ${squareClass} ${canManageSquares ? 'is-manageable' : ''} ${isSelectedSquare ? 'is-selected' : ''}`}
-                          onClick={canManageSquares ? () => void handleOpenSquareAssignment(square) : undefined}
-                          onKeyDown={canManageSquares
-                            ? (event) => {
-                                if (event.key === 'Enter' || event.key === ' ') {
-                                  event.preventDefault()
-                                  void handleOpenSquareAssignment(square)
-                                }
-                              }
-                            : undefined}
-                          role={canManageSquares ? 'button' : undefined}
-                          tabIndex={canManageSquares ? 0 : undefined}
-                          title={canManageSquares ? `Manage square ${square.square_num}` : undefined}
-                        >
-                          {hasActiveSelection && square.current_game_won > 0 ? (
-                            <span className="landing-square-chip top-left">${square.current_game_won}</span>
-                          ) : null}
-
-                          {hasActiveSelection && square.season_won_total > 0 ? (
-                            <span className="landing-square-chip bottom-left">Season ${square.season_won_total}</span>
-                          ) : null}
-
-                          {!hasActiveSelection || !square.participant_id ? (
-                            <div className="landing-square-center">{square.square_num}</div>
-                          ) : (
-                            <div className="landing-square-owner">
-                              <span>{square.participant_first_name ?? ''} {square.participant_last_name ?? ''}</span>
-                              <span>{square.player_jersey_num != null ? `#${square.player_jersey_num}` : ''}</span>
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                ))}
-              </div>
-            </div>
-
+                    ))
+                  : null}
+              </select>
+            </label>
           </div>
+
+          {selectedPool && board ? (
+            <div
+              className="pool-board"
+              style={{
+                ['--team-primary' as string]: board.teamPrimaryColor ?? primaryBrand.color,
+                ['--team-secondary' as string]: board.teamSecondaryColor ?? '#111'
+              }}
+            >
+              <div className="pool-board-header">{`${heroTitle} • ${heroDate}`}</div>
+
+              <div className="pool-board-main">
+                <div className="pool-board-brand">
+                  <img src={logoSrc} alt={selectedPool?.team_name ?? 'Football Pool'} />
+                </div>
+
+                <div className="pool-board-grid-wrap">
+                  <div className="board-axis-title board-axis-top" style={{ backgroundColor: primaryBrand.color, color: primaryBrand.accent }}>
+                    {primaryBrand.logo ? <img className="axis-team-logo" src={primaryBrand.logo} alt={board?.primaryTeam ?? 'Preferred team'} /> : null}
+                    <span>{board?.primaryTeam ?? selectedPool.primary_team ?? selectedPool.team_name ?? 'Preferred Team'}</span>
+                  </div>
+
+                  <div className="board-top-digits">
+                    {topDigits.map((digit, index) => (
+                      <div key={`top-digit-${index}`} className="digit-cell">{digit}</div>
+                    ))}
+                  </div>
+
+                  <div className="board-middle">
+                    <div
+                      className="board-axis-title board-axis-left"
+                      style={selectedGame ? { backgroundColor: opponentBrand.color, color: opponentBrand.accent } : undefined}
+                    >
+                      {selectedGame && opponentBrand.logo ? <img className="axis-team-logo" src={opponentBrand.logo} alt={selectedGame.opponent} /> : null}
+                      <span>{selectedGame?.opponent ?? board?.opponent ?? 'Opponent'}</span>
+                    </div>
+
+                    <div className="board-grid">
+                      {boardRows.map((row, rowIndex) => (
+                        <div key={`landing-row-${rowIndex}`} className="board-row">
+                          <div className="digit-cell digit-row">{leftDigits[rowIndex]}</div>
+
+                          {row.map((square) => {
+                            const winClass = square.current_game_won > 0 ? 'win-3' : square.season_won_total > 0 ? 'win-1' : 'win-0'
+                            const isSelectedSquare = selectedSquare === square.square_num
+
+                            return (
+                              <button
+                                key={square.square_num}
+                                type="button"
+                                className={`board-square ${square.participant_id ? 'owned' : 'open'} ${square.paid_flg ? 'paid' : ''} ${winClass} ${isSelectedSquare ? 'selected' : ''}`}
+                                onClick={hasActiveSelection ? () => void handleOpenSquareAssignment(square) : undefined}
+                                title={canManageSquares ? `Manage square ${square.square_num}` : undefined}
+                              >
+                                {square.participant_id ? (
+                                  <span className="square-owner">
+                                    <span>{square.participant_first_name ?? ''}</span>
+                                    <span>{square.participant_last_name ?? ''}</span>
+                                    <span className="square-player-num">{square.player_jersey_num != null ? `#${square.player_jersey_num}` : ''}</span>
+                                  </span>
+                                ) : (
+                                  <span className="square-open-number">{square.square_num}</span>
+                                )}
+
+                                {square.current_game_won > 0 ? <span className="square-win">${square.current_game_won}</span> : null}
+                                {square.current_game_won === 0 && square.season_won_total > 0 ? (
+                                  <span className="square-win">Season ${square.season_won_total}</span>
+                                ) : null}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <article className="panel">
+              <h2>{pools.length > 0 ? 'Select Pool' : 'No Pools Available'}</h2>
+              <p className="small">
+                {pools.length > 0 ? 'Choose a pool and week above to load the board.' : 'No squares board is available yet.'}
+              </p>
+            </article>
+          )}
 
           {selectedSquare != null && canManageSquares ? (
             <div className="modal-backdrop" onClick={handleCloseSquareAssignment}>
