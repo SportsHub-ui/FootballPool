@@ -30,6 +30,7 @@ type UserOption = {
   last_name: string | null
   email: string | null
   phone: string | null
+  is_player_flg?: boolean | null
   player_teams?: Array<{
     team_id: number
     team_name: string | null
@@ -839,7 +840,7 @@ function App() {
     })
 
     const assignments = user.player_teams ?? []
-    setEditUserIsPlayer(assignments.length > 0)
+    setEditUserIsPlayer(Boolean(user.is_player_flg) || assignments.length > 0)
     setEditUserPlayerTeams(
       assignments.map((assignment) => ({
         teamId: String(assignment.team_id),

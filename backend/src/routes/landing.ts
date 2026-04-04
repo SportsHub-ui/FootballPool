@@ -292,7 +292,7 @@ landingRouter.get('/pools/:poolId/board', async (req, res) => {
                 s.paid_flg,
                 u.first_name AS participant_first_name,
                 u.last_name AS participant_last_name,
-                pl.jersey_num AS player_jersey_num,
+                pt.jersey_num AS player_jersey_num,
                 COALESCE((
                   SELECT SUM(cgw.amount)
                   FROM current_game_winners cgw
@@ -305,7 +305,7 @@ landingRouter.get('/pools/:poolId/board', async (req, res) => {
                 ), 0)::int AS season_won_total
          FROM football_pool.square s
          LEFT JOIN football_pool.users u ON u.id = s.participant_id
-         LEFT JOIN football_pool.player pl ON pl.id = s.player_id
+         LEFT JOIN football_pool.player_team pt ON pt.id = s.player_id
          WHERE s.pool_id = $1
          ORDER BY s.square_num`,
         [poolId, selectedGame?.id ?? null]

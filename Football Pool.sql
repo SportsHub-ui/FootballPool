@@ -6,7 +6,8 @@ CREATE TABLE "football_pool"."users" (
   "last_name" varchar,
   "email" varchar,
   "phone" varchar,
-  "created_at" timestamp
+  "created_at" timestamp,
+  "is_player_flg" boolean DEFAULT false
 );
 
 CREATE TABLE "football_pool"."team" (
@@ -20,11 +21,13 @@ CREATE TABLE "football_pool"."team" (
   "created_at" timestamp
 );
 
-CREATE TABLE "football_pool"."player" (
+CREATE TABLE "football_pool"."player_team" (
   "id" integer PRIMARY KEY,
-  "team_id" integer,
-  "user_id" integer,
-  "jersey_num" int
+  "user_id" integer NOT NULL,
+  "team_id" integer NOT NULL,
+  "jersey_num" int,
+  "created_at" timestamp,
+  UNIQUE ("user_id", "team_id")
 );
 
 CREATE TABLE "football_pool"."pool" (
@@ -88,9 +91,9 @@ ALTER TABLE "football_pool"."team" ADD FOREIGN KEY ("primary_contact_id") REFERE
 
 ALTER TABLE "football_pool"."team" ADD FOREIGN KEY ("secondary_contact_id") REFERENCES "football_pool"."users" ("id") DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE "football_pool"."player" ADD FOREIGN KEY ("team_id") REFERENCES "football_pool"."team" ("id") DEFERRABLE INITIALLY IMMEDIATE;
+ALTER TABLE "football_pool"."player_team" ADD FOREIGN KEY ("user_id") REFERENCES "football_pool"."users" ("id") DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE "football_pool"."player" ADD FOREIGN KEY ("user_id") REFERENCES "football_pool"."users" ("id") DEFERRABLE INITIALLY IMMEDIATE;
+ALTER TABLE "football_pool"."player_team" ADD FOREIGN KEY ("team_id") REFERENCES "football_pool"."team" ("id") DEFERRABLE INITIALLY IMMEDIATE;
 
 ALTER TABLE "football_pool"."pool" ADD FOREIGN KEY ("team_id") REFERENCES "football_pool"."team" ("id") DEFERRABLE INITIALLY IMMEDIATE;
 
@@ -98,7 +101,7 @@ ALTER TABLE "football_pool"."square" ADD FOREIGN KEY ("pool_id") REFERENCES "foo
 
 ALTER TABLE "football_pool"."square" ADD FOREIGN KEY ("participant_id") REFERENCES "football_pool"."users" ("id") DEFERRABLE INITIALLY IMMEDIATE;
 
-ALTER TABLE "football_pool"."square" ADD FOREIGN KEY ("player_id") REFERENCES "football_pool"."player" ("id") DEFERRABLE INITIALLY IMMEDIATE;
+ALTER TABLE "football_pool"."square" ADD FOREIGN KEY ("player_id") REFERENCES "football_pool"."player_team" ("id") DEFERRABLE INITIALLY IMMEDIATE;
 
 ALTER TABLE "football_pool"."game" ADD FOREIGN KEY ("pool_id") REFERENCES "football_pool"."pool" ("id") DEFERRABLE INITIALLY IMMEDIATE;
 

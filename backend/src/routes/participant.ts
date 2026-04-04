@@ -61,8 +61,8 @@ participantRouter.get('/pools/:poolId/squares', async (req, res) => {
                 p.first_name as player_first_name, p.last_name as player_last_name
          FROM football_pool.square s
          LEFT JOIN football_pool.users u ON s.participant_id = u.id
-         LEFT JOIN football_pool.player pl ON s.player_id = pl.id
-         LEFT JOIN football_pool.users p ON pl.user_id = p.id
+         LEFT JOIN football_pool.player_team pt ON s.player_id = pt.id
+         LEFT JOIN football_pool.users p ON pt.user_id = p.id
          WHERE s.pool_id = $1 AND s.participant_id = $2
          ORDER BY s.square_num`,
         [poolId, userId]
@@ -220,15 +220,15 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
                 s.paid_flg,
                 u.first_name AS participant_first_name,
                 u.last_name AS participant_last_name,
-                pl.jersey_num AS player_jersey_num,
+                pt.jersey_num AS player_jersey_num,
                 COUNT(qw.square_num)::int AS wins_count,
                 COALESCE(SUM(qw.amount), 0)::int AS won_total
          FROM football_pool.square s
          LEFT JOIN football_pool.users u ON u.id = s.participant_id
-         LEFT JOIN football_pool.player pl ON pl.id = s.player_id
+         LEFT JOIN football_pool.player_team pt ON pt.id = s.player_id
          LEFT JOIN quarter_winners qw ON qw.pool_id = s.pool_id AND qw.square_num = s.square_num
          WHERE s.pool_id = $1
-         GROUP BY s.id, s.square_num, s.participant_id, s.player_id, s.paid_flg, u.first_name, u.last_name, pl.jersey_num
+         GROUP BY s.id, s.square_num, s.participant_id, s.player_id, s.paid_flg, u.first_name, u.last_name, pt.jersey_num
          ORDER BY s.square_num`,
         [poolId]
       );

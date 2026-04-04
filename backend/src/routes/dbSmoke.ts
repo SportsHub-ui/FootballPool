@@ -11,7 +11,7 @@ dbSmokeRouter.get('/smoke', async (_req, res) => {
         UNION ALL
         SELECT 'team' AS table_name, COUNT(*)::int AS row_count FROM football_pool.team
         UNION ALL
-        SELECT 'player' AS table_name, COUNT(*)::int AS row_count FROM football_pool.player
+        SELECT 'player_team' AS table_name, COUNT(*)::int AS row_count FROM football_pool.player_team
         UNION ALL
         SELECT 'pool' AS table_name, COUNT(*)::int AS row_count FROM football_pool.pool
         UNION ALL

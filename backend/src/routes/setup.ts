@@ -197,6 +197,69 @@ const hasDuplicateTeamAssignments = (assignments: Array<{ teamId: number; jersey
   return false;
 };
 
+const syncUserPlayerFlag = async (client: PoolClient, userId: number): Promise<void> => {
+  const assignmentCount = await client.query<{ assignment_count: number }>(
+    `
+      SELECT COUNT(*)::int AS assignment_count
+      FROM football_pool.player_team
+      WHERE user_id = $1
+    `,
+    [userId]
+  );
+
+  await client.query(
+    `
+      UPDATE football_pool.users
+      SET is_player_flg = $2
+      WHERE id = $1
+    `,
+    [userId, (assignmentCount.rows[0]?.assignment_count ?? 0) > 0]
+  );
+};
+
+const createPlayerTeamAssignment = async (
+  client: PoolClient,
+  userId: number,
+  teamId: number,
+  jerseyNum: number
+): Promise<number> => {
+  const duplicateCheck = await client.query<{ id: number }>(
+    `
+      SELECT id
+      FROM football_pool.player_team
+      WHERE user_id = $1
+        AND team_id = $2
+      LIMIT 1
+    `,
+    [userId, teamId]
+  );
+
+  if ((duplicateCheck.rowCount ?? 0) > 0) {
+    throw new Error('Player is already assigned to this team.');
+  }
+
+  const playerTeamId = await nextId(client, 'player_team');
+
+  await client.query(
+    `
+      INSERT INTO football_pool.player_team (id, user_id, team_id, jersey_num, created_at)
+      VALUES ($1, $2, $3, $4, NOW())
+    `,
+    [playerTeamId, userId, teamId, jerseyNum]
+  );
+
+  await client.query(
+    `
+      UPDATE football_pool.users
+      SET is_player_flg = TRUE
+      WHERE id = $1
+    `,
+    [userId]
+  );
+
+  return playerTeamId;
+};
+
 setupRouter.post('/users', async (req, res) => {
   const parsed = createUserSchema.safeParse(req.body);
 
@@ -231,37 +294,23 @@ setupRouter.post('/users', async (req, res) => {
 
     await client.query(
       `
-        INSERT INTO football_pool.users (id, first_name, last_name, email, phone, created_at)
-        VALUES ($1, $2, $3, $4, $5, NOW())
+        INSERT INTO football_pool.users (id, first_name, last_name, email, phone, created_at, is_player_flg)
+        VALUES ($1, $2, $3, $4, $5, NOW(), $6)
       `,
       [
         id,
         parsed.data.firstName,
         parsed.data.lastName,
         parsed.data.email ? parsed.data.email : null,
-        parsed.data.phone ? parsed.data.phone : null
+        parsed.data.phone ? parsed.data.phone : null,
+        parsed.data.isPlayer ?? false
       ]
     );
 
     if (parsed.data.isPlayer) {
       const assignments = parsed.data.playerTeams ?? [];
-      if (assignments.length > 0) {
-        await client.query('LOCK TABLE football_pool.player IN EXCLUSIVE MODE');
-        const idBaseResult = await client.query<{ id_base: number }>(
-          'SELECT COALESCE(MAX(id), 0) AS id_base FROM football_pool.player'
-        );
-
-        let nextPlayerId = idBaseResult.rows[0].id_base + 1;
-        for (const assignment of assignments) {
-          await client.query(
-            `
-              INSERT INTO football_pool.player (id, team_id, user_id, jersey_num)
-              VALUES ($1, $2, $3, $4)
-            `,
-            [nextPlayerId, assignment.teamId, id, assignment.jerseyNum]
-          );
-          nextPlayerId += 1;
-        }
+      for (const assignment of assignments) {
+        await createPlayerTeamAssignment(client, id, assignment.teamId, assignment.jerseyNum);
       }
     }
 
@@ -346,7 +395,7 @@ setupRouter.post('/players', async (req, res) => {
     const duplicateCheck = await client.query<{ id: number }>(
       `
         SELECT id
-        FROM football_pool.player
+        FROM football_pool.player_team
         WHERE team_id = $1
           AND user_id = $2
         LIMIT 1
@@ -360,15 +409,7 @@ setupRouter.post('/players', async (req, res) => {
       return;
     }
 
-    const id = await nextId(client, 'player');
-
-    await client.query(
-      `
-        INSERT INTO football_pool.player (id, team_id, user_id, jersey_num)
-        VALUES ($1, $2, $3, $4)
-      `,
-      [id, parsed.data.teamId, parsed.data.userId, parsed.data.jerseyNum]
-    );
+    const id = await createPlayerTeamAssignment(client, parsed.data.userId, parsed.data.teamId, parsed.data.jerseyNum);
 
     await client.query('COMMIT');
     res.status(201).json({ id });
@@ -402,10 +443,10 @@ setupRouter.patch('/players/:playerId', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const targetPlayer = await client.query<{ team_id: number }>(
+    const targetPlayer = await client.query<{ team_id: number; user_id: number }>(
       `
-        SELECT team_id
-        FROM football_pool.player
+        SELECT team_id, user_id
+        FROM football_pool.player_team
         WHERE id = $1
         FOR UPDATE
       `,
@@ -421,7 +462,7 @@ setupRouter.patch('/players/:playerId', async (req, res) => {
     const duplicateCheck = await client.query<{ id: number }>(
       `
         SELECT id
-        FROM football_pool.player
+        FROM football_pool.player_team
         WHERE team_id = $1
           AND user_id = $2
           AND id <> $3
@@ -438,7 +479,7 @@ setupRouter.patch('/players/:playerId', async (req, res) => {
 
     const result = await client.query(
       `
-        UPDATE football_pool.player
+        UPDATE football_pool.player_team
         SET
           user_id = $2,
           jersey_num = $3
@@ -454,6 +495,8 @@ setupRouter.patch('/players/:playerId', async (req, res) => {
       return;
     }
 
+    await syncUserPlayerFlag(client, targetPlayer.rows[0].user_id);
+    await syncUserPlayerFlag(client, parsedBody.data.userId);
     await client.query('COMMIT');
 
     res.json({ id: parsedParams.data.playerId, message: 'Player updated' });
@@ -476,27 +519,62 @@ setupRouter.delete('/players/:playerId', async (req, res) => {
     return;
   }
 
+  const client = await db.connect();
+
   try {
-    const result = await db.query(
+    await client.query('BEGIN');
+
+    const assignmentResult = await client.query<{ user_id: number }>(
       `
-        DELETE FROM football_pool.player
+        SELECT user_id
+        FROM football_pool.player_team
         WHERE id = $1
-        RETURNING id
+        FOR UPDATE
       `,
       [parsedParams.data.playerId]
     );
 
-    if (result.rowCount === 0) {
+    if (assignmentResult.rowCount === 0) {
+      await client.query('ROLLBACK');
       res.status(404).json({ error: 'Player not found' });
       return;
     }
 
+    const squareRefResult = await client.query<{ ref_count: number }>(
+      `
+        SELECT COUNT(*)::int AS ref_count
+        FROM football_pool.square
+        WHERE player_id = $1
+      `,
+      [parsedParams.data.playerId]
+    );
+
+    if ((squareRefResult.rows[0]?.ref_count ?? 0) > 0) {
+      await client.query('ROLLBACK');
+      res.status(409).json({ error: 'Cannot delete player while squares are still linked to this player.' });
+      return;
+    }
+
+    await client.query(
+      `
+        DELETE FROM football_pool.player_team
+        WHERE id = $1
+      `,
+      [parsedParams.data.playerId]
+    );
+
+    await syncUserPlayerFlag(client, assignmentResult.rows[0].user_id);
+    await client.query('COMMIT');
+
     res.json({ id: parsedParams.data.playerId, message: 'Player deleted' });
   } catch (error) {
+    await client.query('ROLLBACK');
     res.status(500).json({
       error: 'Failed to delete player',
       detail: error instanceof Error ? error.message : 'Unknown error'
     });
+  } finally {
+    client.release();
   }
 });
 
@@ -639,14 +717,14 @@ setupRouter.get('/users', async (_req, res) => {
           u.last_name,
           u.email,
           u.phone,
-          p.team_id,
-          p.jersey_num,
+          u.is_player_flg,
+          pt.team_id,
+          pt.jersey_num,
           t.team_name
-        FROM football_pool.users
-        u
-        LEFT JOIN football_pool.player p ON p.user_id = u.id
-        LEFT JOIN football_pool.team t ON t.id = p.team_id
-        ORDER BY u.last_name, u.first_name, u.id, p.team_id
+        FROM football_pool.users u
+        LEFT JOIN football_pool.player_team pt ON pt.user_id = u.id
+        LEFT JOIN football_pool.team t ON t.id = pt.team_id
+        ORDER BY u.last_name, u.first_name, u.id, pt.team_id
         LIMIT 500
       `
     );
@@ -657,6 +735,7 @@ setupRouter.get('/users', async (_req, res) => {
       last_name: string | null;
       email: string | null;
       phone: string | null;
+      is_player_flg: boolean;
       player_teams: Array<{ team_id: number; team_name: string | null; jersey_num: number }>;
     };
 
@@ -670,6 +749,7 @@ setupRouter.get('/users', async (_req, res) => {
         last_name: row.last_name,
         email: row.email,
         phone: row.phone,
+        is_player_flg: Boolean(row.is_player_flg),
         player_teams: []
       };
 
@@ -725,7 +805,8 @@ setupRouter.patch('/users/:userId', async (req, res) => {
           first_name = $2,
           last_name = $3,
           email = $4,
-          phone = $5
+          phone = $5,
+          is_player_flg = COALESCE($6, is_player_flg)
         WHERE id = $1
         RETURNING id
       `,
@@ -734,7 +815,8 @@ setupRouter.patch('/users/:userId', async (req, res) => {
         parsedBody.data.firstName,
         parsedBody.data.lastName,
         parsedBody.data.email ? parsedBody.data.email : null,
-        parsedBody.data.phone ? parsedBody.data.phone : null
+        parsedBody.data.phone ? parsedBody.data.phone : null,
+        parsedBody.data.isPlayer ?? null
       ]
     );
 
@@ -744,14 +826,16 @@ setupRouter.patch('/users/:userId', async (req, res) => {
       return;
     }
 
-    if (parsedBody.data.isPlayer === false) {
+    if (parsedBody.data.isPlayer !== undefined) {
+      const assignments = parsedBody.data.isPlayer ? parsedBody.data.playerTeams ?? [] : [];
+
       await client.query(
         `
           UPDATE football_pool.square AS sq
           SET player_id = NULL
-          FROM football_pool.player AS pl
-          WHERE sq.player_id = pl.id
-            AND pl.user_id = $1
+          FROM football_pool.player_team AS pt
+          WHERE sq.player_id = pt.id
+            AND pt.user_id = $1
         `,
         [parsedParams.data.userId]
       );
@@ -760,41 +844,9 @@ setupRouter.patch('/users/:userId', async (req, res) => {
         `
           SELECT COUNT(*)::int AS ref_count
           FROM football_pool.square AS sq
-          JOIN football_pool.player AS pl
-            ON pl.id = sq.player_id
-          WHERE pl.user_id = $1
-        `,
-        [parsedParams.data.userId]
-      );
-
-      if ((remainingSquareRefs.rows[0]?.ref_count ?? 0) > 0) {
-        await client.query('ROLLBACK');
-        res.status(409).json({ error: 'Cannot remove player team assignments while squares are still linked to this player.' });
-        return;
-      }
-
-      await client.query('DELETE FROM football_pool.player WHERE user_id = $1', [parsedParams.data.userId]);
-    }
-
-    if (parsedBody.data.isPlayer === true) {
-      await client.query(
-        `
-          UPDATE football_pool.square AS sq
-          SET player_id = NULL
-          FROM football_pool.player AS pl
-          WHERE sq.player_id = pl.id
-            AND pl.user_id = $1
-        `,
-        [parsedParams.data.userId]
-      );
-
-      const remainingSquareRefs = await client.query<{ ref_count: number }>(
-        `
-          SELECT COUNT(*)::int AS ref_count
-          FROM football_pool.square AS sq
-          JOIN football_pool.player AS pl
-            ON pl.id = sq.player_id
-          WHERE pl.user_id = $1
+          JOIN football_pool.player_team AS pt
+            ON pt.id = sq.player_id
+          WHERE pt.user_id = $1
         `,
         [parsedParams.data.userId]
       );
@@ -805,25 +857,17 @@ setupRouter.patch('/users/:userId', async (req, res) => {
         return;
       }
 
-      await client.query('DELETE FROM football_pool.player WHERE user_id = $1', [parsedParams.data.userId]);
+      await client.query(
+        `
+          DELETE FROM football_pool.player_team
+          WHERE user_id = $1
+        `,
+        [parsedParams.data.userId]
+      );
 
-      const assignments = parsedBody.data.playerTeams ?? [];
       if (assignments.length > 0) {
-        await client.query('LOCK TABLE football_pool.player IN EXCLUSIVE MODE');
-        const idBaseResult = await client.query<{ id_base: number }>(
-          'SELECT COALESCE(MAX(id), 0) AS id_base FROM football_pool.player'
-        );
-
-        let nextPlayerId = idBaseResult.rows[0].id_base + 1;
         for (const assignment of assignments) {
-          await client.query(
-            `
-              INSERT INTO football_pool.player (id, team_id, user_id, jersey_num)
-              VALUES ($1, $2, $3, $4)
-            `,
-            [nextPlayerId, assignment.teamId, parsedParams.data.userId, assignment.jerseyNum]
-          );
-          nextPlayerId += 1;
+          await createPlayerTeamAssignment(client, parsedParams.data.userId, assignment.teamId, assignment.jerseyNum);
         }
       }
     }
@@ -864,7 +908,7 @@ setupRouter.delete('/users/:userId', async (req, res) => {
       db.query<{ assignment_count: number }>(
         `
           SELECT COUNT(*)::int AS assignment_count
-          FROM football_pool.player
+          FROM football_pool.player_team
           WHERE user_id = $1
         `,
         [parsedParams.data.userId]
@@ -1122,15 +1166,15 @@ setupRouter.get('/teams/:teamId/players', async (req, res) => {
     const result = await db.query(
       `
         SELECT
-          pl.id,
-          pl.user_id,
-          pl.jersey_num,
+          pt.id,
+          pt.user_id,
+          pt.jersey_num,
           u.first_name,
           u.last_name
-        FROM football_pool.player pl
-        LEFT JOIN football_pool.users u ON u.id = pl.user_id
-        WHERE pl.team_id = $1
-        ORDER BY pl.jersey_num, pl.id
+        FROM football_pool.player_team pt
+        LEFT JOIN football_pool.users u ON u.id = pt.user_id
+        WHERE pt.team_id = $1
+        ORDER BY pt.jersey_num, pt.id
       `,
       [parsedParams.data.teamId]
     );
@@ -1156,16 +1200,16 @@ setupRouter.get('/pools/:poolId/players', async (req, res) => {
     const result = await db.query(
       `
         SELECT
-          pl.id,
-          pl.user_id,
-          pl.jersey_num,
+          pt.id,
+          pt.user_id,
+          pt.jersey_num,
           u.first_name,
           u.last_name
-        FROM football_pool.player pl
-        JOIN football_pool.pool p ON p.team_id = pl.team_id
-        LEFT JOIN football_pool.users u ON u.id = pl.user_id
+        FROM football_pool.player_team pt
+        JOIN football_pool.pool p ON p.team_id = pt.team_id
+        LEFT JOIN football_pool.users u ON u.id = pt.user_id
         WHERE p.id = $1
-        ORDER BY pl.jersey_num, pl.id
+        ORDER BY pt.jersey_num, pt.id
       `,
       [parsedParams.data.poolId]
     );
@@ -1281,7 +1325,7 @@ setupRouter.patch('/pools/:poolId/squares/:squareNum', async (req, res) => {
 
     if (parsedBody.data.playerId !== null) {
       const playerExists = await client.query<{ id: number }>(
-        'SELECT id FROM football_pool.player WHERE id = $1',
+        'SELECT id FROM football_pool.player_team WHERE id = $1',
         [parsedBody.data.playerId]
       );
 

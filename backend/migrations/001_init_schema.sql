@@ -6,7 +6,8 @@ CREATE TABLE IF NOT EXISTS football_pool.users (
   last_name VARCHAR,
   email VARCHAR,
   phone VARCHAR,
-  created_at TIMESTAMP
+  created_at TIMESTAMP,
+  is_player_flg BOOLEAN DEFAULT FALSE
 );
 
 CREATE TABLE IF NOT EXISTS football_pool.team (
@@ -20,11 +21,13 @@ CREATE TABLE IF NOT EXISTS football_pool.team (
   created_at TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS football_pool.player (
+CREATE TABLE IF NOT EXISTS football_pool.player_team (
   id INTEGER PRIMARY KEY,
-  team_id INTEGER,
-  user_id INTEGER,
-  jersey_num INTEGER
+  user_id INTEGER NOT NULL,
+  team_id INTEGER NOT NULL,
+  jersey_num INTEGER,
+  created_at TIMESTAMP,
+  UNIQUE (user_id, team_id)
 );
 
 CREATE TABLE IF NOT EXISTS football_pool.pool (
@@ -126,13 +129,13 @@ BEGIN
     SELECT 1
     FROM information_schema.table_constraints
     WHERE constraint_schema = 'football_pool'
-      AND table_name = 'player'
-      AND constraint_name = 'player_team_id_fkey'
+      AND table_name = 'player_team'
+      AND constraint_name = 'player_team_user_id_fkey'
   ) THEN
-    ALTER TABLE football_pool.player
-      ADD CONSTRAINT player_team_id_fkey
-      FOREIGN KEY (team_id)
-      REFERENCES football_pool.team (id)
+    ALTER TABLE football_pool.player_team
+      ADD CONSTRAINT player_team_user_id_fkey
+      FOREIGN KEY (user_id)
+      REFERENCES football_pool.users (id)
       DEFERRABLE INITIALLY IMMEDIATE;
   END IF;
 END
@@ -144,13 +147,13 @@ BEGIN
     SELECT 1
     FROM information_schema.table_constraints
     WHERE constraint_schema = 'football_pool'
-      AND table_name = 'player'
-      AND constraint_name = 'player_user_id_fkey'
+      AND table_name = 'player_team'
+      AND constraint_name = 'player_team_team_id_fkey'
   ) THEN
-    ALTER TABLE football_pool.player
-      ADD CONSTRAINT player_user_id_fkey
-      FOREIGN KEY (user_id)
-      REFERENCES football_pool.users (id)
+    ALTER TABLE football_pool.player_team
+      ADD CONSTRAINT player_team_team_id_fkey
+      FOREIGN KEY (team_id)
+      REFERENCES football_pool.team (id)
       DEFERRABLE INITIALLY IMMEDIATE;
   END IF;
 END
@@ -222,7 +225,7 @@ BEGIN
     ALTER TABLE football_pool.square
       ADD CONSTRAINT square_player_id_fkey
       FOREIGN KEY (player_id)
-      REFERENCES football_pool.player (id)
+      REFERENCES football_pool.player_team (id)
       DEFERRABLE INITIALLY IMMEDIATE;
   END IF;
 END
