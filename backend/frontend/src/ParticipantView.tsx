@@ -88,7 +88,7 @@ type PoolBoard = {
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
-const DEFAULT_BOARD_LOGO = '/knights-baseball-logo.svg'
+const DEFAULT_BOARD_LOGO = '/football-pool.png'
 
 const resolveImageUrl = (value: string): string => {
   if (!value) return ''

@@ -83,7 +83,7 @@ type TeamBrand = {
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
-const DEFAULT_POOL_LOGO = '/knights-baseball-logo.svg'
+const DEFAULT_POOL_LOGO = '/football-pool.png'
 
 const NFL_TEAM_BRANDS: TeamBrand[] = [
   { key: 'cardinals', color: '#97233f', accent: '#ffffff', logo: 'https://a.espncdn.com/i/teamlogos/nfl/500/ari.png' },
@@ -502,7 +502,6 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
           <div className="landing-board-content">
             <div className={`landing-hero-bar ${selectedPool ? '' : 'is-empty'}`}>
               <div>
-                <p className="landing-eyebrow">Hero Bar</p>
                 <h1>{heroTitle}</h1>
                 <p>{selectedPool ? `Game date: ${heroDate}` : `Today: ${heroDate}`}</p>
               </div>
