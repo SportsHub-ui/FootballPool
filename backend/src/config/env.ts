@@ -2,6 +2,9 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { z } from 'zod';
 
+const isProductionLike =
+  process.env.NODE_ENV === 'production' || process.env.APP_ENV === 'production';
+
 // Try common locations so running from repo root or backend folder both work.
 const envPaths = [
   path.resolve(process.cwd(), '.env'),
@@ -10,7 +13,7 @@ const envPaths = [
 ];
 
 for (const envPath of envPaths) {
-  const result = dotenv.config({ path: envPath });
+  const result = dotenv.config({ path: envPath, override: !isProductionLike });
   if (!result.error) {
     break;
   }
