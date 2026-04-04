@@ -1097,6 +1097,69 @@ setupRouter.patch('/teams/:teamId', async (req, res) => {
   }
 });
 
+setupRouter.delete('/teams/:teamId', async (req, res) => {
+  const parsedParams = teamIdParams.safeParse(req.params);
+
+  if (!parsedParams.success) {
+    res.status(400).json({ error: parsedParams.error.issues });
+    return;
+  }
+
+  const client = await db.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const refResult = await client.query<{
+      pool_refs: number;
+      player_refs: number;
+    }>(
+      `
+        SELECT
+          (SELECT COUNT(*)::int FROM football_pool.pool WHERE team_id = $1) AS pool_refs,
+          (SELECT COUNT(*)::int FROM football_pool.player_team WHERE team_id = $1) AS player_refs
+      `,
+      [parsedParams.data.teamId]
+    );
+
+    const refs = refResult.rows[0];
+
+    if ((refs?.pool_refs ?? 0) > 0 || (refs?.player_refs ?? 0) > 0) {
+      await client.query('ROLLBACK');
+      res.status(409).json({
+        error: 'Cannot delete team while pools or player assignments still reference it.'
+      });
+      return;
+    }
+
+    const deleteResult = await client.query(
+      `
+        DELETE FROM football_pool.team
+        WHERE id = $1
+        RETURNING id
+      `,
+      [parsedParams.data.teamId]
+    );
+
+    if ((deleteResult.rowCount ?? 0) === 0) {
+      await client.query('ROLLBACK');
+      res.status(404).json({ error: 'Team not found' });
+      return;
+    }
+
+    await client.query('COMMIT');
+    res.json({ id: parsedParams.data.teamId, message: 'Team deleted' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    res.status(500).json({
+      error: 'Failed to delete team',
+      detail: error instanceof Error ? error.message : 'Unknown error'
+    });
+  } finally {
+    client.release();
+  }
+});
+
 setupRouter.get('/pools', async (_req, res) => {
   try {
     const result = await db.query(
@@ -1185,6 +1248,78 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
       error: 'Failed to update pool',
       detail: error instanceof Error ? error.message : 'Unknown error'
     });
+  }
+});
+
+setupRouter.delete('/pools/:poolId', async (req, res) => {
+  const parsedParams = poolIdParams.safeParse(req.params);
+
+  if (!parsedParams.success) {
+    res.status(400).json({ error: parsedParams.error.issues });
+    return;
+  }
+
+  const client = await db.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const refResult = await client.query<{
+      game_refs: number;
+      square_refs: number;
+      user_refs: number;
+      winnings_refs: number;
+    }>(
+      `
+        SELECT
+          (SELECT COUNT(*)::int FROM football_pool.game WHERE pool_id = $1) AS game_refs,
+          (SELECT COUNT(*)::int FROM football_pool.square WHERE pool_id = $1) AS square_refs,
+          (SELECT COUNT(*)::int FROM football_pool.user_pool WHERE pool_id = $1) AS user_refs,
+          (SELECT COUNT(*)::int FROM football_pool.winnings_ledger WHERE pool_id = $1) AS winnings_refs
+      `,
+      [parsedParams.data.poolId]
+    );
+
+    const refs = refResult.rows[0];
+
+    if (
+      (refs?.game_refs ?? 0) > 0 ||
+      (refs?.square_refs ?? 0) > 0 ||
+      (refs?.user_refs ?? 0) > 0 ||
+      (refs?.winnings_refs ?? 0) > 0
+    ) {
+      await client.query('ROLLBACK');
+      res.status(409).json({
+        error: 'Cannot delete pool while games, squares, users, or winnings still reference it.'
+      });
+      return;
+    }
+
+    const deleteResult = await client.query(
+      `
+        DELETE FROM football_pool.pool
+        WHERE id = $1
+        RETURNING id
+      `,
+      [parsedParams.data.poolId]
+    );
+
+    if ((deleteResult.rowCount ?? 0) === 0) {
+      await client.query('ROLLBACK');
+      res.status(404).json({ error: 'Pool not found' });
+      return;
+    }
+
+    await client.query('COMMIT');
+    res.json({ id: parsedParams.data.poolId, message: 'Pool deleted' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    res.status(500).json({
+      error: 'Failed to delete pool',
+      detail: error instanceof Error ? error.message : 'Unknown error'
+    });
+  } finally {
+    client.release();
   }
 });
 

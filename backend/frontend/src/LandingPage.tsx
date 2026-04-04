@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
 import { LandingPlayerMaintenance } from './LandingPlayerMaintenance'
+import { LandingPoolMaintenance } from './LandingPoolMaintenance'
+import { LandingScheduleMaintenance } from './LandingScheduleMaintenance'
+import { LandingTeamMaintenance } from './LandingTeamMaintenance'
 import { LandingUserMaintenance } from './LandingUserMaintenance'
 
 type LandingPool = {
@@ -651,7 +654,7 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   const heroDate = selectedPool ? formatDate(selectedGame?.game_dt ?? board?.gameDate) : new Date().toLocaleDateString()
 
   return (
-    <div className="landing-page-shell">
+    <div className={`landing-page-shell ${activePage === 'Squares' ? 'is-squares-page' : 'is-scroll-page'}`}>
       <nav className="landing-nav-bar">
         <div className="landing-nav-links">
           {(['Squares', 'Players', 'Teams', 'Pools', 'Schedules', 'Users'] as const).map((item) => (
@@ -959,6 +962,30 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
         </section>
       ) : activePage === 'Players' ? (
         <LandingPlayerMaintenance
+          pools={pools}
+          token={token}
+          authHeaders={authHeaders}
+          apiBase={API_BASE}
+          onRequireSignIn={() => setShowLogin(true)}
+        />
+      ) : activePage === 'Teams' ? (
+        <LandingTeamMaintenance
+          pools={pools}
+          token={token}
+          authHeaders={authHeaders}
+          apiBase={API_BASE}
+          onRequireSignIn={() => setShowLogin(true)}
+        />
+      ) : activePage === 'Pools' ? (
+        <LandingPoolMaintenance
+          pools={pools}
+          token={token}
+          authHeaders={authHeaders}
+          apiBase={API_BASE}
+          onRequireSignIn={() => setShowLogin(true)}
+        />
+      ) : activePage === 'Schedules' ? (
+        <LandingScheduleMaintenance
           pools={pools}
           token={token}
           authHeaders={authHeaders}

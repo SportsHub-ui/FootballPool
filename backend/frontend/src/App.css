@@ -169,9 +169,10 @@ button:disabled {
 }
 
 .selected-image-preview {
-  min-height: 88px;
+  width: min(120px, 100%);
+  min-height: 56px;
   border: 1px solid #d3c0a5;
-  border-radius: 12px;
+  border-radius: 10px;
   background: #fff8ef;
   display: grid;
   place-items: center;
@@ -181,9 +182,8 @@ button:disabled {
 
 .selected-image-preview img {
   width: 100%;
-  height: 100%;
-  min-height: 88px;
-  object-fit: cover;
+  height: 56px;
+  object-fit: contain;
 }
 
 .selected-image-preview span {
@@ -1585,6 +1585,74 @@ button:disabled {
   margin: 0;
 }
 
+.team-maintenance-fields {
+  grid-template-columns: 1fr;
+}
+
+.team-image-inline-block {
+  display: grid;
+  justify-items: start;
+  gap: 0.35rem;
+}
+
+.color-picker-block {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.color-picker-field {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.color-picker-input-row {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 28px;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.color-picker-native {
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 1px solid #cfd8e3;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.color-picker-text {
+  text-transform: uppercase;
+}
+
+.color-picker-preview {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid rgba(35, 48, 66, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+
+.color-picker-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.color-picker-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 1px rgba(35, 48, 66, 0.16);
+  cursor: pointer;
+}
+
+.color-picker-swatch.is-selected {
+  box-shadow: 0 0 0 2px #f15d22;
+}
+
 .landing-inline-checkbox {
   display: inline-flex;
   align-items: center;
@@ -1670,9 +1738,14 @@ button:disabled {
 }
 
 @media (min-width: 981px) {
-  .landing-page-shell {
+  .landing-page-shell.is-squares-page {
     height: 100dvh;
     overflow: hidden;
+  }
+
+  .landing-page-shell.is-scroll-page {
+    min-height: 100dvh;
+    overflow-y: auto;
   }
 }
 

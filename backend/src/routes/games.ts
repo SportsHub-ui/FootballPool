@@ -16,6 +16,10 @@ const createGameSchema = z.object({
   isSimulation: z.boolean().optional().default(false)
 });
 
+const gameIdParamsSchema = z.object({
+  gameId: z.coerce.number().int().positive()
+});
+
 const scoreUpdateSchema = z.object({
   q1PrimaryScore: z.number().int().nonnegative(),
   q1OpponentScore: z.number().int().nonnegative(),
@@ -64,6 +68,45 @@ gamesRouter.post('/', async (req, res) => {
   }
 });
 
+// PATCH /api/games/:gameId - Update a game schedule
+gamesRouter.patch('/:gameId', async (req, res) => {
+  try {
+    const { gameId } = gameIdParamsSchema.parse(req.params);
+    const input = createGameSchema.parse(req.body);
+
+    const client = await db.connect();
+    try {
+      const result = await client.query(
+        `UPDATE football_pool.game
+         SET pool_id = $2,
+             opponent = $3,
+             game_dt = $4,
+             is_simulation = $5
+         WHERE id = $1
+         RETURNING id, pool_id, opponent, game_dt, is_simulation,
+                   q1_primary_score, q1_opponent_score, q2_primary_score, q2_opponent_score,
+                   q3_primary_score, q3_opponent_score, q4_primary_score, q4_opponent_score`,
+        [gameId, input.poolId, input.opponent, input.gameDate, input.isSimulation]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Game not found' });
+      }
+
+      res.json({ message: 'Game updated', game: result.rows[0] });
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.errors });
+    } else {
+      console.error('Game update error:', error);
+      res.status(500).json({ error: 'Failed to update game' });
+    }
+  }
+});
+
 // PATCH /api/games/:gameId/scores - Update game scores and calculate winners
 gamesRouter.patch('/:gameId/scores', async (req, res) => {
   try {
@@ -86,6 +129,63 @@ gamesRouter.patch('/:gameId/scores', async (req, res) => {
     } else {
       console.error('Score update error:', error);
       res.status(500).json({ error: 'Failed to update scores' });
+    }
+  }
+});
+
+// DELETE /api/games/:gameId - Delete a game schedule
+gamesRouter.delete('/:gameId', async (req, res) => {
+  try {
+    const { gameId } = gameIdParamsSchema.parse(req.params);
+
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+
+      const winningsCheck = await client.query<{ ref_count: number }>(
+        `SELECT COUNT(*)::int AS ref_count
+         FROM football_pool.winnings_ledger
+         WHERE game_id = $1`,
+        [gameId]
+      );
+
+      if ((winningsCheck.rows[0]?.ref_count ?? 0) > 0) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Cannot delete a game that already has winnings recorded.' });
+      }
+
+      await client.query(
+        `DELETE FROM football_pool.game_square_numbers
+         WHERE game_id = $1`,
+        [gameId]
+      );
+
+      const deleteResult = await client.query(
+        `DELETE FROM football_pool.game
+         WHERE id = $1
+         RETURNING id`,
+        [gameId]
+      );
+
+      if (deleteResult.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Game not found' });
+      }
+
+      await client.query('COMMIT');
+      res.json({ message: 'Game deleted', id: gameId });
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.errors });
+    } else {
+      console.error('Game delete error:', error);
+      res.status(500).json({ error: 'Failed to delete game' });
     }
   }
 });

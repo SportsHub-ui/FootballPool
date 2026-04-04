@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
+import { ColorPickerField } from './ColorPickerField'
 import { formatPhoneNumber } from './utils/phone'
 
 type HealthResponse = {
@@ -1478,8 +1479,20 @@ function App() {
           <h2>Create Team</h2>
           <form onSubmit={onCreateTeam}>
             <input ref={createTeamFirstFieldRef} value={teamForm.teamName} onChange={(e) => setTeamForm({ ...teamForm, teamName: e.target.value })} placeholder="Team name" />
-            <input value={teamForm.primaryColor} onChange={(e) => setTeamForm({ ...teamForm, primaryColor: e.target.value })} placeholder="Primary color" />
-            <input value={teamForm.secondaryColor} onChange={(e) => setTeamForm({ ...teamForm, secondaryColor: e.target.value })} placeholder="Secondary color" />
+            <ColorPickerField
+              label="Primary color"
+              value={teamForm.primaryColor}
+              onChange={(nextValue) => setTeamForm({ ...teamForm, primaryColor: nextValue })}
+              placeholder="#0B162A"
+              disabled={busy !== null}
+            />
+            <ColorPickerField
+              label="Secondary color"
+              value={teamForm.secondaryColor}
+              onChange={(nextValue) => setTeamForm({ ...teamForm, secondaryColor: nextValue })}
+              placeholder="#F7A33C"
+              disabled={busy !== null}
+            />
             <input type="file" accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml" onChange={(e) => setTeamLogoUpload(e.target.files?.[0] ?? null)} />
             <button className="secondary" type="button" onClick={onUploadTeamLogo} disabled={busy !== null || !teamLogoUpload}>
               {busy === 'upload-logo' ? 'Uploading...' : 'Upload logo to images folder'}
@@ -1706,8 +1719,20 @@ function App() {
               ))}
             </select>
             <input value={editTeamForm.teamName} onChange={(e) => setEditTeamForm({ ...editTeamForm, teamName: e.target.value })} placeholder="Team name" />
-            <input value={editTeamForm.primaryColor} onChange={(e) => setEditTeamForm({ ...editTeamForm, primaryColor: e.target.value })} placeholder="Primary color" />
-            <input value={editTeamForm.secondaryColor} onChange={(e) => setEditTeamForm({ ...editTeamForm, secondaryColor: e.target.value })} placeholder="Secondary color" />
+            <ColorPickerField
+              label="Primary color"
+              value={editTeamForm.primaryColor}
+              onChange={(nextValue) => setEditTeamForm({ ...editTeamForm, primaryColor: nextValue })}
+              placeholder="#0B162A"
+              disabled={busy !== null}
+            />
+            <ColorPickerField
+              label="Secondary color"
+              value={editTeamForm.secondaryColor}
+              onChange={(nextValue) => setEditTeamForm({ ...editTeamForm, secondaryColor: nextValue })}
+              placeholder="#F7A33C"
+              disabled={busy !== null}
+            />
             <div className="selected-image-preview">
               {editSelectedTeamImage ? (
                 <img src={editSelectedTeamImage} alt="" />
