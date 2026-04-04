@@ -473,6 +473,50 @@ describe('Football Pool API', () => {
 
       expect(conflictResponse.status).toBe(409)
     })
+
+    it('should auto-initialize missing squares when assigning for an older pool', async () => {
+      const teamRes = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({ teamName: `Legacy Square Team ${Date.now()}` })
+
+      const poolRes = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `Legacy Square Pool ${Date.now()}`,
+          teamId: teamRes.body.id,
+          season: 2026,
+          primaryTeam: 'Packers',
+          squareCost: 20,
+          q1Payout: 200,
+          q2Payout: 200,
+          q3Payout: 200,
+          q4Payout: 400
+        })
+
+      const assignResponse = await request(app)
+        .patch(`/api/setup/pools/${poolRes.body.id}/squares/7`)
+        .set(organizerHeaders)
+        .send({
+          participantId: userId,
+          playerId: null,
+          paidFlg: true,
+          reassign: false
+        })
+
+      expect(assignResponse.status).toBe(200)
+      expect(assignResponse.body.square).toHaveProperty('square_num', 7)
+      expect(assignResponse.body.square).toHaveProperty('participant_id', userId)
+
+      const squaresResponse = await request(app)
+        .get(`/api/setup/pools/${poolRes.body.id}/squares`)
+        .set(organizerHeaders)
+
+      expect(squaresResponse.status).toBe(200)
+      expect(Array.isArray(squaresResponse.body.squares)).toBe(true)
+      expect(squaresResponse.body.squares).toHaveLength(100)
+    })
   })
 })
 

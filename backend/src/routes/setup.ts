@@ -6,6 +6,7 @@ import { PoolClient } from 'pg';
 import { z } from 'zod';
 import { db } from '../config/db';
 import { requireRole } from '../middleware/auth';
+import { ensurePoolSquaresInitialized } from '../services/poolSquares';
 
 export const setupRouter = Router();
 
@@ -659,6 +660,8 @@ setupRouter.post('/pools', async (req, res) => {
       ]
     );
 
+    await ensurePoolSquaresInitialized(client, id);
+
     await client.query('COMMIT');
     res.status(201).json({ id });
   } catch (error) {
@@ -685,55 +688,23 @@ setupRouter.post('/pools/:poolId/squares/init', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const poolExists = await client.query<{ id: number }>(
-      'SELECT id FROM football_pool.pool WHERE id = $1',
-      [parsedParams.data.poolId]
-    );
+    const initResult = await ensurePoolSquaresInitialized(client, parsedParams.data.poolId);
 
-    if (poolExists.rowCount === 0) {
-      await client.query('ROLLBACK');
+    await client.query('COMMIT');
+    res.status(initResult.insertedCount > 0 ? 201 : 200).json({
+      message: initResult.insertedCount > 0 ? 'Initialized pool squares' : 'Pool squares already initialized',
+      poolId: parsedParams.data.poolId,
+      squareCount: initResult.totalCount,
+      insertedCount: initResult.insertedCount
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+
+    if (error instanceof Error && error.message === 'Pool not found') {
       res.status(404).json({ error: 'Pool not found' });
       return;
     }
 
-    const existingSquares = await client.query<{ row_count: number }>(
-      'SELECT COUNT(*)::int AS row_count FROM football_pool.square WHERE pool_id = $1',
-      [parsedParams.data.poolId]
-    );
-
-    if ((existingSquares.rows[0]?.row_count ?? 0) > 0) {
-      await client.query('ROLLBACK');
-      res.status(409).json({ error: 'Pool already has squares initialized' });
-      return;
-    }
-
-    await client.query('LOCK TABLE football_pool.square IN EXCLUSIVE MODE');
-
-    const idBaseResult = await client.query<{ id_base: number }>(
-      'SELECT COALESCE(MAX(id), 0) AS id_base FROM football_pool.square'
-    );
-
-    const idBase = idBaseResult.rows[0].id_base;
-
-    await client.query(
-      `
-        INSERT INTO football_pool.square (id, pool_id, square_num, participant_id, player_id, paid_flg)
-        SELECT
-          $2 + gs AS id,
-          $1 AS pool_id,
-          gs AS square_num,
-          NULL AS participant_id,
-          NULL AS player_id,
-          FALSE AS paid_flg
-        FROM generate_series(1, 100) AS gs
-      `,
-      [parsedParams.data.poolId, idBase]
-    );
-
-    await client.query('COMMIT');
-    res.status(201).json({ message: 'Initialized 100 squares', poolId: parsedParams.data.poolId });
-  } catch (error) {
-    await client.query('ROLLBACK');
     res.status(500).json({
       error: 'Failed to initialize squares',
       detail: error instanceof Error ? error.message : 'Unknown error'
@@ -1421,8 +1392,13 @@ setupRouter.get('/pools/:poolId/squares', async (req, res) => {
     return;
   }
 
+  const client = await db.connect();
+
   try {
-    const result = await db.query(
+    await client.query('BEGIN');
+    await ensurePoolSquaresInitialized(client, parsedParams.data.poolId);
+
+    const result = await client.query(
       `
         SELECT
           id,
@@ -1437,12 +1413,22 @@ setupRouter.get('/pools/:poolId/squares', async (req, res) => {
       [parsedParams.data.poolId]
     );
 
+    await client.query('COMMIT');
     res.json({ squares: result.rows });
   } catch (error) {
+    await client.query('ROLLBACK');
+
+    if (error instanceof Error && error.message === 'Pool not found') {
+      res.status(404).json({ error: 'Pool not found' });
+      return;
+    }
+
     res.status(500).json({
       error: 'Failed to load squares',
       detail: error instanceof Error ? error.message : 'Unknown error'
     });
+  } finally {
+    client.release();
   }
 });
 
@@ -1468,6 +1454,13 @@ setupRouter.patch('/pools/:poolId/squares/:squareNum', async (req, res) => {
     );
 
     await client.query('BEGIN');
+
+    const initResult = await ensurePoolSquaresInitialized(client, parsedParams.data.poolId);
+    if (initResult.insertedCount > 0) {
+      console.log(
+        `[square-assignment] auto-initialized ${initResult.insertedCount} missing squares for pool=${parsedParams.data.poolId}`
+      );
+    }
 
     const squareResult = await client.query<{
       id: number;
@@ -1568,6 +1561,12 @@ setupRouter.patch('/pools/:poolId/squares/:squareNum', async (req, res) => {
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('[square-assignment] failed', error);
+
+    if (error instanceof Error && error.message === 'Pool not found') {
+      res.status(404).json({ error: 'Pool not found' });
+      return;
+    }
+
     res.status(500).json({
       error: 'Failed to update square assignment',
       detail: error instanceof Error ? error.message : 'Unknown error'

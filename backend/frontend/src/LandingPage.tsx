@@ -952,16 +952,6 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
                     Mark as paid
                   </label>
 
-                  <label className="checkbox-row">
-                    <input
-                      type="checkbox"
-                      checked={assignForm.reassign}
-                      onChange={(event) => setAssignForm((current) => ({ ...current, reassign: event.target.checked }))}
-                      disabled={busy !== null}
-                    />
-                    Allow reassign if already sold
-                  </label>
-
                   <div className="modal-actions">
                     <button
                       className="secondary"

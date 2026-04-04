@@ -2,6 +2,7 @@ import { Request, Router } from 'express';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { db } from '../config/db';
+import { ensurePoolSquaresInitialized } from '../services/poolSquares';
 
 export const landingRouter = Router();
 
@@ -497,6 +498,8 @@ landingRouter.get('/pools/:poolId/board', async (req, res) => {
           );
 
       const selectedGame = selectedGameResult.rows[0] ?? null;
+
+      await ensurePoolSquaresInitialized(client, poolId);
 
       const squaresResult = await client.query(
         `WITH season_winners AS (
