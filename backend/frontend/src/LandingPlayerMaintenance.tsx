@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
+import { formatPhoneNumber } from './utils/phone'
 
 type LandingPool = {
   id: number
@@ -134,7 +135,7 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
       firstName: player?.first_name ?? '',
       lastName: player?.last_name ?? '',
       email: player?.email ?? '',
-      phone: player?.phone ?? ''
+      phone: formatPhoneNumber(player?.phone ?? '')
     })
     setPlayerAssignments(buildAssignmentDrafts(nextTeams, player))
   }
@@ -475,7 +476,7 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
                   >
                     <td>{formatPersonName(player)}</td>
                     <td>{player.email ?? '—'}</td>
-                    <td>{player.phone ?? '—'}</td>
+                    <td>{formatPhoneNumber(player.phone) || '—'}</td>
                     <td>
                       {player.player_teams.length > 0
                         ? player.player_teams.map((assignment) => `${assignment.team_name ?? `Team ${assignment.team_id}`} #${assignment.jersey_num ?? '—'}`).join(' | ')
@@ -559,8 +560,9 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
               <span>Phone</span>
               <input
                 value={playerForm.phone}
-                onChange={(event) => setPlayerForm((current) => ({ ...current, phone: event.target.value }))}
+                onChange={(event) => setPlayerForm((current) => ({ ...current, phone: formatPhoneNumber(event.target.value) }))}
                 placeholder="(555) 555-1234"
+                inputMode="tel"
               />
             </label>
           </div>

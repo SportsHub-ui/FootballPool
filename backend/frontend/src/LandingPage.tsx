@@ -75,6 +75,21 @@ type LoginResponse = {
   }
 }
 
+type LandingUserOption = {
+  id: number
+  first_name: string | null
+  last_name: string | null
+  email: string | null
+}
+
+type LandingPlayerOption = {
+  id: number
+  user_id: number | null
+  jersey_num: number | null
+  first_name: string | null
+  last_name: string | null
+}
+
 type TeamBrand = {
   key: string
   color: string
@@ -182,6 +197,37 @@ const pickInitialGameId = (games: LandingGame[], preferredGameId?: number | null
   return nextScheduled?.id ?? games[0]?.id ?? null
 }
 
+const getApiErrorMessage = (payload: unknown, fallback: string): string => {
+  if (!payload || typeof payload !== 'object') {
+    return fallback
+  }
+
+  const data = payload as {
+    error?: string | Array<{ path?: Array<string | number>; message?: string }>
+    detail?: string
+    message?: string
+  }
+
+  if (Array.isArray(data.error)) {
+    const validationMessage = data.error
+      .map((issue) => {
+        const field = Array.isArray(issue.path) && issue.path.length > 0 ? `${issue.path.join('.')}: ` : ''
+        return `${field}${issue.message ?? 'Invalid value'}`
+      })
+      .join('; ')
+
+    if (validationMessage) {
+      return validationMessage
+    }
+  }
+
+  if (typeof data.error === 'string' && data.error.trim()) {
+    return data.error
+  }
+
+  return data.detail || data.message || fallback
+}
+
 export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('auth-token'))
   const [showLogin, setShowLogin] = useState(false)
@@ -195,6 +241,15 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   const [games, setGames] = useState<LandingGame[]>([])
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null)
   const [board, setBoard] = useState<LandingBoard | null>(null)
+  const [selectedSquare, setSelectedSquare] = useState<number | null>(null)
+  const [assignForm, setAssignForm] = useState({
+    participantId: '',
+    playerId: '',
+    paidFlg: false,
+    reassign: false
+  })
+  const [participantOptions, setParticipantOptions] = useState<LandingUserOption[]>([])
+  const [playerOptions, setPlayerOptions] = useState<LandingPlayerOption[]>([])
 
   const authHeaders = useMemo(() => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -221,6 +276,7 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   const loadPoolContext = async (poolId: number, preferredGameId?: number | null): Promise<void> => {
     setBusy('loading')
     setPageError(null)
+    setSelectedSquare(null)
 
     try {
       const response = await fetch(`${API_BASE}/api/landing/pools/${poolId}/games`, {
@@ -326,6 +382,15 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
     setToken(null)
     setShowLogin(false)
     setLoginError(null)
+    setSelectedSquare(null)
+    setParticipantOptions([])
+    setPlayerOptions([])
+    setAssignForm({
+      participantId: '',
+      playerId: '',
+      paidFlg: false,
+      reassign: false
+    })
   }
 
   const handlePoolChange = async (poolId: number | null) => {
@@ -357,6 +422,153 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
     } finally {
       setBusy(null)
     }
+  }
+
+  const loadSquareOptions = async (poolId: number): Promise<void> => {
+    const [usersResponse, playersResponse] = await Promise.all([
+      fetch(`${API_BASE}/api/setup/users`, { headers: authHeaders }),
+      fetch(`${API_BASE}/api/setup/pools/${poolId}/players`, { headers: authHeaders })
+    ])
+
+    const usersData = await usersResponse.json().catch(() => null)
+    const playersData = await playersResponse.json().catch(() => null)
+
+    if (!usersResponse.ok) {
+      throw new Error(getApiErrorMessage(usersData, 'Failed to load users'))
+    }
+
+    if (!playersResponse.ok) {
+      throw new Error(getApiErrorMessage(playersData, 'Failed to load players'))
+    }
+
+    setParticipantOptions(usersData?.users ?? [])
+    setPlayerOptions(playersData?.players ?? [])
+  }
+
+  const handleOpenSquareAssignment = async (square: LandingBoardSquare) => {
+    if (!token) {
+      setShowLogin(true)
+      return
+    }
+
+    if (!selectedPoolId) {
+      return
+    }
+
+    setSelectedSquare(square.square_num)
+    setAssignForm({
+      participantId: square.participant_id != null ? String(square.participant_id) : '',
+      playerId: square.player_id != null ? String(square.player_id) : '',
+      paidFlg: Boolean(square.paid_flg),
+      reassign: false
+    })
+    setBusy('square-options')
+    setPageError(null)
+
+    try {
+      await loadSquareOptions(selectedPoolId)
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'Failed to load square assignment options')
+      setSelectedSquare(null)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handleCloseSquareAssignment = () => {
+    setSelectedSquare(null)
+  }
+
+  const handleAssignSquare = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+
+    if (!selectedPoolId || selectedSquare == null) {
+      setPageError('Select a square first')
+      return
+    }
+
+    setBusy('assign-square')
+    setPageError(null)
+
+    try {
+      const response = await fetch(`${API_BASE}/api/setup/pools/${selectedPoolId}/squares/${selectedSquare}`, {
+        method: 'PATCH',
+        headers: authHeaders,
+        body: JSON.stringify({
+          participantId: assignForm.participantId ? Number(assignForm.participantId) : null,
+          playerId: assignForm.playerId ? Number(assignForm.playerId) : null,
+          paidFlg: assignForm.paidFlg,
+          reassign: assignForm.reassign
+        })
+      })
+
+      const data = await response.json().catch(() => null)
+
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(data, 'Failed to update square assignment'))
+      }
+
+      await loadBoard(selectedPoolId, selectedGameId)
+      setSelectedSquare(null)
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'Failed to update square assignment')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handleClearSquareAssignment = async () => {
+    if (!selectedPoolId || selectedSquare == null) {
+      setPageError('Select a square first')
+      return
+    }
+
+    setBusy('clear-square')
+    setPageError(null)
+
+    try {
+      const response = await fetch(`${API_BASE}/api/setup/pools/${selectedPoolId}/squares/${selectedSquare}`, {
+        method: 'PATCH',
+        headers: authHeaders,
+        body: JSON.stringify({
+          participantId: null,
+          playerId: null,
+          paidFlg: false,
+          reassign: true
+        })
+      })
+
+      const data = await response.json().catch(() => null)
+
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(data, 'Failed to clear square assignment'))
+      }
+
+      setAssignForm({
+        participantId: '',
+        playerId: '',
+        paidFlg: false,
+        reassign: false
+      })
+      await loadBoard(selectedPoolId, selectedGameId)
+      setSelectedSquare(null)
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'Failed to clear square assignment')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const formatUserName = (user: LandingUserOption): string => {
+    const fullName = `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim()
+    if (fullName) return fullName
+    return user.email ?? `User #${user.id}`
+  }
+
+  const formatPlayerName = (player: LandingPlayerOption): string => {
+    const fullName = `${player.first_name ?? ''} ${player.last_name ?? ''}`.trim()
+    const jersey = player.jersey_num != null ? `#${player.jersey_num}` : '#-'
+    return `${jersey} ${fullName || 'Unnamed player'}`
   }
 
   const selectedPool = useMemo(
@@ -417,6 +629,16 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
       })
     )
   }, [board])
+
+  const selectedBoardSquare = useMemo(() => {
+    if (!board || selectedSquare == null) {
+      return null
+    }
+
+    return board.squares.find((square) => square.square_num === selectedSquare) ?? null
+  }, [board, selectedSquare])
+
+  const canManageSquares = Boolean(token && selectedPoolId && board)
 
   const heroTitle = selectedPool
     ? `${selectedPool.team_name ?? selectedPool.primary_team ?? 'Team'} • ${selectedPool.pool_name ?? 'Pool'}`
@@ -542,6 +764,10 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
               </div>
             </div>
 
+            {canManageSquares ? (
+              <div className="landing-admin-hint">Admin mode: click any square to assign or clear a user.</div>
+            ) : null}
+
             <div
               className={`landing-team-bar preferred ${selectedPool ? '' : 'is-empty'}`}
               style={selectedPool ? { backgroundColor: primaryBrand.color, color: primaryBrand.accent } : undefined}
@@ -598,8 +824,25 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
                                 ? 'is-unpaid'
                                 : 'is-filled'
 
+                      const isSelectedSquare = selectedSquare === square.square_num
+
                       return (
-                        <div key={square.square_num} className={`landing-square-card ${squareClass}`}>
+                        <div
+                          key={square.square_num}
+                          className={`landing-square-card ${squareClass} ${canManageSquares ? 'is-manageable' : ''} ${isSelectedSquare ? 'is-selected' : ''}`}
+                          onClick={canManageSquares ? () => void handleOpenSquareAssignment(square) : undefined}
+                          onKeyDown={canManageSquares
+                            ? (event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                  event.preventDefault()
+                                  void handleOpenSquareAssignment(square)
+                                }
+                              }
+                            : undefined}
+                          role={canManageSquares ? 'button' : undefined}
+                          tabIndex={canManageSquares ? 0 : undefined}
+                          title={canManageSquares ? `Manage square ${square.square_num}` : undefined}
+                        >
                           {hasActiveSelection && square.current_game_won > 0 ? (
                             <span className="landing-square-chip top-left">${square.current_game_won}</span>
                           ) : null}
@@ -624,16 +867,95 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
               </div>
             </div>
 
-            <div className="landing-footnote">
-              {busy === 'loading'
-                ? 'Loading board...'
-                : hasActiveSelection
-                  ? isCompletedGame(selectedGame)
-                    ? 'Completed games show winnings in the square corners.'
-                    : 'Open squares are green, unpaid squares are red, and paid squares stay neutral.'
-                  : 'Choose a pool and game to load live square ownership and winnings.'}
-            </div>
           </div>
+
+          {selectedSquare != null && canManageSquares ? (
+            <div className="modal-backdrop" onClick={handleCloseSquareAssignment}>
+              <div
+                className="modal-card"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="landing-square-modal-title"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="modal-header">
+                  <h3 id="landing-square-modal-title">Square {selectedSquare}</h3>
+                  <button type="button" className="secondary compact" onClick={handleCloseSquareAssignment}>
+                    Close
+                  </button>
+                </div>
+
+                <p className="small">
+                  Current owner:{' '}
+                  {selectedBoardSquare?.participant_id
+                    ? `${selectedBoardSquare.participant_first_name ?? ''} ${selectedBoardSquare.participant_last_name ?? ''}`.trim() || `User #${selectedBoardSquare.participant_id}`
+                    : 'Unassigned'}
+                </p>
+
+                <form onSubmit={handleAssignSquare} className="assign-form modal-assign-form">
+                  <select
+                    value={assignForm.participantId}
+                    onChange={(event) => setAssignForm((current) => ({ ...current, participantId: event.target.value }))}
+                    disabled={busy !== null}
+                  >
+                    <option value="">Unassigned participant</option>
+                    {participantOptions.map((user) => (
+                      <option key={user.id} value={user.id}>
+                        {formatUserName(user)}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={assignForm.playerId}
+                    onChange={(event) => setAssignForm((current) => ({ ...current, playerId: event.target.value }))}
+                    disabled={busy !== null}
+                  >
+                    <option value="">No player</option>
+                    {playerOptions.map((player) => (
+                      <option key={player.id} value={player.id}>
+                        {formatPlayerName(player)}
+                      </option>
+                    ))}
+                  </select>
+
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={assignForm.paidFlg}
+                      onChange={(event) => setAssignForm((current) => ({ ...current, paidFlg: event.target.checked }))}
+                      disabled={busy !== null}
+                    />
+                    Mark as paid
+                  </label>
+
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={assignForm.reassign}
+                      onChange={(event) => setAssignForm((current) => ({ ...current, reassign: event.target.checked }))}
+                      disabled={busy !== null}
+                    />
+                    Allow reassign if already sold
+                  </label>
+
+                  <div className="modal-actions">
+                    <button
+                      className="secondary"
+                      type="button"
+                      onClick={handleClearSquareAssignment}
+                      disabled={busy !== null || !selectedPoolId}
+                    >
+                      {busy === 'clear-square' ? 'Clearing...' : 'Clear square'}
+                    </button>
+                    <button className="primary" type="submit" disabled={busy !== null || !selectedPoolId}>
+                      {busy === 'assign-square' ? 'Saving...' : 'Save assignment'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          ) : null}
         </section>
       ) : activePage === 'Players' ? (
         <LandingPlayerMaintenance

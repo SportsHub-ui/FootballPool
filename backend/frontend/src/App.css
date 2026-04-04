@@ -1168,6 +1168,7 @@ button:disabled {
   display: grid;
   gap: var(--landing-gap);
   min-height: 0;
+  align-content: stretch;
 }
 
 .landing-hero-bar {
@@ -1264,7 +1265,8 @@ button:disabled {
   display: grid;
   grid-template-columns: var(--landing-opponent-width) minmax(0, 1fr);
   gap: 0.55rem;
-  align-items: start;
+  align-items: stretch;
+  min-height: 0;
 }
 
 .landing-team-bar.opponent {
@@ -1277,12 +1279,19 @@ button:disabled {
   display: grid;
   gap: var(--landing-grid-gap);
   min-height: 0;
+  align-content: stretch;
 }
 
 .landing-squares-row {
   display: grid;
   grid-template-columns: var(--landing-axis-width) repeat(10, minmax(0, 1fr));
   gap: var(--landing-grid-gap);
+}
+
+@media (min-width: 981px) {
+  .landing-squares-panel {
+    grid-auto-rows: minmax(var(--landing-square-size), 1fr);
+  }
 }
 
 .landing-row-score {
@@ -1302,6 +1311,31 @@ button:disabled {
   text-align: center;
   overflow: hidden;
   box-sizing: border-box;
+}
+
+.landing-admin-hint {
+  padding: 0.45rem 0.75rem;
+  border: 1px solid #d8ccb8;
+  border-radius: 10px;
+  background: #fcfaf6;
+  color: #233042;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.landing-square-card.is-manageable {
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.landing-square-card.is-manageable:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(35, 48, 66, 0.12);
+}
+
+.landing-square-card.is-selected {
+  outline: 2px solid #f15d22;
+  outline-offset: 1px;
 }
 
 .landing-square-card.is-neutral {

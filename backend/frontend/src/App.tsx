@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
+import { formatPhoneNumber } from './utils/phone'
 
 type HealthResponse = {
   status: string
@@ -836,7 +837,7 @@ function App() {
       firstName: user.first_name ?? '',
       lastName: user.last_name ?? '',
       email: user.email ?? '',
-      phone: user.phone ?? ''
+      phone: formatPhoneNumber(user.phone ?? '')
     })
 
     const assignments = user.player_teams ?? []
@@ -1398,7 +1399,7 @@ function App() {
             <input ref={createUserFirstFieldRef} value={userForm.firstName} onChange={(e) => setUserForm({ ...userForm, firstName: e.target.value })} placeholder="First name" />
             <input value={userForm.lastName} onChange={(e) => setUserForm({ ...userForm, lastName: e.target.value })} placeholder="Last name" />
             <input value={userForm.email} onChange={(e) => setUserForm({ ...userForm, email: e.target.value })} placeholder="Email" />
-            <input value={userForm.phone} onChange={(e) => setUserForm({ ...userForm, phone: e.target.value })} placeholder="Phone" />
+            <input value={userForm.phone} onChange={(e) => setUserForm({ ...userForm, phone: formatPhoneNumber(e.target.value) })} placeholder="Phone" inputMode="tel" />
             <label className="checkbox-row">
               <input
                 type="checkbox"
@@ -1613,7 +1614,7 @@ function App() {
             <input value={editUserForm.firstName} onChange={(e) => setEditUserForm({ ...editUserForm, firstName: e.target.value })} placeholder="First name" />
             <input value={editUserForm.lastName} onChange={(e) => setEditUserForm({ ...editUserForm, lastName: e.target.value })} placeholder="Last name" />
             <input value={editUserForm.email} onChange={(e) => setEditUserForm({ ...editUserForm, email: e.target.value })} placeholder="Email" />
-            <input value={editUserForm.phone} onChange={(e) => setEditUserForm({ ...editUserForm, phone: e.target.value })} placeholder="Phone" />
+            <input value={editUserForm.phone} onChange={(e) => setEditUserForm({ ...editUserForm, phone: formatPhoneNumber(e.target.value) })} placeholder="Phone" inputMode="tel" />
             <label className="checkbox-row">
               <input
                 type="checkbox"

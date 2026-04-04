@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { formatPhoneNumber } from './utils/phone'
 
 type LandingPool = {
   id: number
@@ -148,7 +149,7 @@ export function LandingUserMaintenance({
       firstName: user?.first_name ?? '',
       lastName: user?.last_name ?? '',
       email: user?.email ?? '',
-      phone: user?.phone ?? ''
+      phone: formatPhoneNumber(user?.phone ?? '')
     })
     setPoolAssignments(buildPoolAssignmentDrafts(nextPools, user))
   }
@@ -462,7 +463,7 @@ export function LandingUserMaintenance({
                   >
                     <td>{formatUserName(user)}</td>
                     <td>{user.email ?? '—'}</td>
-                    <td>{user.phone ?? '—'}</td>
+                    <td>{formatPhoneNumber(user.phone) || '—'}</td>
                     <td>{user.user_pools.length > 0 ? user.user_pools.map(buildAssignedPoolLabel).join(' | ') : 'Not assigned'}</td>
                     <td>
                       {user.player_teams.length > 0
@@ -575,8 +576,9 @@ export function LandingUserMaintenance({
               <span>Phone</span>
               <input
                 value={userForm.phone}
-                onChange={(event) => setUserForm((current) => ({ ...current, phone: event.target.value }))}
+                onChange={(event) => setUserForm((current) => ({ ...current, phone: formatPhoneNumber(event.target.value) }))}
                 placeholder="(555) 555-1234"
+                inputMode="tel"
               />
             </label>
 
