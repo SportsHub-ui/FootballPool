@@ -1051,7 +1051,7 @@ button:disabled {
 .landing-page-shell {
   --landing-gap: clamp(0.3rem, 0.75vh, 0.75rem);
   --landing-side-width: clamp(120px, 12vw, 160px);
-  --landing-opponent-width: clamp(112px, 12vw, 150px);
+  --landing-opponent-width: clamp(42px, 4.8vw, 52px);
   --landing-axis-width: clamp(2rem, 2.4vw, 2.5rem);
   --landing-grid-gap: 0.25rem;
   --landing-digit-size: clamp(2rem, 3.2vh, 2.4rem);
@@ -1237,6 +1237,11 @@ button:disabled {
   padding: 2px;
 }
 
+.landing-team-bar span {
+  font-size: inherit;
+  line-height: 1;
+}
+
 .landing-score-bar.top {
   display: grid;
   grid-template-columns: var(--landing-axis-width) repeat(10, minmax(0, 1fr));
@@ -1272,6 +1277,7 @@ button:disabled {
 .landing-team-bar.preferred {
   justify-content: center;
   text-align: center;
+  margin-left: calc(var(--landing-opponent-width) + 0.55rem + var(--landing-axis-width) + var(--landing-grid-gap));
 }
 
 .landing-team-bar.opponent {
@@ -1282,7 +1288,11 @@ button:disabled {
   text-orientation: mixed;
   transform: rotate(180deg);
   text-align: center;
-  padding: 0.9rem 0.5rem;
+  padding: 0.75rem 0.35rem;
+}
+
+.landing-team-bar.opponent img {
+  transform: rotate(90deg);
 }
 
 .landing-squares-panel {
