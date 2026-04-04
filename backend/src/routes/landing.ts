@@ -499,7 +499,14 @@ landingRouter.get('/pools/:poolId/board', async (req, res) => {
 
       const selectedGame = selectedGameResult.rows[0] ?? null;
 
-      await ensurePoolSquaresInitialized(client, poolId);
+      try {
+        await ensurePoolSquaresInitialized(client, poolId);
+      } catch (squareInitError) {
+        console.warn(
+          `[landing-board] continuing without auto-initialized squares for pool=${poolId}`,
+          squareInitError
+        );
+      }
 
       const squaresResult = await client.query(
         `WITH season_winners AS (
