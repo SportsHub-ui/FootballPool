@@ -815,11 +815,14 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   const simulationButtonDisabled = hasSimulationData
     ? !selectedPoolId || busy !== null || !(simulationStatus?.canCleanup ?? hasSimulationData)
     : !selectedPoolId || busy !== null || !(simulationStatus?.canSimulate ?? false)
-  const simulationButtonTitle = hasSimulationData
-    ? 'Remove the simulated season data for this pool.'
-    : simulationStatus?.canSimulate
-      ? 'Create a full season simulation for this pool.'
-      : simulationStatus?.blockers.join(' ')
+  const simulationButtonTitle = !selectedPoolId
+    ? 'Select a pool to enable simulation.'
+    : hasSimulationData
+      ? 'Remove the simulated season data for this pool.'
+      : simulationStatus?.canSimulate
+        ? 'Create a full season simulation for this pool.'
+        : simulationStatus?.blockers.join(' ')
+  const showSimulationTooltip = simulationButtonDisabled && Boolean(simulationButtonTitle)
 
   const heroTitle = selectedPool
     ? `${selectedPool.team_name ?? selectedPool.primary_team ?? 'Team'} • ${selectedPool.pool_name ?? 'Pool'}`
@@ -947,22 +950,26 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
 
             {SHOW_SIMULATION_CONTROLS ? (
               <div className="landing-board-dev-actions">
-                <button
-                  type="button"
-                  className={hasSimulationData ? 'secondary' : 'primary'}
-                  onClick={() => void handleSimulationAction()}
-                  disabled={simulationButtonDisabled}
-                  title={simulationButtonTitle}
-                >
-                  {busy === 'create-simulation'
-                    ? 'Simulating...'
-                    : busy === 'cleanup-simulation'
-                      ? 'Cleaning up...'
-                      : simulationButtonLabel}
-                </button>
-                {!hasSimulationData && simulationButtonDisabled && simulationStatus?.blockers[0] ? (
-                  <span className="landing-board-dev-note">{simulationStatus.blockers[0]}</span>
-                ) : null}
+                <span className="landing-hover-tooltip-wrap">
+                  <button
+                    type="button"
+                    className={hasSimulationData ? 'secondary' : 'primary'}
+                    onClick={() => void handleSimulationAction()}
+                    disabled={simulationButtonDisabled}
+                    aria-label={simulationButtonTitle}
+                  >
+                    {busy === 'create-simulation'
+                      ? 'Simulating...'
+                      : busy === 'cleanup-simulation'
+                        ? 'Cleaning up...'
+                        : simulationButtonLabel}
+                  </button>
+                  {showSimulationTooltip ? (
+                    <span className="landing-hover-tooltip" role="tooltip">
+                      {simulationButtonTitle}
+                    </span>
+                  ) : null}
+                </span>
               </div>
             ) : null}
           </div>
