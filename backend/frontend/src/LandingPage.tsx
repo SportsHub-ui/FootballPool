@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
 import { LandingMetrics } from './LandingMetrics'
+import { LandingNotificationTemplates } from './LandingNotificationTemplates'
 import { LandingPlayerMaintenance } from './LandingPlayerMaintenance'
 import { LandingPoolMaintenance } from './LandingPoolMaintenance'
 import { LandingScheduleMaintenance } from './LandingScheduleMaintenance'
@@ -323,7 +324,7 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   })
   const displayOnlyMode = Boolean(displayToken)
   const [showLogin, setShowLogin] = useState(false)
-  const [activePage, setActivePage] = useState<'Squares' | 'Metrics' | 'Players' | 'Teams' | 'Pools' | 'Schedules' | 'Users'>('Squares')
+  const [activePage, setActivePage] = useState<'Squares' | 'Metrics' | 'Notifications' | 'Players' | 'Teams' | 'Pools' | 'Schedules' | 'Users'>('Squares')
   const [busy, setBusy] = useState<string | null>(null)
   const [loginError, setLoginError] = useState<string | null>(null)
   const [pageError, setPageError] = useState<string | null>(null)
@@ -889,7 +890,7 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
         <>
           <nav className="landing-nav-bar">
             <div className="landing-nav-links">
-              {(['Squares', 'Players', 'Teams', 'Pools', 'Schedules', 'Users'] as const).map((item) => (
+              {(['Squares', 'Notifications', 'Players', 'Teams', 'Pools', 'Schedules', 'Users'] as const).map((item) => (
                 <button
                   key={item}
                   type="button"
@@ -1243,6 +1244,14 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
           apiBase={API_BASE}
           selectedPoolId={selectedPoolId}
           onSelectPool={handlePoolChange}
+          onRequireSignIn={() => setShowLogin(true)}
+        />
+      ) : activePage === 'Notifications' ? (
+        <LandingNotificationTemplates
+          pools={pools}
+          token={token}
+          authHeaders={authHeaders}
+          apiBase={API_BASE}
           onRequireSignIn={() => setShowLogin(true)}
         />
       ) : activePage === 'Players' ? (

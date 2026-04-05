@@ -1,6 +1,14 @@
 import { createHash } from 'crypto';
 import type { PoolClient } from 'pg';
 import { env } from '../config/env';
+import {
+  DEFAULT_NOTIFICATION_TEMPLATES,
+  getNotificationTemplateMap,
+  renderMarkupToHtml,
+  renderNotificationTemplate,
+  type NotificationTemplateKind as NotificationKind,
+  type NotificationTemplateScope
+} from './notificationTemplates';
 
 export const notificationLevelValues = ['none', 'quarter_win', 'game_total'] as const;
 export type NotificationLevel = (typeof notificationLevelValues)[number];
@@ -37,7 +45,6 @@ export type ScoreNotificationContext = {
 };
 
 type RecipientScope = 'user' | 'pool_contact';
-type NotificationKind = 'quarter_win' | 'game_total' | 'lead_warning';
 
 type Recipient = {
   scope: RecipientScope;
@@ -88,6 +95,7 @@ type DeliverEmailArgs = {
   recipientEmail: string;
   subject: string;
   messageText: string;
+  messageHtml?: string;
 };
 
 type LoggedNotificationArgs = {
@@ -100,6 +108,7 @@ type LoggedNotificationArgs = {
   squareNum: number | null;
   subject: string;
   messageText: string;
+  messageHtml?: string;
   payload: Record<string, unknown>;
 };
 
@@ -204,6 +213,40 @@ export const ensureNotificationSupport = async (client: PoolClient): Promise<voi
         CREATE INDEX IF NOT EXISTS idx_notification_log_game_created
           ON football_pool.notification_log (game_id, created_at DESC)
       `);
+
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS football_pool.notification_template (
+          recipient_scope VARCHAR(20) NOT NULL,
+          notification_kind VARCHAR(30) NOT NULL,
+          subject_template TEXT NOT NULL,
+          body_template TEXT NOT NULL,
+          markup_format VARCHAR(20) NOT NULL DEFAULT 'plain_text',
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (recipient_scope, notification_kind)
+        )
+      `);
+
+      for (const [recipientScope, templatesByKind] of Object.entries(DEFAULT_NOTIFICATION_TEMPLATES) as Array<
+        [NotificationTemplateScope, (typeof DEFAULT_NOTIFICATION_TEMPLATES)[NotificationTemplateScope]]
+      >) {
+        for (const [notificationKind, template] of Object.entries(templatesByKind) as Array<
+          [NotificationKind, (typeof templatesByKind)[NotificationKind]]
+        >) {
+          await client.query(
+            `INSERT INTO football_pool.notification_template (
+               recipient_scope,
+               notification_kind,
+               subject_template,
+               body_template,
+               markup_format,
+               updated_at
+             )
+             VALUES ($1, $2, $3, $4, $5, NOW())
+             ON CONFLICT (recipient_scope, notification_kind) DO NOTHING`,
+            [recipientScope, notificationKind, template.subjectTemplate, template.bodyTemplate, template.markupFormat]
+          );
+        }
+      }
     })();
   }
 
@@ -228,7 +271,7 @@ const hashKey = (...parts: Array<string | number | null | undefined>): string =>
     .digest('hex');
 
 const getMailTransport = async (): Promise<unknown | null> => {
-  if (!env.EMAIL_NOTIFICATIONS_ENABLED || !env.SMTP_HOST) {
+  if (env.APP_ENV === 'test' || process.env.NODE_ENV === 'test' || !env.EMAIL_NOTIFICATIONS_ENABLED || !env.SMTP_HOST) {
     return null;
   }
 
@@ -258,7 +301,7 @@ const getMailTransport = async (): Promise<unknown | null> => {
   return mailTransportPromise;
 };
 
-const deliverEmail = async ({ recipientEmail, subject, messageText }: DeliverEmailArgs): Promise<void> => {
+const deliverEmail = async ({ recipientEmail, subject, messageText, messageHtml }: DeliverEmailArgs): Promise<void> => {
   const transport = await getMailTransport();
 
   if (!transport || typeof transport !== 'object' || typeof (transport as { sendMail?: unknown }).sendMail !== 'function') {
@@ -271,7 +314,8 @@ const deliverEmail = async ({ recipientEmail, subject, messageText }: DeliverEma
       from: env.EMAIL_FROM,
       to: recipientEmail,
       subject,
-      text: messageText
+      text: messageText,
+      html: messageHtml
     });
   } catch (error) {
     console.error(`[notifications] Failed to send email to ${recipientEmail}`, error);
@@ -320,7 +364,8 @@ const logAndDeliverNotification = async (client: PoolClient, args: LoggedNotific
   await deliverEmail({
     recipientEmail: args.recipient.email,
     subject: args.subject,
-    messageText: args.messageText
+    messageText: args.messageText,
+    messageHtml: args.messageHtml
   });
 
   return true;
@@ -449,13 +494,32 @@ const loadLeaderSquareRecord = async (client: PoolClient, poolId: number, square
   return result.rows[0] ?? null;
 };
 
+const buildNotificationContent = (
+  templateMap: Map<string, ReturnType<typeof renderNotificationTemplate>['template']>,
+  templateScope: NotificationTemplateScope,
+  kind: NotificationKind,
+  variables: Record<string, unknown>
+): { subject: string; messageText: string; messageHtml: string } => {
+  const rendered = renderNotificationTemplate({
+    templateScope,
+    notificationKind: kind,
+    variables,
+    templateMap
+  });
+
+  return {
+    subject: rendered.subject,
+    messageText: rendered.body,
+    messageHtml: renderMarkupToHtml(rendered.body, rendered.markupFormat)
+  };
+};
+
 export const emitScoreNotifications = async (client: PoolClient, context: ScoreNotificationContext): Promise<void> => {
   await ensureNotificationSupport(client);
 
-  const [poolRecord, gameRecord] = await Promise.all([
-    loadPoolNotificationRecord(client, context.poolId),
-    loadGameLabel(client, context.gameId)
-  ]);
+  const poolRecord = await loadPoolNotificationRecord(client, context.poolId);
+  const gameRecord = await loadGameLabel(client, context.gameId);
+  const templateMap = await getNotificationTemplateMap(client);
 
   if (!poolRecord) {
     return;
@@ -496,6 +560,18 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
     const scoreLine = `${primaryTeamName} ${quarter.primaryScore ?? '—'} · ${opponentName} ${quarter.opponentScore ?? '—'}`;
 
     if (winnerUser?.email && normalizeNotificationLevel(winnerUser.notification_level) === 'quarter_win') {
+      const userNotification = buildNotificationContent(templateMap, 'participant', 'quarter_win', {
+        recipientName: winnerName,
+        winnerName,
+        poolName,
+        primaryTeamName,
+        opponentName,
+        scoreLine,
+        quarter: quarter.quarter,
+        squareNum: quarter.squareNum,
+        payout: formatMoney(quarter.payout)
+      });
+
       await logAndDeliverNotification(client, {
         dedupeKey: hashKey('quarter_win', 'user', context.gameId, quarter.quarter, winnerUser.id, quarter.squareNum, quarter.payout),
         kind: 'quarter_win',
@@ -509,14 +585,9 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
         gameId: context.gameId,
         quarter: quarter.quarter,
         squareNum: quarter.squareNum,
-        subject: `You won Q${quarter.quarter} in ${poolName}`,
-        messageText: [
-          `Hi ${winnerName},`,
-          '',
-          `Your square #${quarter.squareNum} won quarter ${quarter.quarter} in ${poolName}.`,
-          scoreLine,
-          `Quarter payout: ${formatMoney(quarter.payout)}`
-        ].join('\n'),
+        subject: userNotification.subject,
+        messageText: userNotification.messageText,
+        messageHtml: userNotification.messageHtml,
         payload: {
           poolName,
           primaryTeamName,
@@ -531,6 +602,18 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
 
     if (poolContactLevel === 'quarter_win') {
       for (const recipient of poolContactRecipients) {
+        const contactNotification = buildNotificationContent(templateMap, 'pool_contact', 'quarter_win', {
+          recipientName: recipient.name,
+          winnerName,
+          poolName,
+          primaryTeamName,
+          opponentName,
+          scoreLine,
+          quarter: quarter.quarter,
+          squareNum: quarter.squareNum,
+          payout: formatMoney(quarter.payout)
+        });
+
         await logAndDeliverNotification(client, {
           dedupeKey: hashKey('quarter_win', recipient.scope, context.gameId, quarter.quarter, recipient.email, quarter.winnerUserId, quarter.squareNum, quarter.payout),
           kind: 'quarter_win',
@@ -539,15 +622,9 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
           gameId: context.gameId,
           quarter: quarter.quarter,
           squareNum: quarter.squareNum,
-          subject: `Q${quarter.quarter} winner for ${poolName}`,
-          messageText: [
-            `Hi ${recipient.name},`,
-            '',
-            `${winnerName} won quarter ${quarter.quarter} in ${poolName}.`,
-            `Winning square: #${quarter.squareNum}`,
-            scoreLine,
-            `Quarter payout: ${formatMoney(quarter.payout)}`
-          ].join('\n'),
+          subject: contactNotification.subject,
+          messageText: contactNotification.messageText,
+          messageHtml: contactNotification.messageHtml,
           payload: {
             poolName,
             primaryTeamName,
@@ -588,6 +665,14 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
         .map((quarter) => `Q${quarter.quarter}: ${formatMoney(quarter.payout)} (square #${quarter.squareNum})`)
         .join('\n');
 
+      const totalNotification = buildNotificationContent(templateMap, 'participant', 'game_total', {
+        recipientName: winnerName,
+        winnerName,
+        poolName,
+        totalWon: formatMoney(summary.totalWon),
+        winningsBreakdown: breakdown
+      });
+
       await logAndDeliverNotification(client, {
         dedupeKey: hashKey('game_total', 'user', context.gameId, userId, summary.totalWon, breakdown),
         kind: 'game_total',
@@ -601,15 +686,9 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
         gameId: context.gameId,
         quarter: null,
         squareNum: null,
-        subject: `Final winnings for ${poolName}`,
-        messageText: [
-          `Hi ${winnerName},`,
-          '',
-          `The game in ${poolName} has ended.`,
-          `Your total winnings: ${formatMoney(summary.totalWon)}`,
-          '',
-          breakdown
-        ].join('\n'),
+        subject: totalNotification.subject,
+        messageText: totalNotification.messageText,
+        messageHtml: totalNotification.messageHtml,
         payload: {
           poolName,
           totalWon: summary.totalWon,
@@ -632,6 +711,12 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
         .join('\n');
 
       for (const recipient of poolContactRecipients) {
+        const summaryNotification = buildNotificationContent(templateMap, 'pool_contact', 'game_total', {
+          recipientName: recipient.name,
+          poolName,
+          winningsBreakdown: summaryLines
+        });
+
         await logAndDeliverNotification(client, {
           dedupeKey: hashKey('game_total', recipient.scope, context.gameId, recipient.email, summaryLines),
           kind: 'game_total',
@@ -640,14 +725,9 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
           gameId: context.gameId,
           quarter: null,
           squareNum: null,
-          subject: `Game final summary for ${poolName}`,
-          messageText: [
-            `Hi ${recipient.name},`,
-            '',
-            `The ${poolName} game has ended. Final winnings summary:`,
-            '',
-            summaryLines
-          ].join('\n'),
+          subject: summaryNotification.subject,
+          messageText: summaryNotification.messageText,
+          messageHtml: summaryNotification.messageHtml,
           payload: {
             poolName,
             winners: Array.from(totalsByUser.entries()).map(([userId, summary]) => ({ userId, totalWon: summary.totalWon }))
@@ -676,6 +756,17 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
   const leadScoreLine = `${primaryTeamName} ${context.currentLeader.primaryScore ?? '—'} · ${opponentName} ${context.currentLeader.opponentScore ?? '—'}`;
 
   if (leaderSquare.email && Boolean(leaderSquare.notify_on_square_lead_flg)) {
+    const leadNotification = buildNotificationContent(templateMap, 'participant', 'lead_warning', {
+      recipientName: leaderName,
+      leaderName,
+      poolName,
+      primaryTeamName,
+      opponentName,
+      scoreLine: leadScoreLine,
+      quarter: context.currentLeader.quarter,
+      squareNum: context.currentLeader.squareNum
+    });
+
     await logAndDeliverNotification(client, {
       dedupeKey: hashKey(
         'lead_warning',
@@ -698,13 +789,9 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
       gameId: context.gameId,
       quarter: context.currentLeader.quarter,
       squareNum: context.currentLeader.squareNum,
-      subject: `Your square is currently leading in ${poolName}`,
-      messageText: [
-        `Hi ${leaderName},`,
-        '',
-        `Square #${context.currentLeader.squareNum} would win quarter ${context.currentLeader.quarter} in ${poolName} if it ended right now.`,
-        `Current score: ${leadScoreLine}`
-      ].join('\n'),
+      subject: leadNotification.subject,
+      messageText: leadNotification.messageText,
+      messageHtml: leadNotification.messageHtml,
       payload: {
         poolName,
         quarter: context.currentLeader.quarter,
@@ -717,6 +804,17 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
 
   if (Boolean(poolRecord.contact_notify_on_square_lead_flg)) {
     for (const recipient of poolContactRecipients) {
+      const contactLeadNotification = buildNotificationContent(templateMap, 'pool_contact', 'lead_warning', {
+        recipientName: recipient.name,
+        leaderName,
+        poolName,
+        primaryTeamName,
+        opponentName,
+        scoreLine: leadScoreLine,
+        quarter: context.currentLeader.quarter,
+        squareNum: context.currentLeader.squareNum
+      });
+
       await logAndDeliverNotification(client, {
         dedupeKey: hashKey(
           'lead_warning',
@@ -734,13 +832,9 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
         gameId: context.gameId,
         quarter: context.currentLeader.quarter,
         squareNum: context.currentLeader.squareNum,
-        subject: `Live square leader for ${poolName}`,
-        messageText: [
-          `Hi ${recipient.name},`,
-          '',
-          `${leaderName} on square #${context.currentLeader.squareNum} would win quarter ${context.currentLeader.quarter} in ${poolName} if the quarter ended now.`,
-          `Current score: ${leadScoreLine}`
-        ].join('\n'),
+        subject: contactLeadNotification.subject,
+        messageText: contactLeadNotification.messageText,
+        messageHtml: contactLeadNotification.messageHtml,
         payload: {
           poolName,
           leaderName,

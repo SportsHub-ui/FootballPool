@@ -16,6 +16,14 @@ import {
 import { ensurePoolSquaresInitialized } from '../services/poolSquares';
 import { ensurePoolDisplayTokenSupport, generateUniquePoolDisplayToken } from '../services/poolDisplay';
 import { ensureNotificationSupport } from '../services/notifications';
+import {
+  availableNotificationVariables,
+  notificationMarkupFormatValues,
+  notificationTemplateKindValues,
+  notificationTemplateScopeValues,
+  listNotificationTemplates,
+  saveNotificationTemplate
+} from '../services/notificationTemplates';
 
 export const setupRouter = Router();
 
@@ -175,6 +183,17 @@ const assignSquareSchema = z.object({
   reassign: z.boolean().optional()
 });
 
+const notificationTemplateParams = z.object({
+  recipientScope: z.enum(notificationTemplateScopeValues),
+  notificationKind: z.enum(notificationTemplateKindValues)
+});
+
+const updateNotificationTemplateSchema = z.object({
+  subjectTemplate: z.string().trim().min(1).max(255),
+  bodyTemplate: z.string().trim().min(1),
+  markupFormat: z.enum(notificationMarkupFormatValues).default('plain_text')
+});
+
 setupRouter.get('/images/:imageId/file', async (req, res) => {
   const parsedParams = imageIdParams.safeParse(req.params);
 
@@ -315,6 +334,62 @@ const hasDuplicateTeamAssignments = (assignments: Array<{ teamId: number; jersey
 };
 
 const hasDuplicateIds = (ids: number[]): boolean => new Set(ids).size !== ids.length;
+
+setupRouter.get('/notifications/templates', async (_req, res) => {
+  const client = await db.connect();
+
+  try {
+    await ensureNotificationSupport(client);
+    const templates = await listNotificationTemplates(client);
+    res.status(200).json({
+      templates,
+      availableVariables: availableNotificationVariables
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to load notification templates',
+      detail: error instanceof Error ? error.message : 'Unknown error'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+setupRouter.put('/notifications/templates/:recipientScope/:notificationKind', async (req, res) => {
+  const parsedParams = notificationTemplateParams.safeParse(req.params);
+  const parsedBody = updateNotificationTemplateSchema.safeParse(req.body);
+
+  if (!parsedParams.success) {
+    res.status(400).json({ error: parsedParams.error.issues });
+    return;
+  }
+
+  if (!parsedBody.success) {
+    res.status(400).json({ error: parsedBody.error.issues });
+    return;
+  }
+
+  const client = await db.connect();
+
+  try {
+    await ensureNotificationSupport(client);
+    const template = await saveNotificationTemplate(
+      client,
+      parsedParams.data.recipientScope,
+      parsedParams.data.notificationKind,
+      parsedBody.data
+    );
+
+    res.status(200).json({ template });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to save notification template',
+      detail: error instanceof Error ? error.message : 'Unknown error'
+    });
+  } finally {
+    client.release();
+  }
+});
 
 const syncUserPlayerFlag = async (client: PoolClient, userId: number): Promise<void> => {
   const assignmentCount = await client.query<{ assignment_count: number }>(

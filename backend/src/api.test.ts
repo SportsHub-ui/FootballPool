@@ -1297,6 +1297,36 @@ describe('Football Pool API', () => {
     })
   })
 
+  describe('Notification template configuration', () => {
+    it('should list the configurable notification templates', async () => {
+      const response = await request(app)
+        .get('/api/setup/notifications/templates')
+        .set(organizerHeaders)
+
+      expect(response.status).toBe(200)
+      expect(Array.isArray(response.body.templates)).toBe(true)
+      expect(response.body.templates.length).toBeGreaterThanOrEqual(6)
+      expect(response.body.availableVariables).toHaveProperty('quarter_win')
+      expect(response.body.availableVariables.quarter_win).toContain('winnerName')
+    })
+
+    it('should save a custom participant quarter-win template', async () => {
+      const response = await request(app)
+        .put('/api/setup/notifications/templates/participant/quarter_win')
+        .set(organizerHeaders)
+        .send({
+          subjectTemplate: 'Quarter {{quarter}} winner in {{poolName}}',
+          bodyTemplate: '## Quarter {{quarter}}\n\n{{winnerName}} won **{{poolName}}**.\n\n{{scoreLine}}',
+          markupFormat: 'markdown'
+        })
+
+      expect(response.status).toBe(200)
+      expect(response.body.template.subjectTemplate).toBe('Quarter {{quarter}} winner in {{poolName}}')
+      expect(response.body.template.bodyTemplate).toContain('{{winnerName}}')
+      expect(response.body.template.markupFormat).toBe('markdown')
+    })
+  })
+
   describe('Email notifications', () => {
     it('should log quarter-win emails for opted-in users and pool contacts', async () => {
       const winnerEmail = `winner-${Date.now()}@example.com`
@@ -1331,11 +1361,13 @@ describe('Football Pool API', () => {
           primaryContactId: Number(contactResponse.body.id)
         })
 
+      const poolName = `Notify Pool ${Date.now()}`
+
       const poolResponse = await request(app)
         .post('/api/setup/pools')
         .set(organizerHeaders)
         .send({
-          poolName: `Notify Pool ${Date.now()}`,
+          poolName,
           teamId: Number(teamResponse.body.id),
           season: 2026,
           primaryTeam: 'Packers',
@@ -1385,6 +1417,15 @@ describe('Football Pool API', () => {
         [gameId, JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]), JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])]
       )
 
+      await request(app)
+        .put('/api/setup/notifications/templates/participant/quarter_win')
+        .set(organizerHeaders)
+        .send({
+          subjectTemplate: 'Quarter {{quarter}} winner in {{poolName}}',
+          bodyTemplate: '## Quarter {{quarter}}\n\n{{winnerName}} won **{{poolName}}**.\n\n{{scoreLine}}',
+          markupFormat: 'markdown'
+        })
+
       const scoreResponse = await request(app)
         .patch(`/api/games/${gameId}/scores`)
         .set(organizerHeaders)
@@ -1419,6 +1460,20 @@ describe('Football Pool API', () => {
         { recipient_email: winnerEmail, notification_kind: 'quarter_win', recipient_scope: 'user', quarter: 3 },
         { recipient_email: winnerEmail, notification_kind: 'quarter_win', recipient_scope: 'user', quarter: 4 }
       ])
+
+      const userMessageResult = await db.query(
+        `SELECT subject, message_text
+         FROM football_pool.notification_log
+         WHERE game_id = $1
+           AND recipient_scope = 'user'
+           AND quarter = 1
+         LIMIT 1`,
+        [gameId]
+      )
+
+      expect(userMessageResult.rows[0]?.subject).toBe(`Quarter 1 winner in ${poolName}`)
+      expect(String(userMessageResult.rows[0]?.message_text ?? '')).toContain('Quarter Winner won')
+      expect(String(userMessageResult.rows[0]?.message_text ?? '')).toContain('Packers 0 · Email Opponent 0')
     })
   })
 
