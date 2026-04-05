@@ -121,7 +121,10 @@ type TeamBrand = {
   logo: string
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '')
+  .toString()
+  .trim()
+  .replace(/\/+$/, '')
 const DEFAULT_POOL_LOGO = '/football-pool.png'
 const SHOW_SIMULATION_CONTROLS =
   (import.meta.env.VITE_ENABLE_SIMULATION_CONTROLS ?? 'true').toString().toLowerCase() === 'true'

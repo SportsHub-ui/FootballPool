@@ -82,6 +82,14 @@ npm run dev
 
 Frontend runs on `http://localhost:5173`
 
+### Production Deployment Notes
+
+If the site loads in production but shows no data, the frontend is usually pointing at the wrong API URL.
+
+- **Same host / reverse proxy deployment:** leave `VITE_API_BASE_URL` blank so the app uses relative `/api/...` calls.
+- **Separate frontend + backend deployments:** set `VITE_API_BASE_URL=https://<your-backend-host>` when building the frontend.
+- For Render backend deployments, also set `DATABASE_URL`, `JWT_SECRET`, and `APP_ENV=production`, then run the SQL migrations before opening the site.
+
 ### Run Tests
 
 ```bash

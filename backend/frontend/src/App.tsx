@@ -213,7 +213,10 @@ const resolveTeamBrand = (
   }
 }
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
+const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '')
+  .toString()
+  .trim()
+  .replace(/\/+$/, '')
 const DEFAULT_BOARD_LOGO = '/football-pool.png'
 
 const formatSimulationMode = (mode: SimulationMode | null | undefined): string => {
