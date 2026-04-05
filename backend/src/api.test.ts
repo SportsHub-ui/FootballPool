@@ -156,6 +156,31 @@ describe('Football Pool API', () => {
     })
   })
 
+  describe('Setup Endpoints - Images', () => {
+    it('should upload and serve an image through the API-backed image route', async () => {
+      const uploadResponse = await request(app)
+        .post('/api/setup/images/upload')
+        .set(organizerHeaders)
+        .attach('image', Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>'), 'logo.svg')
+
+      expect(uploadResponse.status).toBe(201)
+      expect(uploadResponse.body.filePath).toMatch(/^\/api\/setup\/images\/\d+\/file$/)
+
+      const listResponse = await request(app)
+        .get('/api/setup/images')
+        .set(organizerHeaders)
+
+      expect(listResponse.status).toBe(200)
+      expect(listResponse.body.images.some((image: { filePath: string }) => image.filePath === uploadResponse.body.filePath)).toBe(true)
+
+      const imageResponse = await request(app)
+        .get(uploadResponse.body.filePath)
+
+      expect(imageResponse.status).toBe(200)
+      expect(String(imageResponse.headers['content-type'] ?? '')).toContain('image/svg+xml')
+    })
+  })
+
   describe('Setup Endpoints - Teams', () => {
     let createdTeamId: number
 

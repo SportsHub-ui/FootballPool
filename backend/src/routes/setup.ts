@@ -16,25 +16,21 @@ import { ensurePoolSquaresInitialized } from '../services/poolSquares';
 
 export const setupRouter = Router();
 
-setupRouter.use(requireRole('organizer'));
-
 const imageDir = path.resolve(__dirname, '../../images');
 fs.mkdirSync(imageDir, { recursive: true });
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, imageDir),
-  filename: (_req, file, cb) => {
-    const safeBase = path
-      .basename(file.originalname, path.extname(file.originalname))
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/(^-|-$)/g, '') || 'team-logo';
-    cb(null, `${Date.now()}-${safeBase}${path.extname(file.originalname).toLowerCase()}`);
-  }
-});
+const buildSafeUploadFileName = (originalName: string): string => {
+  const safeBase = path
+    .basename(originalName, path.extname(originalName))
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '') || 'team-logo';
+
+  return `${Date.now()}-${safeBase}${path.extname(originalName).toLowerCase()}`;
+};
 
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 2 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const allowed = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml'];
@@ -141,6 +137,10 @@ const teamIdParams = z.object({
   teamId: z.coerce.number().int().positive()
 });
 
+const imageIdParams = z.object({
+  imageId: z.coerce.number().int().positive()
+});
+
 const playerIdParams = z.object({
   playerId: z.coerce.number().int().positive()
 });
@@ -157,8 +157,53 @@ const assignSquareSchema = z.object({
   reassign: z.boolean().optional()
 });
 
+setupRouter.get('/images/:imageId/file', async (req, res) => {
+  const parsedParams = imageIdParams.safeParse(req.params);
+
+  if (!parsedParams.success) {
+    res.status(400).json({ error: parsedParams.error.issues });
+    return;
+  }
+
+  try {
+    const result = await db.query<{
+      file_name: string | null;
+      content_type: string | null;
+      image_data: Buffer;
+    }>(
+      `
+        SELECT file_name, content_type, image_data
+        FROM football_pool.uploaded_image
+        WHERE id = $1
+        LIMIT 1
+      `,
+      [parsedParams.data.imageId]
+    );
+
+    if ((result.rowCount ?? 0) === 0) {
+      res.status(404).json({ error: 'Image not found' });
+      return;
+    }
+
+    const image = result.rows[0];
+    const safeFileName = (image.file_name ?? `image-${parsedParams.data.imageId}`).replace(/[^a-zA-Z0-9._-]/g, '_');
+
+    res.setHeader('Content-Type', image.content_type ?? 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${safeFileName}"`);
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.send(image.image_data);
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to load image',
+      detail: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+setupRouter.use(requireRole('organizer'));
+
 setupRouter.post('/images/upload', (req, res) => {
-  upload.single('image')(req, res, (error: unknown) => {
+  upload.single('image')(req, res, async (error: unknown) => {
     if (error) {
       if (error instanceof multer.MulterError) {
         const message =
@@ -175,15 +220,53 @@ setupRouter.post('/images/upload', (req, res) => {
       return;
     }
 
-    if (!req.file) {
+    if (!req.file?.buffer) {
       res.status(400).json({ error: 'Image upload failed or file type is unsupported' });
       return;
     }
 
-    res.status(201).json({
-      fileName: req.file.filename,
-      filePath: `/images/${req.file.filename}`
-    });
+    const client = await db.connect();
+
+    try {
+      await client.query('BEGIN');
+      const id = await nextId(client, 'uploaded_image');
+      const fileName = buildSafeUploadFileName(req.file.originalname);
+
+      await client.query(
+        `
+          INSERT INTO football_pool.uploaded_image (
+            id,
+            file_name,
+            original_name,
+            content_type,
+            image_data,
+            created_at
+          )
+          VALUES ($1, $2, $3, $4, $5, NOW())
+        `,
+        [
+          id,
+          fileName,
+          req.file.originalname,
+          req.file.mimetype || 'application/octet-stream',
+          req.file.buffer
+        ]
+      );
+
+      await client.query('COMMIT');
+      res.status(201).json({
+        fileName,
+        filePath: `/api/setup/images/${id}/file`
+      });
+    } catch (uploadError) {
+      await client.query('ROLLBACK');
+      res.status(500).json({
+        error: 'Failed to save image',
+        detail: uploadError instanceof Error ? uploadError.message : 'Unknown error'
+      });
+    } finally {
+      client.release();
+    }
   });
 });
 
@@ -1424,17 +1507,30 @@ setupRouter.delete('/pools/:poolId', async (req, res) => {
 
 setupRouter.get('/images', async (_req, res) => {
   try {
-    const files = fs
-      .readdirSync(imageDir)
-      .filter((file) => /\.(png|jpg|jpeg|webp|svg)$/i.test(file))
-      .sort((a, b) => a.localeCompare(b));
+    const storedImagesResult = await db.query<{ id: number; file_name: string | null }>(
+      `
+        SELECT id, file_name
+        FROM football_pool.uploaded_image
+        ORDER BY created_at DESC, id DESC
+        LIMIT 200
+      `
+    );
 
-    const images = files.map((fileName) => ({
-      fileName,
-      filePath: `/images/${fileName}`
+    const storedImages = storedImagesResult.rows.map((row) => ({
+      fileName: row.file_name ?? `image-${row.id}`,
+      filePath: `/api/setup/images/${row.id}/file`
     }));
 
-    res.json({ images });
+    const packagedFiles = fs
+      .readdirSync(imageDir)
+      .filter((file) => /\.(png|jpg|jpeg|webp|svg)$/i.test(file))
+      .sort((a, b) => a.localeCompare(b))
+      .map((fileName) => ({
+        fileName,
+        filePath: `/images/${fileName}`
+      }));
+
+    res.json({ images: [...storedImages, ...packagedFiles] });
   } catch (error) {
     res.status(500).json({
       error: 'Failed to load images',
