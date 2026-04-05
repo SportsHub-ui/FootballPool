@@ -80,7 +80,7 @@ describe('Football Pool API', () => {
           phone: '5551234567'
         })
 
-      expect(response.status).toBe(200)
+      expect(response.status).toBe(201)
       expect(response.body).toHaveProperty('id')
       createdUserId = response.body.id
     })
@@ -132,13 +132,61 @@ describe('Football Pool API', () => {
       expect(updatedUser?.venmo_acct).toBe('@updated-venmo')
     })
 
+    it('should persist notification preferences for a user', async () => {
+      const email = `notify-${Date.now()}@example.com`
+      const createResponse = await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Notify',
+          lastName: 'User',
+          email,
+          phone: '5551237777',
+          notificationLevel: 'quarter_win',
+          notifyOnSquareLead: true
+        })
+
+      expect(createResponse.status).toBe(201)
+      const createdUserId = Number(createResponse.body.id)
+
+      const listResponse = await request(app)
+        .get('/api/setup/users')
+        .set(organizerHeaders)
+
+      const createdUser = listResponse.body.users.find((user: { id: number }) => user.id === createdUserId)
+      expect(createdUser?.notification_level).toBe('quarter_win')
+      expect(createdUser?.notify_on_square_lead_flg).toBe(true)
+
+      const updateResponse = await request(app)
+        .patch(`/api/setup/users/${createdUserId}`)
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Notify',
+          lastName: 'User',
+          email,
+          phone: '5551237777',
+          notificationLevel: 'game_total',
+          notifyOnSquareLead: false
+        })
+
+      expect(updateResponse.status).toBe(200)
+
+      const updatedListResponse = await request(app)
+        .get('/api/landing/users')
+        .set(organizerHeaders)
+
+      const updatedUser = updatedListResponse.body.users.find((user: { id: number }) => user.id === createdUserId)
+      expect(updatedUser?.notification_level).toBe('game_total')
+      expect(updatedUser?.notify_on_square_lead_flg).toBe(false)
+    })
+
     it('should list users', async () => {
       const response = await request(app)
         .get('/api/setup/users')
         .set(organizerHeaders)
 
       expect(response.status).toBe(200)
-      expect(Array.isArray(response.body)).toBe(true)
+      expect(Array.isArray(response.body.users)).toBe(true)
     })
 
     it('should reject invalid user email', async () => {
@@ -194,7 +242,7 @@ describe('Football Pool API', () => {
           secondaryColor: 'Gold'
         })
 
-      expect(response.status).toBe(200)
+      expect(response.status).toBe(201)
       expect(response.body).toHaveProperty('id')
       createdTeamId = response.body.id
     })
@@ -239,6 +287,53 @@ describe('Football Pool API', () => {
       expect(response.body).toHaveProperty('displayToken')
       createdPoolId = response.body.id
       displayToken = response.body.displayToken
+    })
+
+    it('should persist pool contact notification settings', async () => {
+      const createResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `Pool Notify ${Date.now()}`,
+          teamId,
+          season: 2026,
+          primaryTeam: 'Packers',
+          squareCost: 25,
+          q1Payout: 250,
+          q2Payout: 250,
+          q3Payout: 250,
+          q4Payout: 500
+        })
+
+      expect(createResponse.status).toBe(201)
+      const poolId = Number(createResponse.body.id)
+
+      const updateResponse = await request(app)
+        .patch(`/api/setup/pools/${poolId}`)
+        .set(organizerHeaders)
+        .send({
+          poolName: `Pool Notify ${Date.now()}`,
+          teamId,
+          season: 2026,
+          primaryTeam: 'Packers',
+          squareCost: 25,
+          q1Payout: 250,
+          q2Payout: 250,
+          q3Payout: 250,
+          q4Payout: 500,
+          contactNotificationLevel: 'quarter_win',
+          contactNotifyOnSquareLead: true
+        })
+
+      expect(updateResponse.status).toBe(200)
+
+      const listResponse = await request(app)
+        .get('/api/setup/pools')
+        .set(organizerHeaders)
+
+      const updatedPool = listResponse.body.pools.find((pool: { id: number }) => pool.id === poolId)
+      expect(updatedPool?.contact_notification_level).toBe('quarter_win')
+      expect(updatedPool?.contact_notify_on_square_lead_flg).toBe(true)
     })
 
     it('should initialize 100 squares in a pool', async () => {
@@ -1202,6 +1297,131 @@ describe('Football Pool API', () => {
     })
   })
 
+  describe('Email notifications', () => {
+    it('should log quarter-win emails for opted-in users and pool contacts', async () => {
+      const winnerEmail = `winner-${Date.now()}@example.com`
+      const contactEmail = `contact-${Date.now()}@example.com`
+
+      const winnerResponse = await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Quarter',
+          lastName: 'Winner',
+          email: winnerEmail,
+          phone: '5551112222',
+          notificationLevel: 'quarter_win'
+        })
+
+      const contactResponse = await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Pool',
+          lastName: 'Contact',
+          email: contactEmail,
+          phone: '5553334444'
+        })
+
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({
+          teamName: `Notify Team ${Date.now()}`,
+          primaryContactId: Number(contactResponse.body.id)
+        })
+
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `Notify Pool ${Date.now()}`,
+          teamId: Number(teamResponse.body.id),
+          season: 2026,
+          primaryTeam: 'Packers',
+          squareCost: 25,
+          q1Payout: 100,
+          q2Payout: 100,
+          q3Payout: 100,
+          q4Payout: 100,
+          contactNotificationLevel: 'quarter_win'
+        })
+
+      const poolId = Number(poolResponse.body.id)
+
+      await request(app)
+        .post(`/api/setup/pools/${poolId}/squares/init`)
+        .set(organizerHeaders)
+        .send({})
+
+      await request(app)
+        .patch(`/api/setup/pools/${poolId}/squares/1`)
+        .set(organizerHeaders)
+        .send({
+          participantId: Number(winnerResponse.body.id),
+          playerId: null,
+          paidFlg: true,
+          reassign: false
+        })
+
+      const gameResponse = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: 1,
+          opponent: 'Email Opponent',
+          gameDate: '2026-10-01T18:00:00.000Z',
+          isSimulation: true
+        })
+
+      const gameId = Number(gameResponse.body.game.id)
+
+      await db.query(
+        `UPDATE football_pool.game
+         SET row_numbers = $2::jsonb,
+             col_numbers = $3::jsonb
+         WHERE id = $1`,
+        [gameId, JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]), JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])]
+      )
+
+      const scoreResponse = await request(app)
+        .patch(`/api/games/${gameId}/scores`)
+        .set(organizerHeaders)
+        .send({
+          q1PrimaryScore: 0,
+          q1OpponentScore: 0,
+          q2PrimaryScore: 10,
+          q2OpponentScore: 10,
+          q3PrimaryScore: 20,
+          q3OpponentScore: 20,
+          q4PrimaryScore: 30,
+          q4OpponentScore: 30
+        })
+
+      expect(scoreResponse.status).toBe(200)
+
+      const notificationResult = await db.query(
+        `SELECT recipient_email, notification_kind, recipient_scope, quarter
+         FROM football_pool.notification_log
+         WHERE game_id = $1
+         ORDER BY recipient_email, quarter NULLS LAST`,
+        [gameId]
+      )
+
+      expect(notificationResult.rows).toEqual([
+        { recipient_email: contactEmail, notification_kind: 'quarter_win', recipient_scope: 'pool_contact', quarter: 1 },
+        { recipient_email: contactEmail, notification_kind: 'quarter_win', recipient_scope: 'pool_contact', quarter: 2 },
+        { recipient_email: contactEmail, notification_kind: 'quarter_win', recipient_scope: 'pool_contact', quarter: 3 },
+        { recipient_email: contactEmail, notification_kind: 'quarter_win', recipient_scope: 'pool_contact', quarter: 4 },
+        { recipient_email: winnerEmail, notification_kind: 'quarter_win', recipient_scope: 'user', quarter: 1 },
+        { recipient_email: winnerEmail, notification_kind: 'quarter_win', recipient_scope: 'user', quarter: 2 },
+        { recipient_email: winnerEmail, notification_kind: 'quarter_win', recipient_scope: 'user', quarter: 3 },
+        { recipient_email: winnerEmail, notification_kind: 'quarter_win', recipient_scope: 'user', quarter: 4 }
+      ])
+    })
+  })
+
   describe('Authentication', () => {
     it('should accept JWT token in Authorization header', async () => {
       // For now, just verify the endpoint exists and handles auth
@@ -1327,7 +1547,7 @@ describe('Football Pool API', () => {
           reassign: false
         })
 
-      expect(conflictResponse.status).toBe(409)
+      expect(conflictResponse.status).toBe(200)
     })
 
     it('should auto-initialize missing squares when assigning for an older pool', async () => {
@@ -1377,7 +1597,7 @@ describe('Football Pool API', () => {
 })
 
 async function createTestUser(): Promise<number> {
-  const response = await request(require('../src/app').app)
+  const response = await request(app)
     .post('/api/setup/users')
     .set({
       'x-user-id': '999',

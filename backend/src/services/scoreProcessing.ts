@@ -1,5 +1,6 @@
 import type { PoolClient } from 'pg';
 import { db } from '../config/db';
+import { emitScoreNotifications, type QuarterNotificationResult, type LiveLeaderState } from './notifications';
 
 export interface QuarterScoresInput {
   q1PrimaryScore: number | null;
@@ -17,6 +18,21 @@ interface QuarterSpec {
   payout: number;
   squareNum: number | null;
 }
+
+type GameScoreSnapshot = {
+  id: number;
+  pool_id: number;
+  row_numbers: unknown;
+  col_numbers: unknown;
+  q1_primary_score: number | null;
+  q1_opponent_score: number | null;
+  q2_primary_score: number | null;
+  q2_opponent_score: number | null;
+  q3_primary_score: number | null;
+  q3_opponent_score: number | null;
+  q4_primary_score: number | null;
+  q4_opponent_score: number | null;
+};
 
 export interface ScoreProcessingResult {
   game: {
@@ -81,6 +97,53 @@ export const resolveWinningSquareNumber = (
   return (rowIndex * 10) + colIndex + 1;
 };
 
+const getLatestScoredQuarter = (game: GameScoreSnapshot): number | null => {
+  if (game.q4_primary_score != null && game.q4_opponent_score != null) return 4;
+  if (game.q3_primary_score != null && game.q3_opponent_score != null) return 3;
+  if (game.q2_primary_score != null && game.q2_opponent_score != null) return 2;
+  if (game.q1_primary_score != null && game.q1_opponent_score != null) return 1;
+  return null;
+};
+
+const getQuarterScoresFromGame = (game: GameScoreSnapshot, quarter: number): { primaryScore: number | null; opponentScore: number | null } => {
+  if (quarter === 1) return { primaryScore: game.q1_primary_score, opponentScore: game.q1_opponent_score };
+  if (quarter === 2) return { primaryScore: game.q2_primary_score, opponentScore: game.q2_opponent_score };
+  if (quarter === 3) return { primaryScore: game.q3_primary_score, opponentScore: game.q3_opponent_score };
+  return { primaryScore: game.q4_primary_score, opponentScore: game.q4_opponent_score };
+};
+
+const getQuarterScoresFromInput = (scores: QuarterScoresInput, quarter: number): { primaryScore: number | null; opponentScore: number | null } => {
+  if (quarter === 1) return { primaryScore: scores.q1PrimaryScore, opponentScore: scores.q1OpponentScore };
+  if (quarter === 2) return { primaryScore: scores.q2PrimaryScore, opponentScore: scores.q2OpponentScore };
+  if (quarter === 3) return { primaryScore: scores.q3PrimaryScore, opponentScore: scores.q3OpponentScore };
+  return { primaryScore: scores.q4PrimaryScore, opponentScore: scores.q4OpponentScore };
+};
+
+const buildLiveLeaderState = (game: GameScoreSnapshot): LiveLeaderState | null => {
+  if (game.q4_primary_score != null && game.q4_opponent_score != null) {
+    return null;
+  }
+
+  const latestQuarter = getLatestScoredQuarter(game);
+  if (latestQuarter == null) {
+    return null;
+  }
+
+  const quarterScores = getQuarterScoresFromGame(game, latestQuarter);
+  const squareNum = resolveWinningSquareNumber(game.row_numbers, game.col_numbers, quarterScores.opponentScore, quarterScores.primaryScore);
+
+  if (squareNum == null) {
+    return null;
+  }
+
+  return {
+    quarter: latestQuarter,
+    squareNum,
+    primaryScore: quarterScores.primaryScore,
+    opponentScore: quarterScores.opponentScore
+  };
+};
+
 const ensurePoolPayouts = async (client: PoolClient, poolId: number) => {
   const result = await client.query(
     `SELECT q1_payout, q2_payout, q3_payout, q4_payout
@@ -106,11 +169,11 @@ const upsertWinningsForQuarter = async (
   gameId: number,
   poolId: number,
   quarter: QuarterSpec
-): Promise<{ written: boolean; unresolved: boolean }> => {
+): Promise<{ written: boolean; unresolved: boolean; winnerUserId: number | null }> => {
   const squareNum = quarter.squareNum;
 
   if (squareNum == null) {
-    return { written: false, unresolved: true };
+    return { written: false, unresolved: true, winnerUserId: null };
   }
 
   const winnerSquareResult = await client.query(
@@ -123,7 +186,7 @@ const upsertWinningsForQuarter = async (
   );
 
   if (winnerSquareResult.rows.length === 0 || winnerSquareResult.rows[0].participant_id == null) {
-    return { written: false, unresolved: true };
+    return { written: false, unresolved: true, winnerUserId: null };
   }
 
   const winnerUserId = winnerSquareResult.rows[0].participant_id as number;
@@ -145,7 +208,7 @@ const upsertWinningsForQuarter = async (
        WHERE id = $3`,
       [winnerUserId, quarter.payout, existing.rows[0].id]
     );
-    return { written: true, unresolved: false };
+    return { written: true, unresolved: false, winnerUserId };
   }
 
   const winningIdResult = await client.query(
@@ -159,7 +222,7 @@ const upsertWinningsForQuarter = async (
     [winningIdResult.rows[0].next_id, gameId, poolId, quarter.num, winnerUserId, quarter.payout]
   );
 
-  return { written: true, unresolved: false };
+  return { written: true, unresolved: false, winnerUserId };
 };
 
 export const processGameScoresWithClient = async (
@@ -167,7 +230,55 @@ export const processGameScoresWithClient = async (
   gameId: number,
   scores: QuarterScoresInput
 ): Promise<ScoreProcessingResult> => {
-  const updateResult = await client.query(
+  const previousGameResult = await client.query<GameScoreSnapshot>(
+    `SELECT id,
+            pool_id,
+            row_numbers,
+            col_numbers,
+            q1_primary_score,
+            q1_opponent_score,
+            q2_primary_score,
+            q2_opponent_score,
+            q3_primary_score,
+            q3_opponent_score,
+            q4_primary_score,
+            q4_opponent_score
+     FROM football_pool.game
+     WHERE id = $1
+     LIMIT 1
+     FOR UPDATE`,
+    [gameId]
+  );
+
+  if (previousGameResult.rows.length === 0) {
+    throw new Error('Game not found');
+  }
+
+  const previousGame = previousGameResult.rows[0];
+  const previousLeader = buildLiveLeaderState(previousGame);
+  const previousWinningsResult = await client.query<{
+    quarter: number;
+    winner_user_id: number | null;
+    amount_won: number | null;
+  }>(
+    `SELECT quarter, winner_user_id, amount_won
+     FROM football_pool.winnings_ledger
+     WHERE game_id = $1
+       AND pool_id = $2`,
+    [gameId, previousGame.pool_id]
+  );
+
+  const previousWinners = new Map<number, { winnerUserId: number | null; amountWon: number | null }>(
+    previousWinningsResult.rows.map((row) => [
+      Number(row.quarter),
+      {
+        winnerUserId: row.winner_user_id != null ? Number(row.winner_user_id) : null,
+        amountWon: row.amount_won != null ? Number(row.amount_won) : null
+      }
+    ])
+  );
+
+  const updateResult = await client.query<GameScoreSnapshot>(
     `UPDATE football_pool.game
      SET q1_primary_score = $1,
          q1_opponent_score = $2,
@@ -197,10 +308,6 @@ export const processGameScoresWithClient = async (
     ]
   );
 
-  if (updateResult.rows.length === 0) {
-    throw new Error('Game not found');
-  }
-
   const game = updateResult.rows[0];
   const payouts = await ensurePoolPayouts(client, game.pool_id);
 
@@ -229,9 +336,21 @@ export const processGameScoresWithClient = async (
 
   let winnersWritten = 0;
   let unresolvedWinners = 0;
+  const quarterResults: QuarterNotificationResult[] = [];
 
   for (const quarter of quarters) {
     const result = await upsertWinningsForQuarter(client, game.id, game.pool_id, quarter);
+    const quarterScores = getQuarterScoresFromInput(scores, quarter.num);
+
+    quarterResults.push({
+      quarter: quarter.num,
+      payout: Number(quarter.payout ?? 0),
+      squareNum: quarter.squareNum,
+      winnerUserId: result.winnerUserId,
+      primaryScore: quarterScores.primaryScore,
+      opponentScore: quarterScores.opponentScore
+    });
+
     if (result.written) {
       winnersWritten += 1;
     }
@@ -239,6 +358,16 @@ export const processGameScoresWithClient = async (
       unresolvedWinners += 1;
     }
   }
+
+  await emitScoreNotifications(client, {
+    gameId: game.id,
+    poolId: game.pool_id,
+    quarters: quarterResults,
+    previousWinners,
+    currentLeader: buildLiveLeaderState(game),
+    previousLeader,
+    gameComplete: game.q4_primary_score != null && game.q4_opponent_score != null
+  });
 
   return {
     game,

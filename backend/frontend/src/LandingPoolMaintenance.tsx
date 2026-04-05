@@ -36,6 +36,8 @@ type GameRecord = {
   q4_opponent_score: number | null
 }
 
+type NotificationLevel = 'none' | 'quarter_win' | 'game_total'
+
 type PoolRecord = {
   id: number
   pool_name: string | null
@@ -49,6 +51,8 @@ type PoolRecord = {
   q4_payout: number | null
   display_token: string | null
   team_name: string | null
+  contact_notification_level: NotificationLevel
+  contact_notify_on_square_lead_flg: boolean
 }
 
 type SimulationMode = 'full_year' | 'by_game' | 'by_quarter'
@@ -137,6 +141,20 @@ const hasRecordedQuarter = (primaryScore: number | null, opponentScore: number |
 
 const formatPoolName = (pool: Pick<PoolRecord, 'id' | 'pool_name'>): string => pool.pool_name?.trim() || 'Unnamed Pool'
 
+const formatNotificationLevel = (level: NotificationLevel): string => {
+  if (level === 'quarter_win') return 'Quarter win'
+  if (level === 'game_total') return 'Total after game ends'
+  return 'None'
+}
+
+const formatNotificationSummary = (level: NotificationLevel, notifyOnSquareLead: boolean): string => {
+  if (notifyOnSquareLead && level === 'none') {
+    return 'Lead alerts only'
+  }
+
+  return notifyOnSquareLead ? `${formatNotificationLevel(level)} + lead alerts` : formatNotificationLevel(level)
+}
+
 const formatSimulationMode = (mode: SimulationMode | null | undefined): string => {
   if (mode === 'by_game') return 'By Game'
   if (mode === 'by_quarter') return 'By Quarter'
@@ -156,7 +174,9 @@ const buildReadonlyPoolRecords = (pools: LandingPool[]): PoolRecord[] =>
     q3_payout: null,
     q4_payout: null,
     display_token: pool.display_token,
-    team_name: pool.team_name
+    team_name: pool.team_name,
+    contact_notification_level: 'none',
+    contact_notify_on_square_lead_flg: false
   }))
 
 export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onRequireSignIn }: Props) {
@@ -185,7 +205,9 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     q1Payout: 0,
     q2Payout: 0,
     q3Payout: 0,
-    q4Payout: 0
+    q4Payout: 0,
+    contactNotificationLevel: 'none' as NotificationLevel,
+    contactNotifyOnSquareLead: false
   })
 
   const canManagePools = hasOrganizerAccess
@@ -226,7 +248,9 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
       q1Payout: pool?.q1_payout ?? 0,
       q2Payout: pool?.q2_payout ?? 0,
       q3Payout: pool?.q3_payout ?? 0,
-      q4Payout: pool?.q4_payout ?? 0
+      q4Payout: pool?.q4_payout ?? 0,
+      contactNotificationLevel: pool?.contact_notification_level ?? 'none',
+      contactNotifyOnSquareLead: Boolean(pool?.contact_notify_on_square_lead_flg)
     })
   }
 
@@ -523,7 +547,9 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
         q1Payout: Number(poolForm.q1Payout),
         q2Payout: Number(poolForm.q2Payout),
         q3Payout: Number(poolForm.q3Payout),
-        q4Payout: Number(poolForm.q4Payout)
+        q4Payout: Number(poolForm.q4Payout),
+        contactNotificationLevel: poolForm.contactNotificationLevel,
+        contactNotifyOnSquareLead: poolForm.contactNotifyOnSquareLead
       }
 
       if (isCreatingNew) {
@@ -810,6 +836,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                   <th>Pool</th>
                   <th>Team</th>
                   <th>Season</th>
+                  <th>Notifications</th>
                   <th>Cost</th>
                 </tr>
               </thead>
@@ -823,6 +850,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                     <td>{formatPoolName(pool)}</td>
                     <td>{pool.team_name ?? '—'}</td>
                     <td>{pool.season ?? '—'}</td>
+                    <td>{formatNotificationSummary(pool.contact_notification_level, pool.contact_notify_on_square_lead_flg)}</td>
                     <td>{formatCurrency(pool.square_cost)}</td>
                   </tr>
                 ))}
@@ -936,6 +964,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                     ? 'Update the pool details below or use Fill Schedule to add only the missing weeks.'
                     : 'Enter the pool details below. Save the pool before using Fill Schedule.'}
                 </p>
+                <p className="small landing-readonly-note">Pool notification emails go to the primary and secondary contacts for the selected team.</p>
                 {simulationProgressNote ? <p className="small landing-readonly-note">{simulationProgressNote}</p> : null}
                 {selectedPool ? (
                   displayUrl ? (
@@ -1059,6 +1088,31 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                 onChange={(event) => setPoolForm((current) => ({ ...current, q4Payout: parseCurrencyInput(event.target.value) }))}
                 disabled={saving}
               />
+            </label>
+
+            <label className="field-block">
+              <span>Contact notification level</span>
+              <select
+                value={poolForm.contactNotificationLevel}
+                onChange={(event) =>
+                  setPoolForm((current) => ({ ...current, contactNotificationLevel: event.target.value as NotificationLevel }))
+                }
+                disabled={saving}
+              >
+                <option value="none">None</option>
+                <option value="quarter_win">Quarter win</option>
+                <option value="game_total">Total win after game ends</option>
+              </select>
+            </label>
+
+            <label className="checkbox-row landing-inline-checkbox landing-field-span">
+              <input
+                type="checkbox"
+                checked={poolForm.contactNotifyOnSquareLead}
+                onChange={(event) => setPoolForm((current) => ({ ...current, contactNotifyOnSquareLead: event.target.checked }))}
+                disabled={saving}
+              />
+              <span>Email pool contacts when a score change makes a square the current quarter leader</span>
             </label>
           </div>
 

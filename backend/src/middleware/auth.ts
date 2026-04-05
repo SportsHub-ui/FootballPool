@@ -33,11 +33,18 @@ export const mockAuth = (req: Request, _res: Response, next: NextFunction): void
     }
   }
 
-  // Fall back to mock auth for development
-  req.auth = {
-    userId: req.header('x-user-id') ?? 'dev-user',
-    role: parseRole(req.header('x-user-role') ?? undefined)
-  };
+  // Fall back to header-based mock auth for development when headers are present.
+  const mockUserId = req.header('x-user-id');
+  const mockRole = req.header('x-user-role');
+
+  if (mockUserId || mockRole) {
+    req.auth = {
+      userId: mockUserId ?? 'dev-user',
+      role: parseRole(mockRole ?? undefined)
+    };
+  } else {
+    req.auth = undefined;
+  }
 
   next();
 };

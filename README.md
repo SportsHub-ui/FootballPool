@@ -241,6 +241,8 @@ Optional backend `.env` settings:
 - `SCORE_INGEST_PRIMARY_TEAM=` - Team hint used for ESPN game matching
 - `SIMULATION_ENABLED=true` - Enables organizer simulation tools on the backend
 - `VITE_ENABLE_SIMULATION_CONTROLS=true` - Shows simulation controls in the frontend
+- `EMAIL_NOTIFICATIONS_ENABLED=true` - Turns notification delivery on/off globally
+- `EMAIL_FROM`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS` - SMTP settings used for winner and live-leader emails; if `SMTP_HOST` is blank, the app logs the email payload instead
 
 ### Simulation Modes
 Use **Pool Maintenance** to start the simulation, then use the **Score Ingestion** page to advance it when applicable.

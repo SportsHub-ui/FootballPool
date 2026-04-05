@@ -36,7 +36,22 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .optional()
     .default('true')
-    .transform((value) => value === 'true')
+    .transform((value) => value === 'true'),
+  EMAIL_NOTIFICATIONS_ENABLED: z
+    .enum(['true', 'false'])
+    .optional()
+    .default('true')
+    .transform((value) => value === 'true'),
+  EMAIL_FROM: z.string().optional().default('noreply@footballpool.local'),
+  SMTP_HOST: z.string().optional().default(''),
+  SMTP_PORT: z.coerce.number().int().positive().optional().default(587),
+  SMTP_SECURE: z
+    .enum(['true', 'false'])
+    .optional()
+    .default('false')
+    .transform((value) => value === 'true'),
+  SMTP_USER: z.string().optional().default(''),
+  SMTP_PASS: z.string().optional().default('')
 });
 
 const parsed = envSchema.safeParse(process.env);

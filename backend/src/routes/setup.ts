@@ -15,6 +15,7 @@ import {
 } from '../services/poolSimulation';
 import { ensurePoolSquaresInitialized } from '../services/poolSquares';
 import { ensurePoolDisplayTokenSupport, generateUniquePoolDisplayToken } from '../services/poolDisplay';
+import { ensureNotificationSupport } from '../services/notifications';
 
 export const setupRouter = Router();
 
@@ -61,12 +62,16 @@ const optionalVenmoAcctSchema = z
   .optional()
   .or(z.literal(''));
 
+const notificationLevelSchema = z.enum(['none', 'quarter_win', 'game_total']).optional();
+
 const createUserSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
   email: optionalEmailSchema,
   phone: optionalPhoneSchema,
   venmoAcct: optionalVenmoAcctSchema,
+  notificationLevel: notificationLevelSchema,
+  notifyOnSquareLead: z.boolean().optional(),
   isPlayer: z.boolean().optional(),
   playerTeams: z
     .array(
@@ -111,7 +116,9 @@ const createPoolSchema = z.object({
   q1Payout: z.number().int().nonnegative(),
   q2Payout: z.number().int().nonnegative(),
   q3Payout: z.number().int().nonnegative(),
-  q4Payout: z.number().int().nonnegative()
+  q4Payout: z.number().int().nonnegative(),
+  contactNotificationLevel: notificationLevelSchema,
+  contactNotifyOnSquareLead: z.boolean().optional()
 });
 
 const updatePoolSchema = createPoolSchema;
@@ -417,6 +424,8 @@ setupRouter.post('/users', async (req, res) => {
   const client = await db.connect();
 
   try {
+    await ensureNotificationSupport(client);
+
     const dupCheck = await client.query<{ id: number }>(
       `SELECT id FROM football_pool.users
        WHERE lower(first_name) = lower($1)
@@ -435,8 +444,19 @@ setupRouter.post('/users', async (req, res) => {
 
     await client.query(
       `
-        INSERT INTO football_pool.users (id, first_name, last_name, email, phone, venmo_acct, created_at, is_player_flg)
-        VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+        INSERT INTO football_pool.users (
+          id,
+          first_name,
+          last_name,
+          email,
+          phone,
+          venmo_acct,
+          created_at,
+          is_player_flg,
+          notification_level,
+          notify_on_square_lead_flg
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7, $8, $9)
       `,
       [
         id,
@@ -445,7 +465,9 @@ setupRouter.post('/users', async (req, res) => {
         parsed.data.email ? parsed.data.email : null,
         parsed.data.phone ? parsed.data.phone : null,
         parsed.data.venmoAcct ? parsed.data.venmoAcct : null,
-        parsed.data.isPlayer ?? false
+        parsed.data.isPlayer ?? false,
+        parsed.data.notificationLevel ?? 'none',
+        parsed.data.notifyOnSquareLead ?? false
       ]
     );
 
@@ -736,6 +758,7 @@ setupRouter.post('/pools', async (req, res) => {
 
   try {
     await ensurePoolDisplayTokenSupport(client);
+    await ensureNotificationSupport(client);
     await client.query('BEGIN');
     const id = await nextId(client, 'pool');
     const displayToken = await generateUniquePoolDisplayToken(client);
@@ -754,9 +777,11 @@ setupRouter.post('/pools', async (req, res) => {
           q3_payout,
           q4_payout,
           display_token,
+          contact_notification_level,
+          contact_notify_on_square_lead_flg,
           created_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
       `,
       [
         id,
@@ -769,7 +794,9 @@ setupRouter.post('/pools', async (req, res) => {
         parsed.data.q2Payout,
         parsed.data.q3Payout,
         parsed.data.q4Payout,
-        displayToken
+        displayToken,
+        parsed.data.contactNotificationLevel ?? 'none',
+        parsed.data.contactNotifyOnSquareLead ?? false
       ]
     );
 
@@ -1034,8 +1061,12 @@ setupRouter.delete('/pools/:poolId/simulation', async (req, res) => {
 });
 
 setupRouter.get('/users', async (_req, res) => {
+  const client = await db.connect();
+
   try {
-    const result = await db.query(
+    await ensureNotificationSupport(client);
+
+    const result = await client.query(
       `
         SELECT
           u.id,
@@ -1045,6 +1076,8 @@ setupRouter.get('/users', async (_req, res) => {
           u.phone,
           u.venmo_acct,
           u.is_player_flg,
+          u.notification_level,
+          u.notify_on_square_lead_flg,
           pt.team_id,
           pt.jersey_num,
           t.team_name
@@ -1064,6 +1097,8 @@ setupRouter.get('/users', async (_req, res) => {
       phone: string | null;
       venmo_acct: string | null;
       is_player_flg: boolean;
+      notification_level: string;
+      notify_on_square_lead_flg: boolean;
       player_teams: Array<{ team_id: number; team_name: string | null; jersey_num: number }>;
     };
 
@@ -1079,6 +1114,8 @@ setupRouter.get('/users', async (_req, res) => {
         phone: row.phone,
         venmo_acct: row.venmo_acct,
         is_player_flg: Boolean(row.is_player_flg),
+        notification_level: row.notification_level ?? 'none',
+        notify_on_square_lead_flg: Boolean(row.notify_on_square_lead_flg),
         player_teams: []
       };
 
@@ -1100,6 +1137,8 @@ setupRouter.get('/users', async (_req, res) => {
       error: 'Failed to load users',
       detail: error instanceof Error ? error.message : 'Unknown error'
     });
+  } finally {
+    client.release();
   }
 });
 
@@ -1130,6 +1169,7 @@ setupRouter.patch('/users/:userId', async (req, res) => {
   const client = await db.connect();
 
   try {
+    await ensureNotificationSupport(client);
     await client.query('BEGIN');
 
     const result = await client.query(
@@ -1141,7 +1181,9 @@ setupRouter.patch('/users/:userId', async (req, res) => {
           email = $4,
           phone = $5,
           venmo_acct = $6,
-          is_player_flg = COALESCE($7, is_player_flg)
+          is_player_flg = COALESCE($7, is_player_flg),
+          notification_level = COALESCE($8, notification_level),
+          notify_on_square_lead_flg = COALESCE($9, notify_on_square_lead_flg)
         WHERE id = $1
         RETURNING id
       `,
@@ -1152,7 +1194,9 @@ setupRouter.patch('/users/:userId', async (req, res) => {
         parsedBody.data.email ? parsedBody.data.email : null,
         parsedBody.data.phone ? parsedBody.data.phone : null,
         parsedBody.data.venmoAcct ? parsedBody.data.venmoAcct : null,
-        parsedBody.data.isPlayer ?? null
+        parsedBody.data.isPlayer ?? null,
+        parsedBody.data.notificationLevel ?? null,
+        parsedBody.data.notifyOnSquareLead ?? null
       ]
     );
 
@@ -1460,6 +1504,7 @@ setupRouter.get('/pools', async (_req, res) => {
 
   try {
     await ensurePoolDisplayTokenSupport(client);
+    await ensureNotificationSupport(client);
 
     const result = await client.query(
       `
@@ -1475,6 +1520,8 @@ setupRouter.get('/pools', async (_req, res) => {
           p.q3_payout,
           p.q4_payout,
           p.display_token,
+          p.contact_notification_level,
+          p.contact_notify_on_square_lead_flg,
           t.team_name
         FROM football_pool.pool p
         LEFT JOIN football_pool.team t ON t.id = p.team_id
@@ -1508,8 +1555,12 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
     return;
   }
 
+  const client = await db.connect();
+
   try {
-    const result = await db.query(
+    await ensureNotificationSupport(client);
+
+    const result = await client.query(
       `
         UPDATE football_pool.pool
         SET
@@ -1521,7 +1572,9 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
           q1_payout = $7,
           q2_payout = $8,
           q3_payout = $9,
-          q4_payout = $10
+          q4_payout = $10,
+          contact_notification_level = COALESCE($11, contact_notification_level),
+          contact_notify_on_square_lead_flg = COALESCE($12, contact_notify_on_square_lead_flg)
         WHERE id = $1
         RETURNING id
       `,
@@ -1535,7 +1588,9 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
         parsedBody.data.q1Payout,
         parsedBody.data.q2Payout,
         parsedBody.data.q3Payout,
-        parsedBody.data.q4Payout
+        parsedBody.data.q4Payout,
+        parsedBody.data.contactNotificationLevel ?? null,
+        parsedBody.data.contactNotifyOnSquareLead ?? null
       ]
     );
 
@@ -1550,6 +1605,8 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
       error: 'Failed to update pool',
       detail: error instanceof Error ? error.message : 'Unknown error'
     });
+  } finally {
+    client.release();
   }
 });
 

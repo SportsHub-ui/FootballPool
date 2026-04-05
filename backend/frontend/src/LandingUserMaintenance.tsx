@@ -28,6 +28,8 @@ type LandingPlayerTeam = {
   jersey_num: number | null
 }
 
+type NotificationLevel = 'none' | 'quarter_win' | 'game_total'
+
 type LandingUserRecord = {
   id: number
   first_name: string | null
@@ -36,6 +38,8 @@ type LandingUserRecord = {
   phone: string | null
   venmo_acct: string | null
   is_player_flg: boolean
+  notification_level: NotificationLevel
+  notify_on_square_lead_flg: boolean
   user_pools: LandingUserPool[]
   player_teams: LandingPlayerTeam[]
 }
@@ -94,6 +98,20 @@ const buildAssignedPoolLabel = (pool: LandingUserPool): string => {
 const formatPlayerTeamLabel = (assignment: LandingPlayerTeam): string =>
   `${assignment.team_name ?? `Team ${assignment.team_id}`}${assignment.jersey_num != null ? ` #${assignment.jersey_num}` : ''}`
 
+const formatNotificationLevel = (level: NotificationLevel): string => {
+  if (level === 'quarter_win') return 'Quarter win'
+  if (level === 'game_total') return 'Total after game ends'
+  return 'None'
+}
+
+const formatNotificationSummary = (level: NotificationLevel, notifyOnSquareLead: boolean): string => {
+  if (notifyOnSquareLead && level === 'none') {
+    return 'Lead alerts only'
+  }
+
+  return notifyOnSquareLead ? `${formatNotificationLevel(level)} + lead alerts` : formatNotificationLevel(level)
+}
+
 const buildPoolAssignmentDrafts = (pools: LandingPool[], user: LandingUserRecord | null): PoolAssignmentDraft[] =>
   pools.map((pool) => ({
     poolId: pool.id,
@@ -119,7 +137,9 @@ export function LandingUserMaintenance({
     lastName: '',
     email: '',
     phone: '',
-    venmoAcct: ''
+    venmoAcct: '',
+    notificationLevel: 'none' as NotificationLevel,
+    notifyOnSquareLead: false
   })
   const [poolAssignments, setPoolAssignments] = useState<PoolAssignmentDraft[]>([])
   const [selectedPlayerTeams, setSelectedPlayerTeams] = useState<LandingPlayerTeam[]>([])
@@ -152,7 +172,9 @@ export function LandingUserMaintenance({
       lastName: user?.last_name ?? '',
       email: user?.email ?? '',
       phone: formatPhoneNumber(user?.phone ?? ''),
-      venmoAcct: user?.venmo_acct ?? ''
+      venmoAcct: user?.venmo_acct ?? '',
+      notificationLevel: user?.notification_level ?? 'none',
+      notifyOnSquareLead: Boolean(user?.notify_on_square_lead_flg)
     })
     setPoolAssignments(buildPoolAssignmentDrafts(nextPools, user))
   }
@@ -319,6 +341,8 @@ export function LandingUserMaintenance({
             email: trimmedEmail || undefined,
             phone: trimmedPhone || undefined,
             venmoAcct: trimmedVenmoAcct || undefined,
+            notificationLevel: userForm.notificationLevel,
+            notifyOnSquareLead: userForm.notifyOnSquareLead,
             isPlayer: selectedIsPlayer,
             poolIds: poolIdsPayload
           })
@@ -342,6 +366,8 @@ export function LandingUserMaintenance({
           email: trimmedEmail || undefined,
           phone: trimmedPhone || undefined,
           venmoAcct: trimmedVenmoAcct || undefined,
+          notificationLevel: userForm.notificationLevel,
+          notifyOnSquareLead: userForm.notifyOnSquareLead,
           isPlayer: selectedIsPlayer,
           poolIds: poolIdsPayload
         })
@@ -457,6 +483,7 @@ export function LandingUserMaintenance({
                   <th>Email</th>
                   <th>Phone</th>
                   <th>Venmo</th>
+                  <th>Notifications</th>
                   <th>Pools</th>
                   <th>Teams</th>
                 </tr>
@@ -472,6 +499,7 @@ export function LandingUserMaintenance({
                     <td>{user.email ?? '—'}</td>
                     <td>{formatPhoneNumber(user.phone) || '—'}</td>
                     <td>{user.venmo_acct ?? '—'}</td>
+                    <td>{formatNotificationSummary(user.notification_level, user.notify_on_square_lead_flg)}</td>
                     <td>{user.user_pools.length > 0 ? user.user_pools.map(buildAssignedPoolLabel).join(' | ') : 'Not assigned'}</td>
                     <td>
                       {user.player_teams.length > 0
@@ -597,6 +625,29 @@ export function LandingUserMaintenance({
                 onChange={(event) => setUserForm((current) => ({ ...current, venmoAcct: event.target.value }))}
                 placeholder="@venmo-handle"
               />
+            </label>
+
+            <label className="field-block">
+              <span>Notification level</span>
+              <select
+                value={userForm.notificationLevel}
+                onChange={(event) =>
+                  setUserForm((current) => ({ ...current, notificationLevel: event.target.value as NotificationLevel }))
+                }
+              >
+                <option value="none">None</option>
+                <option value="quarter_win">Quarter win</option>
+                <option value="game_total">Total win after game ends</option>
+              </select>
+            </label>
+
+            <label className="checkbox-row landing-inline-checkbox">
+              <input
+                type="checkbox"
+                checked={userForm.notifyOnSquareLead}
+                onChange={(event) => setUserForm((current) => ({ ...current, notifyOnSquareLead: event.target.checked }))}
+              />
+              <span>Email a live warning when this user's square becomes the current quarter leader</span>
             </label>
 
             <label className="checkbox-row landing-inline-checkbox landing-field-span">

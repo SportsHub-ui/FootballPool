@@ -17,14 +17,14 @@ export const ingestionRouter = Router();
 ingestionRouter.use(requireRole('organizer'));
 
 const scoresSchema = z.object({
-  q1PrimaryScore: z.number().int().nonnegative(),
-  q1OpponentScore: z.number().int().nonnegative(),
-  q2PrimaryScore: z.number().int().nonnegative(),
-  q2OpponentScore: z.number().int().nonnegative(),
-  q3PrimaryScore: z.number().int().nonnegative(),
-  q3OpponentScore: z.number().int().nonnegative(),
-  q4PrimaryScore: z.number().int().nonnegative(),
-  q4OpponentScore: z.number().int().nonnegative()
+  q1PrimaryScore: z.number().int().nonnegative().nullable(),
+  q1OpponentScore: z.number().int().nonnegative().nullable(),
+  q2PrimaryScore: z.number().int().nonnegative().nullable(),
+  q2OpponentScore: z.number().int().nonnegative().nullable(),
+  q3PrimaryScore: z.number().int().nonnegative().nullable(),
+  q3OpponentScore: z.number().int().nonnegative().nullable(),
+  q4PrimaryScore: z.number().int().nonnegative().nullable(),
+  q4OpponentScore: z.number().int().nonnegative().nullable()
 });
 
 const ingestOneSchema = z.object({

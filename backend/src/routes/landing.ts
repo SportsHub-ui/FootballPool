@@ -5,6 +5,7 @@ import { db } from '../config/db';
 import { ensurePoolSquaresInitialized } from '../services/poolSquares';
 import { ensurePoolDisplayTokenSupport } from '../services/poolDisplay';
 import { getPoolSimulationStatus } from '../services/poolSimulation';
+import { ensureNotificationSupport } from '../services/notifications';
 import { resolveWinningSquareNumber } from '../services/scoreProcessing';
 
 export const landingRouter = Router();
@@ -609,6 +610,8 @@ landingRouter.get('/users', async (req, res) => {
     const client = await db.connect();
 
     try {
+      await ensureNotificationSupport(client);
+
       const pools = await loadAccessiblePools(client, userId);
       const teams = await loadLandingTeams(client, userId, canManage);
       const poolIds = pools.map((pool) => Number(pool.id)).filter((poolId) => Number.isFinite(poolId));
@@ -623,6 +626,8 @@ landingRouter.get('/users', async (req, res) => {
             u.phone,
             u.venmo_acct,
             COALESCE(u.is_player_flg, FALSE) AS is_player_flg,
+            COALESCE(u.notification_level, 'none') AS notification_level,
+            COALESCE(u.notify_on_square_lead_flg, FALSE) AS notify_on_square_lead_flg,
             up.pool_id,
             p.pool_name,
             p.season,
@@ -673,6 +678,8 @@ landingRouter.get('/users', async (req, res) => {
         phone: string | null;
         venmo_acct: string | null;
         is_player_flg: boolean;
+        notification_level: string;
+        notify_on_square_lead_flg: boolean;
         user_pools: Array<{
           pool_id: number;
           pool_name: string | null;
@@ -697,6 +704,8 @@ landingRouter.get('/users', async (req, res) => {
           phone: row.phone ?? null,
           venmo_acct: row.venmo_acct ?? null,
           is_player_flg: Boolean(row.is_player_flg),
+          notification_level: row.notification_level ?? 'none',
+          notify_on_square_lead_flg: Boolean(row.notify_on_square_lead_flg),
           user_pools: [],
           player_teams: []
         };
