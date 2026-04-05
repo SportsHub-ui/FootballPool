@@ -198,17 +198,43 @@ const loadPoolByDisplayToken = async (client: PoolClient, displayToken: string) 
 };
 
 const pickDisplayGameId = (
-  games: Array<{ id: number; q4_primary_score: number | null; q4_opponent_score: number | null }>
+  games: Array<{
+    id: number;
+    opponent?: string | null;
+    q1_primary_score?: number | null;
+    q1_opponent_score?: number | null;
+    q2_primary_score?: number | null;
+    q2_opponent_score?: number | null;
+    q3_primary_score?: number | null;
+    q3_opponent_score?: number | null;
+    q4_primary_score: number | null;
+    q4_opponent_score: number | null;
+  }>,
+  currentGameId?: number | null
 ): number | null => {
   if (games.length === 0) {
     return null;
   }
 
-  const lastCompletedGame = [...games]
-    .reverse()
-    .find((game) => game.q4_primary_score != null && game.q4_opponent_score != null);
+  const isByeGame = (game: { opponent?: string | null }): boolean => (game.opponent ?? '').trim().toUpperCase() === 'BYE';
+  const isCompletedGame = (game: { q4_primary_score: number | null; q4_opponent_score: number | null }): boolean =>
+    game.q4_primary_score != null && game.q4_opponent_score != null;
 
-  const selectedId = lastCompletedGame?.id ?? games[games.length - 1]?.id ?? null;
+  if (currentGameId != null) {
+    const currentGame = games.find((game) => Number(game.id) === Number(currentGameId));
+    if (currentGame && !isByeGame(currentGame)) {
+      return Number(currentGame.id);
+    }
+  }
+
+  const activeGame = games.find((game) => !isByeGame(game) && !isCompletedGame(game));
+  if (activeGame) {
+    return Number(activeGame.id);
+  }
+
+  const lastCompletedGame = [...games].reverse().find((game) => !isByeGame(game) && isCompletedGame(game));
+  const selectedId = lastCompletedGame?.id ?? games.find((game) => !isByeGame(game))?.id ?? games[0]?.id ?? null;
+
   return selectedId != null ? Number(selectedId) : null;
 };
 
@@ -1041,8 +1067,21 @@ landingRouter.get('/display/:displayToken', async (req, res) => {
       );
 
       const games = gamesResult.rows;
+      const simulationStatus = await getPoolSimulationStatus(client, Number(pool.id)).catch(() => null);
       const selectedGameId = pickDisplayGameId(
-        games as Array<{ id: number; q4_primary_score: number | null; q4_opponent_score: number | null }>
+        games as Array<{
+          id: number;
+          opponent?: string | null;
+          q1_primary_score?: number | null;
+          q1_opponent_score?: number | null;
+          q2_primary_score?: number | null;
+          q2_opponent_score?: number | null;
+          q3_primary_score?: number | null;
+          q3_opponent_score?: number | null;
+          q4_primary_score: number | null;
+          q4_opponent_score: number | null;
+        }>,
+        simulationStatus?.currentGameId ?? null
       );
       const { board } = await loadBoardPayload(client, Number(pool.id), pool, selectedGameId);
 

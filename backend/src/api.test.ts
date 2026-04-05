@@ -257,11 +257,11 @@ describe('Football Pool API', () => {
         .set(organizerHeaders)
 
       expect(response.status).toBe(200)
-      expect(Array.isArray(response.body)).toBe(true)
-      expect(response.body.length).toBe(100)
+      expect(Array.isArray(response.body.squares)).toBe(true)
+      expect(response.body.squares.length).toBe(100)
     })
 
-    it('should open a display link on the last completed game for the pool', async () => {
+    it('should open a display link on the current active game for the pool', async () => {
       const poolResponse = await request(app)
         .post('/api/setup/pools')
         .set(organizerHeaders)
@@ -305,8 +305,9 @@ describe('Football Pool API', () => {
       expect(weekTwoResponse.status).toBe(200)
 
       const weekOneGameId = Number(weekOneResponse.body.game.id)
+      const weekTwoGameId = Number(weekTwoResponse.body.game.id)
 
-      const scoreResponse = await request(app)
+      const completedScoreResponse = await request(app)
         .patch(`/api/games/${weekOneGameId}/scores`)
         .set(organizerHeaders)
         .send({
@@ -320,7 +321,21 @@ describe('Football Pool API', () => {
           q4OpponentScore: 17
         })
 
-      expect(scoreResponse.status).toBe(200)
+      await db.query(
+        `UPDATE football_pool.game
+         SET q1_primary_score = $2,
+             q1_opponent_score = $3,
+             q2_primary_score = NULL,
+             q2_opponent_score = NULL,
+             q3_primary_score = NULL,
+             q3_opponent_score = NULL,
+             q4_primary_score = NULL,
+             q4_opponent_score = NULL
+         WHERE id = $1`,
+        [weekTwoGameId, 10, 7]
+      )
+
+      expect(completedScoreResponse.status).toBe(200)
 
       const listResponse = await request(app)
         .get('/api/setup/pools')
@@ -334,9 +349,9 @@ describe('Football Pool API', () => {
 
       expect(displayResponse.status).toBe(200)
       expect(displayResponse.body.pool?.id).toBe(displayPoolId)
-      expect(displayResponse.body.selectedGameId).toBe(weekOneGameId)
+      expect(displayResponse.body.selectedGameId).toBe(weekTwoGameId)
       expect(displayResponse.body.board?.poolId).toBe(displayPoolId)
-      expect(displayResponse.body.board?.gameId).toBe(weekOneGameId)
+      expect(displayResponse.body.board?.gameId).toBe(weekTwoGameId)
     })
   })
 
