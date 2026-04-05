@@ -673,6 +673,14 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
     return board.squares.find((square) => square.square_num === selectedSquare) ?? null
   }, [board, selectedSquare])
 
+  const currentGameIndex = useMemo(
+    () => games.findIndex((game) => game.id === selectedGameId),
+    [games, selectedGameId]
+  )
+
+  const previousGameId = currentGameIndex > 0 ? games[currentGameIndex - 1]?.id ?? null : null
+  const nextGameId = currentGameIndex >= 0 && currentGameIndex < games.length - 1 ? games[currentGameIndex + 1]?.id ?? null : null
+
   const canManageSquares = Boolean(token && selectedPoolId && board)
 
   const heroTitle = selectedPool
@@ -808,7 +816,29 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
                 ['--team-secondary' as string]: board.teamSecondaryColor ?? '#111'
               }}
             >
-              <div className="pool-board-header">{`${heroTitle} • ${heroDate}`}</div>
+              <div className="pool-board-header">
+                <button
+                  type="button"
+                  className="pool-board-nav-arrow"
+                  onClick={() => void handleGameChange(previousGameId)}
+                  disabled={!previousGameId || busy === 'loading'}
+                  aria-label="Previous week"
+                  title="Previous week"
+                >
+                  ←
+                </button>
+                <span className="pool-board-header-title">{`${heroTitle} • ${heroDate}`}</span>
+                <button
+                  type="button"
+                  className="pool-board-nav-arrow"
+                  onClick={() => void handleGameChange(nextGameId)}
+                  disabled={!nextGameId || busy === 'loading'}
+                  aria-label="Next week"
+                  title="Next week"
+                >
+                  →
+                </button>
+              </div>
 
               <div className="pool-board-main">
                 <div className="pool-board-brand">

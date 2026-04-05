@@ -709,7 +709,38 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 0.35rem;
   letter-spacing: 0.02em;
+}
+
+.pool-board-header-title {
+  flex: 0 1 auto;
+  text-align: center;
+}
+
+.pool-board-nav-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 999px;
+  border: 1px solid rgba(17, 17, 17, 0.5);
+  background: rgba(255, 255, 255, 0.75);
+  color: #111;
+  font-size: 1.45rem;
+  font-weight: 900;
+  line-height: 1;
+  padding: 0;
+  flex: 0 0 auto;
+}
+
+.pool-board-nav-arrow:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.pool-board-nav-arrow:disabled {
+  opacity: 0.45;
 }
 
 .pool-board-main {
