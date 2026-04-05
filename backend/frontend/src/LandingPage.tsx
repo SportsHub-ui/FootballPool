@@ -69,6 +69,17 @@ type LandingBoard = {
   squares: LandingBoardSquare[]
 }
 
+type SimulationControlStatus = {
+  enabledInEnvironment: boolean
+  hasSimulationData: boolean
+  hasAssignedSquares: boolean
+  userCount: number
+  playerCount: number
+  canSimulate: boolean
+  canCleanup: boolean
+  blockers: string[]
+}
+
 type LoginResponse = {
   token: string
   user: {
@@ -104,6 +115,8 @@ type TeamBrand = {
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 const DEFAULT_POOL_LOGO = '/football-pool.png'
+const SHOW_SIMULATION_CONTROLS =
+  typeof window !== 'undefined' && /^(localhost|127(?:\.\d{1,3}){3})$/i.test(window.location.hostname)
 
 const NFL_TEAM_BRANDS: TeamBrand[] = [
   { key: 'cardinals', color: '#97233f', accent: '#000000', logo: 'https://a.espncdn.com/i/teamlogos/nfl/500/ari.png' },
@@ -285,6 +298,7 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   })
   const [participantOptions, setParticipantOptions] = useState<LandingUserOption[]>([])
   const [playerOptions, setPlayerOptions] = useState<LandingPlayerOption[]>([])
+  const [simulationStatus, setSimulationStatus] = useState<SimulationControlStatus | null>(null)
 
   const authHeaders = useMemo(() => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -293,6 +307,18 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
     }
     return headers
   }, [token])
+
+  const simulationHeaders = useMemo(() => {
+    if (!SHOW_SIMULATION_CONTROLS || token) {
+      return authHeaders
+    }
+
+    return {
+      ...authHeaders,
+      'x-user-id': 'dev-simulation-user',
+      'x-user-role': 'organizer'
+    }
+  }, [authHeaders, token])
 
   const loadBoard = async (poolId: number, gameId: number | null): Promise<void> => {
     const query = gameId ? `?gameId=${gameId}` : ''
@@ -594,6 +620,99 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
     }
   }
 
+  useEffect(() => {
+    if (!SHOW_SIMULATION_CONTROLS || activePage !== 'Squares' || !selectedPoolId) {
+      setSimulationStatus(null)
+      return
+    }
+
+    let isActive = true
+
+    const loadSimulationStatus = async (): Promise<void> => {
+      try {
+        const response = await fetch(`${API_BASE}/api/setup/pools/${selectedPoolId}/simulation`, {
+          headers: simulationHeaders
+        })
+
+        const data = await response.json().catch(() => null)
+
+        if (!response.ok) {
+          throw new Error(getApiErrorMessage(data, 'Failed to load simulation status'))
+        }
+
+        if (isActive) {
+          setSimulationStatus((data as { status?: SimulationControlStatus })?.status ?? null)
+        }
+      } catch (error) {
+        if (isActive) {
+          setSimulationStatus({
+            enabledInEnvironment: true,
+            hasSimulationData: games.some((game) => game.is_simulation),
+            hasAssignedSquares: Boolean(board?.squares.some((square) => square.participant_id != null || square.player_id != null)),
+            userCount: 0,
+            playerCount: 0,
+            canSimulate: false,
+            canCleanup: games.some((game) => game.is_simulation),
+            blockers: [error instanceof Error ? error.message : 'Failed to load simulation status']
+          })
+        }
+      }
+    }
+
+    void loadSimulationStatus()
+
+    return () => {
+      isActive = false
+    }
+  }, [activePage, board, games, selectedPoolId, simulationHeaders])
+
+  const handleSimulationAction = async () => {
+    if (!selectedPoolId || !simulationStatus) {
+      return
+    }
+
+    const isCleanup = simulationStatus.hasSimulationData
+    const confirmed = window.confirm(
+      isCleanup
+        ? 'Remove the simulated season data for this pool and clear all simulated square assignments?'
+        : 'Create a full season simulation for this pool? This will assign all squares, generate games, row/col numbers, and scores.'
+    )
+
+    if (!confirmed) {
+      return
+    }
+
+    setBusy(isCleanup ? 'cleanup-simulation' : 'create-simulation')
+    setPageError(null)
+
+    try {
+      const response = await fetch(`${API_BASE}/api/setup/pools/${selectedPoolId}/simulation`, {
+        method: isCleanup ? 'DELETE' : 'POST',
+        headers: simulationHeaders
+      })
+
+      const data = await response.json().catch(() => null)
+
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(data, isCleanup ? 'Failed to clean up simulation' : 'Failed to create simulation'))
+      }
+
+      await loadPoolContext(selectedPoolId, selectedGameId)
+
+      const statusResponse = await fetch(`${API_BASE}/api/setup/pools/${selectedPoolId}/simulation`, {
+        headers: simulationHeaders
+      })
+      const statusData = await statusResponse.json().catch(() => null)
+      if (statusResponse.ok) {
+        setSimulationStatus((statusData as { status?: SimulationControlStatus })?.status ?? null)
+      }
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : isCleanup ? 'Failed to clean up simulation' : 'Failed to create simulation')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const formatUserName = (user: LandingUserOption): string => {
     const fullName = `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim()
     if (fullName) return fullName
@@ -682,6 +801,16 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   const nextGameId = currentGameIndex >= 0 && currentGameIndex < games.length - 1 ? games[currentGameIndex + 1]?.id ?? null : null
 
   const canManageSquares = Boolean(token && selectedPoolId && board)
+  const hasSimulationData = simulationStatus?.hasSimulationData ?? games.some((game) => game.is_simulation)
+  const simulationButtonLabel = hasSimulationData ? 'Cleanup' : 'Simulation'
+  const simulationButtonDisabled = hasSimulationData
+    ? !selectedPoolId || busy !== null || !(simulationStatus?.canCleanup ?? hasSimulationData)
+    : !selectedPoolId || busy !== null || !(simulationStatus?.canSimulate ?? false)
+  const simulationButtonTitle = hasSimulationData
+    ? 'Remove the simulated season data for this pool.'
+    : simulationStatus?.canSimulate
+      ? 'Create a full season simulation for this pool.'
+      : simulationStatus?.blockers.join(' ')
 
   const heroTitle = selectedPool
     ? `${selectedPool.team_name ?? selectedPool.primary_team ?? 'Team'} • ${selectedPool.pool_name ?? 'Pool'}`
@@ -806,6 +935,27 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
                   : null}
               </select>
             </label>
+
+            {SHOW_SIMULATION_CONTROLS ? (
+              <div className="landing-board-dev-actions">
+                <button
+                  type="button"
+                  className={hasSimulationData ? 'secondary' : 'primary'}
+                  onClick={() => void handleSimulationAction()}
+                  disabled={simulationButtonDisabled}
+                  title={simulationButtonTitle}
+                >
+                  {busy === 'create-simulation'
+                    ? 'Simulating...'
+                    : busy === 'cleanup-simulation'
+                      ? 'Cleaning up...'
+                      : simulationButtonLabel}
+                </button>
+                {!hasSimulationData && simulationButtonDisabled && simulationStatus?.blockers[0] ? (
+                  <span className="landing-board-dev-note">{simulationStatus.blockers[0]}</span>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           {selectedPool && board ? (

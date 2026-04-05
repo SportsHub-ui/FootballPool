@@ -5,7 +5,13 @@ import path from 'path';
 import { PoolClient } from 'pg';
 import { z } from 'zod';
 import { db } from '../config/db';
+import { env } from '../config/env';
 import { requireRole } from '../middleware/auth';
+import {
+  cleanupPoolSeasonSimulation,
+  createPoolSeasonSimulation,
+  getPoolSimulationStatus
+} from '../services/poolSimulation';
 import { ensurePoolSquaresInitialized } from '../services/poolSquares';
 
 export const setupRouter = Router();
@@ -707,6 +713,114 @@ setupRouter.post('/pools/:poolId/squares/init', async (req, res) => {
 
     res.status(500).json({
       error: 'Failed to initialize squares',
+      detail: error instanceof Error ? error.message : 'Unknown error'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+setupRouter.get('/pools/:poolId/simulation', async (req, res) => {
+  const parsedParams = poolIdParams.safeParse(req.params);
+
+  if (!parsedParams.success) {
+    res.status(400).json({ error: parsedParams.error.issues });
+    return;
+  }
+
+  const client = await db.connect();
+
+  try {
+    const status = await getPoolSimulationStatus(client, parsedParams.data.poolId);
+    res.json({
+      environment: env.APP_ENV,
+      status
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === 'Pool not found.') {
+      res.status(404).json({ error: 'Pool not found' });
+      return;
+    }
+
+    res.status(500).json({
+      error: 'Failed to load simulation status',
+      detail: error instanceof Error ? error.message : 'Unknown error'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+setupRouter.post('/pools/:poolId/simulation', async (req, res) => {
+  const parsedParams = poolIdParams.safeParse(req.params);
+
+  if (!parsedParams.success) {
+    res.status(400).json({ error: parsedParams.error.issues });
+    return;
+  }
+
+  const client = await db.connect();
+
+  try {
+    await client.query('BEGIN');
+    const result = await createPoolSeasonSimulation(client, parsedParams.data.poolId);
+    await client.query('COMMIT');
+
+    res.status(201).json({
+      message: `Simulation complete for ${result.teamName} (${result.season}). ${result.simulatedGames} games simulated and ${result.assignedSquares} squares assigned.`,
+      result
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+
+    if (error instanceof Error && error.message === 'Pool not found.') {
+      res.status(404).json({ error: 'Pool not found' });
+      return;
+    }
+
+    if (error instanceof Error && /disabled in production/i.test(error.message)) {
+      res.status(403).json({ error: error.message });
+      return;
+    }
+
+    res.status(500).json({
+      error: 'Failed to create simulation',
+      detail: error instanceof Error ? error.message : 'Unknown error'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+setupRouter.delete('/pools/:poolId/simulation', async (req, res) => {
+  const parsedParams = poolIdParams.safeParse(req.params);
+
+  if (!parsedParams.success) {
+    res.status(400).json({ error: parsedParams.error.issues });
+    return;
+  }
+
+  const client = await db.connect();
+
+  try {
+    await client.query('BEGIN');
+    const result = await cleanupPoolSeasonSimulation(client, parsedParams.data.poolId);
+    await client.query('COMMIT');
+
+    res.json({
+      message: `Simulation cleanup complete. Removed ${result.deletedGames} simulated games and cleared ${result.clearedSquares} square assignments.`,
+      result
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+
+    if (error instanceof Error && /disabled in production/i.test(error.message)) {
+      res.status(403).json({ error: error.message });
+      return;
+    }
+
+    res.status(500).json({
+      error: 'Failed to clean up simulation',
       detail: error instanceof Error ? error.message : 'Unknown error'
     });
   } finally {

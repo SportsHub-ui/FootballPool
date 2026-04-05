@@ -121,6 +121,75 @@ const upsertWinningsForQuarter = async (
   return { written: true, unresolved: false };
 };
 
+export const processGameScoresWithClient = async (
+  client: PoolClient,
+  gameId: number,
+  scores: QuarterScoresInput
+): Promise<ScoreProcessingResult> => {
+  const updateResult = await client.query(
+    `UPDATE football_pool.game
+     SET q1_primary_score = $1,
+         q1_opponent_score = $2,
+         q2_primary_score = $3,
+         q2_opponent_score = $4,
+         q3_primary_score = $5,
+         q3_opponent_score = $6,
+         q4_primary_score = $7,
+         q4_opponent_score = $8
+     WHERE id = $9
+     RETURNING id, pool_id,
+               q1_primary_score, q1_opponent_score,
+               q2_primary_score, q2_opponent_score,
+               q3_primary_score, q3_opponent_score,
+               q4_primary_score, q4_opponent_score`,
+    [
+      scores.q1PrimaryScore,
+      scores.q1OpponentScore,
+      scores.q2PrimaryScore,
+      scores.q2OpponentScore,
+      scores.q3PrimaryScore,
+      scores.q3OpponentScore,
+      scores.q4PrimaryScore,
+      scores.q4OpponentScore,
+      gameId
+    ]
+  );
+
+  if (updateResult.rows.length === 0) {
+    throw new Error('Game not found');
+  }
+
+  const game = updateResult.rows[0];
+  const payouts = await ensurePoolPayouts(client, game.pool_id);
+
+  const quarters: QuarterSpec[] = [
+    { num: 1, primaryScore: scores.q1PrimaryScore, opponentScore: scores.q1OpponentScore, payout: payouts.q1_payout },
+    { num: 2, primaryScore: scores.q2PrimaryScore, opponentScore: scores.q2OpponentScore, payout: payouts.q2_payout },
+    { num: 3, primaryScore: scores.q3PrimaryScore, opponentScore: scores.q3OpponentScore, payout: payouts.q3_payout },
+    { num: 4, primaryScore: scores.q4PrimaryScore, opponentScore: scores.q4OpponentScore, payout: payouts.q4_payout }
+  ];
+
+  let winnersWritten = 0;
+  let unresolvedWinners = 0;
+
+  for (const quarter of quarters) {
+    const result = await upsertWinningsForQuarter(client, game.id, game.pool_id, quarter);
+    if (result.written) {
+      winnersWritten += 1;
+    }
+    if (result.unresolved) {
+      unresolvedWinners += 1;
+    }
+  }
+
+  return {
+    game,
+    winnersCalculated: true,
+    winnersWritten,
+    unresolvedWinners
+  };
+};
+
 export const processGameScores = async (
   gameId: number,
   scores: QuarterScoresInput
@@ -129,71 +198,9 @@ export const processGameScores = async (
 
   try {
     await client.query('BEGIN');
-
-    const updateResult = await client.query(
-      `UPDATE football_pool.game
-       SET q1_primary_score = $1,
-           q1_opponent_score = $2,
-           q2_primary_score = $3,
-           q2_opponent_score = $4,
-           q3_primary_score = $5,
-           q3_opponent_score = $6,
-           q4_primary_score = $7,
-           q4_opponent_score = $8
-       WHERE id = $9
-       RETURNING id, pool_id,
-                 q1_primary_score, q1_opponent_score,
-                 q2_primary_score, q2_opponent_score,
-                 q3_primary_score, q3_opponent_score,
-                 q4_primary_score, q4_opponent_score`,
-      [
-        scores.q1PrimaryScore,
-        scores.q1OpponentScore,
-        scores.q2PrimaryScore,
-        scores.q2OpponentScore,
-        scores.q3PrimaryScore,
-        scores.q3OpponentScore,
-        scores.q4PrimaryScore,
-        scores.q4OpponentScore,
-        gameId
-      ]
-    );
-
-    if (updateResult.rows.length === 0) {
-      throw new Error('Game not found');
-    }
-
-    const game = updateResult.rows[0];
-    const payouts = await ensurePoolPayouts(client, game.pool_id);
-
-    const quarters: QuarterSpec[] = [
-      { num: 1, primaryScore: scores.q1PrimaryScore, opponentScore: scores.q1OpponentScore, payout: payouts.q1_payout },
-      { num: 2, primaryScore: scores.q2PrimaryScore, opponentScore: scores.q2OpponentScore, payout: payouts.q2_payout },
-      { num: 3, primaryScore: scores.q3PrimaryScore, opponentScore: scores.q3OpponentScore, payout: payouts.q3_payout },
-      { num: 4, primaryScore: scores.q4PrimaryScore, opponentScore: scores.q4OpponentScore, payout: payouts.q4_payout }
-    ];
-
-    let winnersWritten = 0;
-    let unresolvedWinners = 0;
-
-    for (const quarter of quarters) {
-      const result = await upsertWinningsForQuarter(client, game.id, game.pool_id, quarter);
-      if (result.written) {
-        winnersWritten += 1;
-      }
-      if (result.unresolved) {
-        unresolvedWinners += 1;
-      }
-    }
-
+    const result = await processGameScoresWithClient(client, gameId, scores);
     await client.query('COMMIT');
-
-    return {
-      game,
-      winnersCalculated: true,
-      winnersWritten,
-      unresolvedWinners
-    };
+    return result;
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;

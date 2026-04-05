@@ -974,9 +974,28 @@ button:disabled {
 
 .landing-board-selector-bar {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
   gap: 0.75rem;
   align-items: end;
+}
+
+.landing-board-dev-actions {
+  display: grid;
+  gap: 0.3rem;
+  align-items: end;
+  justify-content: flex-end;
+}
+
+.landing-board-dev-actions button {
+  white-space: nowrap;
+}
+
+.landing-board-dev-note {
+  max-width: 220px;
+  font-size: 0.72rem;
+  color: #d9e1ea;
+  line-height: 1.25;
+  text-align: right;
 }
 
 .landing-board-selector-bar .field-block {
@@ -1989,6 +2008,14 @@ button:disabled {
 
   .landing-board-selector-bar {
     grid-template-columns: 1fr;
+  }
+
+  .landing-board-dev-actions {
+    justify-content: stretch;
+  }
+
+  .landing-board-dev-actions button {
+    width: 100%;
   }
 
   .metrics-pie-chart {
