@@ -52,6 +52,7 @@ type LandingBoardSquare = {
   player_jersey_num: number | null
   current_game_won: number
   season_won_total: number
+  is_current_score_leader?: boolean
 }
 
 type LandingBoard = {
@@ -734,12 +735,12 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
     }
   }
 
-  const handleSimulationAdvance = async (): Promise<void> => {
+  const handleSimulationAdvance = async (action: 'complete' | 'live' = 'complete'): Promise<void> => {
     if (!selectedPoolId || !simulationStatus?.canAdvance) {
       return
     }
 
-    setBusy('advance-simulation')
+    setBusy(action === 'live' ? 'live-simulation' : 'advance-simulation')
     setPageError(null)
     setPageNotice(null)
 
@@ -750,7 +751,7 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
           'Content-Type': 'application/json',
           ...simulationHeaders
         },
-        body: JSON.stringify({ source: simulationAdvanceSource })
+        body: JSON.stringify({ source: simulationAdvanceSource, action })
       })
 
       const data = await response.json().catch(() => null)
@@ -767,7 +768,13 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
 
       await loadPoolContext(selectedPoolId, data?.status?.currentGameId ?? selectedGameId)
     } catch (error) {
-      setPageError(error instanceof Error ? error.message : 'Failed to advance simulation')
+      setPageError(
+        error instanceof Error
+          ? error.message
+          : action === 'live'
+            ? 'Failed to refresh the live score'
+            : 'Failed to advance simulation'
+      )
     } finally {
       setBusy(null)
     }
@@ -863,6 +870,7 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
 
   const canManageSquares = Boolean(!displayOnlyMode && token && selectedPoolId && board)
   const showSimulationAdvance = !displayOnlyMode && SHOW_SIMULATION_CONTROLS && Boolean(simulationStatus?.progressAction)
+  const canRefreshLiveQuarter = simulationStatus?.progressAction === 'complete_quarter'
   const simulationAdvanceLabel = simulationStatus?.progressAction === 'complete_game' ? 'Complete Game' : 'Complete Quarter'
 
   const heroTitle = selectedPool
@@ -1003,10 +1011,20 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
                 <div className="square-toolbar">
                   {showSimulationAdvance ? (
                     <>
+                      {canRefreshLiveQuarter ? (
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={() => void handleSimulationAdvance('live')}
+                          disabled={busy !== null || !(simulationStatus?.canAdvance ?? false)}
+                        >
+                          {busy === 'live-simulation' ? 'Updating...' : 'Update Live Score'}
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className="primary"
-                        onClick={() => void handleSimulationAdvance()}
+                        onClick={() => void handleSimulationAdvance('complete')}
                         disabled={busy !== null || !(simulationStatus?.canAdvance ?? false)}
                       >
                         {busy === 'advance-simulation' ? 'Completing...' : simulationAdvanceLabel}
@@ -1088,18 +1106,19 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
                           {row.map((square) => {
                             const hasWeekWin = square.current_game_won > 0
                             const hasSeasonWin = square.season_won_total > 0
+                            const isCurrentLeader = Boolean(square.is_current_score_leader)
                             const winClass = hasWeekWin ? 'win-3' : hasSeasonWin ? 'win-1' : 'win-0'
                             const isSelectedSquare = selectedSquare === square.square_num
-                            const hasTooltip = hasWeekWin || hasSeasonWin
+                            const hasTooltip = hasWeekWin || hasSeasonWin || isCurrentLeader
                             const squareTooltip = hasTooltip
-                              ? `Week: ${formatBoardMoney(square.current_game_won)} • YTD: ${formatBoardMoney(square.season_won_total)}${hasActiveSelection ? ' • Click to manage assignment' : ''}`
+                              ? `${isCurrentLeader ? 'Currently leading • ' : ''}Week: ${formatBoardMoney(square.current_game_won)} • YTD: ${formatBoardMoney(square.season_won_total)}${hasActiveSelection ? ' • Click to manage assignment' : ''}`
                               : undefined
 
                             return (
                               <button
                                 key={square.square_num}
                                 type="button"
-                                className={`board-square ${square.participant_id ? 'owned' : 'open'} ${square.paid_flg ? 'paid' : ''} ${winClass} ${hasWeekWin ? 'current-win' : ''} ${isSelectedSquare ? 'selected' : ''}`}
+                                className={`board-square ${square.participant_id ? 'owned' : 'open'} ${square.paid_flg ? 'paid' : ''} ${winClass} ${isCurrentLeader ? 'current-win' : ''} ${isSelectedSquare ? 'selected' : ''}`}
                                 onClick={hasActiveSelection ? () => void handleOpenSquareAssignment(square) : undefined}
                                 aria-label={squareTooltip}
                               >

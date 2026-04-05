@@ -900,8 +900,29 @@ button:disabled {
   background: rgba(31, 157, 85, 0.12);
 }
 
+@keyframes current-win-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+
+  50% {
+    transform: scale(1.02);
+    filter: brightness(1.05);
+  }
+}
+
 .board-square.current-win {
-  box-shadow: inset 0 0 0 3px #159546;
+  background: linear-gradient(180deg, #fff4a3 0%, #ffe066 100%);
+  box-shadow: inset 0 0 0 3px #c49102;
+  animation: current-win-pulse 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .board-square.current-win {
+    animation: none;
+  }
 }
 
 .board-square.selected {
@@ -917,9 +938,12 @@ button:disabled {
   background: rgba(31, 157, 85, 0.06);
 }
 
-.board-square.paid.win-3,
-.board-square.paid.current-win {
+.board-square.paid.win-3 {
   background: rgba(31, 157, 85, 0.12);
+}
+
+.board-square.paid.current-win {
+  background: linear-gradient(180deg, #fff0a0 0%, #ffd24f 100%);
 }
 
 .square-label {

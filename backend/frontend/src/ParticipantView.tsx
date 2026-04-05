@@ -72,6 +72,7 @@ type BoardSquare = {
   player_jersey_num: number | null
   current_game_won: number
   season_won_total: number
+  is_current_score_leader?: boolean
 }
 
 type PoolBoard = {
@@ -603,21 +604,22 @@ export function ParticipantView() {
                               {row.map((sq) => {
                                 const hasWeekWin = sq.current_game_won > 0
                                 const hasSeasonWin = sq.season_won_total > 0
+                                const isCurrentLeader = Boolean(sq.is_current_score_leader)
                                 const winClass = hasWeekWin
                                   ? 'win-3'
                                   : hasSeasonWin
                                     ? 'win-1'
                                     : 'win-0'
-                                const hasTooltip = hasWeekWin || hasSeasonWin
+                                const hasTooltip = hasWeekWin || hasSeasonWin || isCurrentLeader
                                 const squareTooltip = hasTooltip
-                                  ? `Week: ${formatBoardMoney(sq.current_game_won)} • YTD: ${formatBoardMoney(sq.season_won_total)}`
+                                  ? `${isCurrentLeader ? 'Currently leading • ' : ''}Week: ${formatBoardMoney(sq.current_game_won)} • YTD: ${formatBoardMoney(sq.season_won_total)}`
                                   : undefined
 
                                 return (
                                   <button
                                     key={sq.id}
                                     type="button"
-                                    className={`board-square ${sq.participant_id ? 'owned' : 'open'} ${winClass} ${hasWeekWin ? 'current-win' : ''}`}
+                                    className={`board-square ${sq.participant_id ? 'owned' : 'open'} ${winClass} ${isCurrentLeader ? 'current-win' : ''}`}
                                     aria-label={squareTooltip}
                                   >
                                     {sq.participant_id ? (

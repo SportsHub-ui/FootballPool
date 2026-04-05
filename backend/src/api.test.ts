@@ -662,6 +662,265 @@ describe('Football Pool API', () => {
       expect(advanceResponse.body.completedQuarter).toBe(1)
     })
 
+    it('should seed a by-quarter simulation with a live mid-quarter board highlight', async () => {
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({ teamName: `Live Quarter Sim Team ${Date.now()}` })
+
+      const teamId = Number(teamResponse.body.id)
+
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `Live Quarter Sim Pool ${Date.now()}`,
+          teamId,
+          season: 2025,
+          primaryTeam: 'Green Bay Packers',
+          squareCost: 20,
+          q1Payout: 100,
+          q2Payout: 100,
+          q3Payout: 100,
+          q4Payout: 200
+        })
+
+      const poolId = Number(poolResponse.body.id)
+
+      await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Live',
+          lastName: `User${Date.now()}`,
+          email: `live-quarter-${Date.now()}@example.com`,
+          phone: '5552200000',
+          isPlayer: true,
+          playerTeams: [{ teamId, jerseyNum: 18 }]
+        })
+
+      const firstGame = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: 1,
+          opponent: 'Chicago Bears',
+          gameDate: '2025-09-07',
+          isSimulation: true
+        })
+
+      const gameId = Number(firstGame.body.game.id)
+
+      const startResponse = await request(app)
+        .post(`/api/setup/pools/${poolId}/simulation`)
+        .set(organizerHeaders)
+        .send({ mode: 'by_quarter' })
+
+      expect(startResponse.status).toBe(201)
+
+      const gamesResponse = await request(app)
+        .get(`/api/games?poolId=${poolId}`)
+        .set(organizerHeaders)
+
+      const seededGame = gamesResponse.body.find((game: { id: number }) => game.id === gameId)
+      expect(seededGame.q1_primary_score).not.toBeNull()
+      expect(seededGame.q1_opponent_score).not.toBeNull()
+      expect(seededGame.q2_primary_score).toBeNull()
+
+      const boardResponse = await request(app).get(`/api/landing/pools/${poolId}/board?gameId=${gameId}`)
+
+      expect(boardResponse.status).toBe(200)
+      const currentLeaderSquares = boardResponse.body.board.squares.filter(
+        (sq: { is_current_score_leader?: boolean }) => sq.is_current_score_leader === true
+      )
+      expect(currentLeaderSquares).toHaveLength(1)
+      expect(currentLeaderSquares[0].current_game_won).toBe(0)
+    })
+
+    it('should refresh a by-quarter simulation with a new live in-quarter score without completing the quarter', async () => {
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({ teamName: `Refresh Quarter Sim Team ${Date.now()}` })
+
+      const teamId = Number(teamResponse.body.id)
+
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `Refresh Quarter Sim Pool ${Date.now()}`,
+          teamId,
+          season: 2025,
+          primaryTeam: 'Green Bay Packers',
+          squareCost: 20,
+          q1Payout: 100,
+          q2Payout: 100,
+          q3Payout: 100,
+          q4Payout: 200
+        })
+
+      const poolId = Number(poolResponse.body.id)
+
+      await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Refresh',
+          lastName: `User${Date.now()}`,
+          email: `refresh-quarter-${Date.now()}@example.com`,
+          phone: '5552300000',
+          isPlayer: true,
+          playerTeams: [{ teamId, jerseyNum: 22 }]
+        })
+
+      const firstGame = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: 1,
+          opponent: 'Minnesota Vikings',
+          gameDate: '2025-09-07',
+          isSimulation: true
+        })
+
+      const gameId = Number(firstGame.body.game.id)
+
+      const startResponse = await request(app)
+        .post(`/api/setup/pools/${poolId}/simulation`)
+        .set(organizerHeaders)
+        .send({ mode: 'by_quarter' })
+
+      expect(startResponse.status).toBe(201)
+
+      const seededGamesResponse = await request(app)
+        .get(`/api/games?poolId=${poolId}`)
+        .set(organizerHeaders)
+
+      const seededGame = seededGamesResponse.body.find((game: { id: number }) => game.id === gameId)
+      const seededPrimary = Number(seededGame.q1_primary_score)
+      const seededOpponent = Number(seededGame.q1_opponent_score)
+
+      const refreshResponse = await request(app)
+        .post(`/api/setup/pools/${poolId}/simulation/advance`)
+        .set(organizerHeaders)
+        .send({ source: 'mock', action: 'live' })
+
+      expect(refreshResponse.status).toBe(200)
+      expect(refreshResponse.body.status.currentGameId).toBe(gameId)
+      expect(refreshResponse.body.status.nextQuarter).toBe(1)
+      expect(String(refreshResponse.body.message ?? '')).toMatch(/live/i)
+
+      const refreshedGamesResponse = await request(app)
+        .get(`/api/games?poolId=${poolId}`)
+        .set(organizerHeaders)
+
+      const refreshedGame = refreshedGamesResponse.body.find((game: { id: number }) => game.id === gameId)
+      expect(Number(refreshedGame.q1_primary_score)).toBeGreaterThanOrEqual(seededPrimary)
+      expect(Number(refreshedGame.q1_opponent_score)).toBeGreaterThanOrEqual(seededOpponent)
+      expect(refreshedGame.q2_primary_score).toBeNull()
+    })
+
+    it('should keep repeated live-score updates short of a completed quarter until Complete Quarter is used', async () => {
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({ teamName: `Live Hold Sim Team ${Date.now()}` })
+
+      const teamId = Number(teamResponse.body.id)
+
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `Live Hold Sim Pool ${Date.now()}`,
+          teamId,
+          season: 2025,
+          primaryTeam: 'Green Bay Packers',
+          squareCost: 20,
+          q1Payout: 100,
+          q2Payout: 100,
+          q3Payout: 100,
+          q4Payout: 200
+        })
+
+      const poolId = Number(poolResponse.body.id)
+
+      await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Hold',
+          lastName: `User${Date.now()}`,
+          email: `hold-quarter-${Date.now()}@example.com`,
+          phone: '5552400000',
+          isPlayer: true,
+          playerTeams: [{ teamId, jerseyNum: 33 }]
+        })
+
+      const firstGame = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: 1,
+          opponent: 'Atlanta Falcons',
+          gameDate: '2025-09-07',
+          isSimulation: true
+        })
+
+      const gameId = Number(firstGame.body.game.id)
+      const base = (gameId * 7) % 10
+      const finalQ1Primary = (base + 3) % 10
+      const finalQ1Opponent = (base + 7) % 10
+
+      const startResponse = await request(app)
+        .post(`/api/setup/pools/${poolId}/simulation`)
+        .set(organizerHeaders)
+        .send({ mode: 'by_quarter' })
+
+      expect(startResponse.status).toBe(201)
+
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const liveResponse = await request(app)
+          .post(`/api/setup/pools/${poolId}/simulation/advance`)
+          .set(organizerHeaders)
+          .send({ source: 'mock', action: 'live' })
+
+        expect(liveResponse.status).toBe(200)
+        expect(liveResponse.body.status.currentGameId).toBe(gameId)
+        expect(liveResponse.body.status.nextQuarter).toBe(1)
+      }
+
+      const liveGamesResponse = await request(app)
+        .get(`/api/games?poolId=${poolId}`)
+        .set(organizerHeaders)
+
+      const liveGame = liveGamesResponse.body.find((game: { id: number }) => game.id === gameId)
+      expect(liveGame.q2_primary_score).toBeNull()
+      expect(
+        Number(liveGame.q1_primary_score) < finalQ1Primary || Number(liveGame.q1_opponent_score) < finalQ1Opponent
+      ).toBe(true)
+
+      const completeResponse = await request(app)
+        .post(`/api/setup/pools/${poolId}/simulation/advance`)
+        .set(organizerHeaders)
+        .send({ source: 'mock', action: 'complete' })
+
+      expect(completeResponse.status).toBe(200)
+      expect(completeResponse.body.status.nextQuarter).toBe(2)
+
+      const completedGamesResponse = await request(app)
+        .get(`/api/games?poolId=${poolId}`)
+        .set(organizerHeaders)
+
+      const completedGame = completedGamesResponse.body.find((game: { id: number }) => game.id === gameId)
+      expect(Number(completedGame.q1_primary_score)).toBe(finalQ1Primary)
+      expect(Number(completedGame.q1_opponent_score)).toBe(finalQ1Opponent)
+    })
+
     it('should advance a by-quarter simulation one quarter at a time', async () => {
       const teamResponse = await request(app)
         .post('/api/setup/teams')

@@ -127,6 +127,7 @@ type BoardSquare = {
   player_jersey_num: number | null
   current_game_won: number
   season_won_total: number
+  is_current_score_leader?: boolean
 }
 
 type PoolBoard = {
@@ -862,13 +863,13 @@ function App() {
     }
   }
 
-  const onAdvanceSimulation = async (): Promise<void> => {
+  const onAdvanceSimulation = async (action: 'complete' | 'live' = 'complete'): Promise<void> => {
     if (!managedPoolId || !managedSimulationStatus?.progressAction) {
       setError('Select a pool with an active By Game or By Quarter simulation first.')
       return
     }
 
-    setBusy('simulation-advance')
+    setBusy(action === 'live' ? 'simulation-live' : 'simulation-advance')
     setError(null)
 
     try {
@@ -877,7 +878,7 @@ function App() {
         {
           method: 'POST',
           headers: organizerHeaders,
-          body: JSON.stringify({ source: ingestSource === 'mock' ? 'mock' : 'espn' })
+          body: JSON.stringify({ source: ingestSource === 'mock' ? 'mock' : 'espn', action })
         }
       )
 
@@ -897,7 +898,7 @@ function App() {
       await loadOrganizerBoard(managedPoolId, nextGameId ?? undefined)
       await refreshDiagnostics()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to advance the simulation')
+      setError(err instanceof Error ? err.message : action === 'live' ? 'Failed to refresh the live score' : 'Failed to advance the simulation')
     } finally {
       setBusy(null)
     }
@@ -2160,21 +2161,22 @@ function App() {
                         {row.map((sq) => {
                           const hasWeekWin = sq.current_game_won > 0
                           const hasSeasonWin = sq.season_won_total > 0
+                          const isCurrentLeader = Boolean(sq.is_current_score_leader)
                           const winClass = hasWeekWin
                             ? 'win-3'
                             : hasSeasonWin
                               ? 'win-1'
                               : 'win-0'
-                          const hasTooltip = hasWeekWin || hasSeasonWin
+                          const hasTooltip = hasWeekWin || hasSeasonWin || isCurrentLeader
                           const squareTooltip = hasTooltip
-                            ? `Week: ${formatUsd(sq.current_game_won)} • YTD: ${formatUsd(sq.season_won_total)} • Click to edit assignment`
+                            ? `${isCurrentLeader ? 'Currently leading • ' : ''}Week: ${formatUsd(sq.current_game_won)} • YTD: ${formatUsd(sq.season_won_total)} • Click to edit assignment`
                             : 'Click to edit assignment'
 
                           return (
                             <button
                               key={sq.id}
                               type="button"
-                              className={`board-square ${sq.participant_id ? 'owned' : 'open'} ${sq.paid_flg ? 'paid' : ''} ${winClass} ${hasWeekWin ? 'current-win' : ''} ${selectedSquare === sq.square_num ? 'selected' : ''}`}
+                              className={`board-square ${sq.participant_id ? 'owned' : 'open'} ${sq.paid_flg ? 'paid' : ''} ${winClass} ${isCurrentLeader ? 'current-win' : ''} ${selectedSquare === sq.square_num ? 'selected' : ''}`}
                               onClick={() => onOpenSquareAssignment(sq)}
                               aria-label={squareTooltip}
                             >
@@ -2381,9 +2383,18 @@ function App() {
         </div>
 
         <div className="square-toolbar">
+          {managedSimulationStatus?.progressAction === 'complete_quarter' ? (
+            <button
+              className="secondary"
+              onClick={() => void onAdvanceSimulation('live')}
+              disabled={busy !== null || !managedPoolId || !(managedSimulationStatus?.canAdvance ?? false)}
+            >
+              {busy === 'simulation-live' ? 'Updating...' : 'Update Live Score'}
+            </button>
+          ) : null}
           <button
             className="primary"
-            onClick={onAdvanceSimulation}
+            onClick={() => void onAdvanceSimulation('complete')}
             disabled={busy !== null || !managedPoolId || !(managedSimulationStatus?.canAdvance ?? false)}
           >
             {busy === 'simulation-advance'

@@ -7,6 +7,7 @@ import { processGameScoresWithClient, type QuarterScoresInput } from './scorePro
 
 export type SimulationMode = 'full_year' | 'by_game' | 'by_quarter';
 type SimulationProgressAction = 'complete_game' | 'complete_quarter';
+type SimulationAdvanceAction = 'complete' | 'live';
 
 export type PoolSimulationStatus = {
   enabledInEnvironment: boolean;
@@ -299,6 +300,166 @@ const buildPartialQuarterSnapshot = (scores: QuarterScoresInput, quarter: number
   q4OpponentScore: quarter >= 4 ? scores.q4OpponentScore : null
 });
 
+const buildLiveQuarterScore = (previousTotal: number | null | undefined, finalTotal: number | null | undefined): number | null => {
+  if (finalTotal == null) {
+    return null;
+  }
+
+  const start = Number(previousTotal ?? 0);
+  const end = Number(finalTotal);
+
+  if (!Number.isFinite(end)) {
+    return null;
+  }
+
+  if (end <= start) {
+    return end;
+  }
+
+  const delta = end - start;
+  const liveScore = start + Math.max(1, Math.floor(delta / 2));
+
+  // Keep "live" snapshots visibly short of the completed-quarter total until the
+  // explicit Complete Quarter action is used.
+  return Math.min(end - 1, liveScore);
+};
+
+const buildMidQuarterSnapshot = (scores: QuarterScoresInput, quarter: number): QuarterScoresInput => {
+  const q1Primary = quarter === 1 ? buildLiveQuarterScore(0, scores.q1PrimaryScore) : quarter > 1 ? scores.q1PrimaryScore : null;
+  const q1Opponent = quarter === 1 ? buildLiveQuarterScore(0, scores.q1OpponentScore) : quarter > 1 ? scores.q1OpponentScore : null;
+  const q2Primary =
+    quarter === 2 ? buildLiveQuarterScore(scores.q1PrimaryScore, scores.q2PrimaryScore) : quarter > 2 ? scores.q2PrimaryScore : null;
+  const q2Opponent =
+    quarter === 2 ? buildLiveQuarterScore(scores.q1OpponentScore, scores.q2OpponentScore) : quarter > 2 ? scores.q2OpponentScore : null;
+  const q3Primary =
+    quarter === 3 ? buildLiveQuarterScore(scores.q2PrimaryScore, scores.q3PrimaryScore) : quarter > 3 ? scores.q3PrimaryScore : null;
+  const q3Opponent =
+    quarter === 3 ? buildLiveQuarterScore(scores.q2OpponentScore, scores.q3OpponentScore) : quarter > 3 ? scores.q3OpponentScore : null;
+  const q4Primary = quarter === 4 ? buildLiveQuarterScore(scores.q3PrimaryScore, scores.q4PrimaryScore) : null;
+  const q4Opponent = quarter === 4 ? buildLiveQuarterScore(scores.q3OpponentScore, scores.q4OpponentScore) : null;
+
+  return {
+    q1PrimaryScore: q1Primary,
+    q1OpponentScore: q1Opponent,
+    q2PrimaryScore: q2Primary,
+    q2OpponentScore: q2Opponent,
+    q3PrimaryScore: q3Primary,
+    q3OpponentScore: q3Opponent,
+    q4PrimaryScore: q4Primary,
+    q4OpponentScore: q4Opponent
+  };
+};
+
+const advanceLiveQuarterScore = (
+  currentTotal: number | null | undefined,
+  previousTotal: number | null | undefined,
+  finalTotal: number | null | undefined
+): number | null => {
+  if (finalTotal == null) {
+    return null;
+  }
+
+  const start = Number(previousTotal ?? 0);
+  const current = Number(currentTotal ?? start);
+  const end = Number(finalTotal);
+
+  if (!Number.isFinite(end)) {
+    return null;
+  }
+
+  if (end <= start) {
+    return end;
+  }
+
+  if (!Number.isFinite(current) || current < start) {
+    return buildLiveQuarterScore(previousTotal, finalTotal);
+  }
+
+  if (current >= end - 1) {
+    return end - 1;
+  }
+
+  const remaining = end - current;
+  return Math.min(end - 1, current + Math.max(1, Math.floor(remaining / 2)));
+};
+
+const buildAdvancedMidQuarterSnapshot = (
+  currentScores: QuarterScoresInput,
+  finalScores: QuarterScoresInput,
+  quarter: number
+): QuarterScoresInput => ({
+  q1PrimaryScore:
+    quarter === 1
+      ? advanceLiveQuarterScore(currentScores.q1PrimaryScore, 0, finalScores.q1PrimaryScore)
+      : quarter > 1
+        ? finalScores.q1PrimaryScore
+        : null,
+  q1OpponentScore:
+    quarter === 1
+      ? advanceLiveQuarterScore(currentScores.q1OpponentScore, 0, finalScores.q1OpponentScore)
+      : quarter > 1
+        ? finalScores.q1OpponentScore
+        : null,
+  q2PrimaryScore:
+    quarter === 2
+      ? advanceLiveQuarterScore(currentScores.q2PrimaryScore, finalScores.q1PrimaryScore, finalScores.q2PrimaryScore)
+      : quarter > 2
+        ? finalScores.q2PrimaryScore
+        : null,
+  q2OpponentScore:
+    quarter === 2
+      ? advanceLiveQuarterScore(currentScores.q2OpponentScore, finalScores.q1OpponentScore, finalScores.q2OpponentScore)
+      : quarter > 2
+        ? finalScores.q2OpponentScore
+        : null,
+  q3PrimaryScore:
+    quarter === 3
+      ? advanceLiveQuarterScore(currentScores.q3PrimaryScore, finalScores.q2PrimaryScore, finalScores.q3PrimaryScore)
+      : quarter > 3
+        ? finalScores.q3PrimaryScore
+        : null,
+  q3OpponentScore:
+    quarter === 3
+      ? advanceLiveQuarterScore(currentScores.q3OpponentScore, finalScores.q2OpponentScore, finalScores.q3OpponentScore)
+      : quarter > 3
+        ? finalScores.q3OpponentScore
+        : null,
+  q4PrimaryScore:
+    quarter === 4
+      ? advanceLiveQuarterScore(currentScores.q4PrimaryScore, finalScores.q3PrimaryScore, finalScores.q4PrimaryScore)
+      : null,
+  q4OpponentScore:
+    quarter === 4
+      ? advanceLiveQuarterScore(currentScores.q4OpponentScore, finalScores.q3OpponentScore, finalScores.q4OpponentScore)
+      : null
+});
+
+const writeGameScoreSnapshot = async (client: PoolClient, gameId: number, scores: QuarterScoresInput): Promise<void> => {
+  await client.query(
+    `UPDATE football_pool.game
+     SET q1_primary_score = $2,
+         q1_opponent_score = $3,
+         q2_primary_score = $4,
+         q2_opponent_score = $5,
+         q3_primary_score = $6,
+         q3_opponent_score = $7,
+         q4_primary_score = $8,
+         q4_opponent_score = $9
+     WHERE id = $1`,
+    [
+      gameId,
+      scores.q1PrimaryScore,
+      scores.q1OpponentScore,
+      scores.q2PrimaryScore,
+      scores.q2OpponentScore,
+      scores.q3PrimaryScore,
+      scores.q3OpponentScore,
+      scores.q4PrimaryScore,
+      scores.q4OpponentScore
+    ]
+  );
+};
+
 const ensureQuarterAvailable = (scores: QuarterScoresInput, quarter: number): void => {
   const quarterValues =
     quarter === 1
@@ -332,11 +493,13 @@ const ensureFullGameAvailable = (scores: QuarterScoresInput): void => {
 const loadSimulationAdvanceScores = async (
   gameId: number,
   source: IngestionSource,
-  validateScores: (scores: QuarterScoresInput) => void
+  validateScores?: (scores: QuarterScoresInput) => void
 ): Promise<{ scores: QuarterScoresInput; effectiveSource: IngestionSource; fallbackNotice: string | null }> => {
   try {
     const scores = await getScoresForGame(gameId, source);
-    validateScores(scores);
+    if (validateScores) {
+      validateScores(scores);
+    }
 
     return {
       scores,
@@ -349,7 +512,9 @@ const loadSimulationAdvanceScores = async (
     }
 
     const scores = await getScoresForGame(gameId, 'mock');
-    validateScores(scores);
+    if (validateScores) {
+      validateScores(scores);
+    }
 
     return {
       scores,
@@ -596,6 +761,11 @@ export const createPoolSeasonSimulation = async (
       currentGameId = firstGame.id;
       nextQuarter = mode === 'by_quarter' ? 1 : null;
       progressAction = mode === 'by_quarter' ? 'complete_quarter' : 'complete_game';
+
+      if (mode === 'by_quarter') {
+        const { scores: previewScores } = await loadSimulationAdvanceScores(firstGame.id, 'mock');
+        await writeGameScoreSnapshot(client, firstGame.id, buildMidQuarterSnapshot(previewScores, 1));
+      }
     }
 
     await upsertSimulationState(client, poolId, mode, currentGameId, nextQuarter);
@@ -617,7 +787,8 @@ export const createPoolSeasonSimulation = async (
 export const advancePoolSeasonSimulation = async (
   client: PoolClient,
   poolId: number,
-  source: IngestionSource = 'espn'
+  source: IngestionSource = 'espn',
+  action: SimulationAdvanceAction = 'complete'
 ): Promise<PoolSimulationAdvanceResult> => {
   assertSimulationEnabled();
 
@@ -636,6 +807,48 @@ export const advancePoolSeasonSimulation = async (
 
   if (currentGame.row_numbers == null || currentGame.col_numbers == null) {
     await prepareGameForSimulation(client, currentGame.id);
+  }
+
+  if (action === 'live') {
+    if (simulationState.mode !== 'by_quarter') {
+      throw new Error('Live score refresh is only available for By Quarter simulations.');
+    }
+
+    const liveQuarter = simulationState.next_quarter ?? getNextIncompleteQuarter(currentGame) ?? 1;
+    const { scores: fetchedScores, fallbackNotice } = await loadSimulationAdvanceScores(
+      currentGame.id,
+      source,
+      (scores) => ensureQuarterAvailable(scores, liveQuarter)
+    );
+
+    await writeGameScoreSnapshot(
+      client,
+      currentGame.id,
+      buildAdvancedMidQuarterSnapshot(
+        {
+          q1PrimaryScore: currentGame.q1_primary_score,
+          q1OpponentScore: currentGame.q1_opponent_score,
+          q2PrimaryScore: currentGame.q2_primary_score,
+          q2OpponentScore: currentGame.q2_opponent_score,
+          q3PrimaryScore: currentGame.q3_primary_score,
+          q3OpponentScore: currentGame.q3_opponent_score,
+          q4PrimaryScore: currentGame.q4_primary_score,
+          q4OpponentScore: currentGame.q4_opponent_score
+        },
+        fetchedScores,
+        liveQuarter
+      )
+    );
+
+    await upsertSimulationState(client, poolId, 'by_quarter', currentGame.id, liveQuarter);
+    const status = await getPoolSimulationStatus(client, poolId);
+
+    return {
+      message: `Updated the live quarter ${liveQuarter} score for ${currentGame.opponent ?? 'the current game'}.${fallbackNotice ? ` ${fallbackNotice}` : ''}`,
+      status,
+      completedGameId: currentGame.id,
+      completedQuarter: null
+    };
   }
 
   if (simulationState.mode === 'by_game') {
@@ -685,14 +898,19 @@ export const advancePoolSeasonSimulation = async (
     const nextGame = findNextPlayableGame(games, currentGame.id);
     if (nextGame) {
       await prepareGameForSimulation(client, nextGame.id);
+      const { scores: previewScores } = await loadSimulationAdvanceScores(nextGame.id, source);
+      await writeGameScoreSnapshot(client, nextGame.id, buildMidQuarterSnapshot(previewScores, 1));
       nextGameId = nextGame.id;
       nextQuarter = 1;
-      message = `Completed ${currentGame.opponent ?? 'the current game'} and prepared the next game.`;
+      message = `Completed ${currentGame.opponent ?? 'the current game'} and prepared the next game with a live first-quarter score.`;
     } else {
       nextGameId = null;
       nextQuarter = null;
       message = 'Completed the final quarter of the final simulated game.';
     }
+  } else {
+    await writeGameScoreSnapshot(client, currentGame.id, buildMidQuarterSnapshot(fetchedScores, quarterToComplete + 1));
+    message = `Completed quarter ${quarterToComplete} for ${currentGame.opponent ?? 'the current game'} and rolled into a live quarter ${quarterToComplete + 1} score.`;
   }
 
   await upsertSimulationState(client, poolId, 'by_quarter', nextGameId, nextQuarter);

@@ -172,7 +172,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   const [simulationStatus, setSimulationStatus] = useState<SimulationControlStatus | null>(null)
   const [simulationMode, setSimulationMode] = useState<SimulationMode>('full_year')
   const simulationAdvanceSource: 'espn' = 'espn'
-  const [simulationBusy, setSimulationBusy] = useState<'create-simulation' | 'cleanup-simulation' | 'advance-simulation' | null>(null)
+  const [simulationBusy, setSimulationBusy] = useState<'create-simulation' | 'cleanup-simulation' | 'advance-simulation' | 'live-simulation' | null>(null)
   const [isCreatingNew, setIsCreatingNew] = useState(false)
   const [isPoolListExpanded, setIsPoolListExpanded] = useState(true)
   const [poolListHeight, setPoolListHeight] = useState(POOL_LIST_DEFAULT_HEIGHT)
@@ -629,6 +629,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
       : null
     : null
   const showSimulationAdvance = Boolean(simulationStatus?.progressAction)
+  const canRefreshLiveQuarter = simulationStatus?.progressAction === 'complete_quarter'
   const simulationAdvanceLabel = simulationStatus?.progressAction === 'complete_game' ? 'Complete Game' : 'Complete Quarter'
 
   const handleSimulationAction = async (): Promise<void> => {
@@ -683,12 +684,12 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     }
   }
 
-  const handleSimulationAdvance = async (): Promise<void> => {
+  const handleSimulationAdvance = async (action: 'complete' | 'live' = 'complete'): Promise<void> => {
     if (!selectedPoolId || !simulationStatus?.canAdvance) {
       return
     }
 
-    setSimulationBusy('advance-simulation')
+    setSimulationBusy(action === 'live' ? 'live-simulation' : 'advance-simulation')
     setError(null)
     setNotice(null)
 
@@ -701,16 +702,22 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
             'Content-Type': 'application/json',
             ...simulationHeaders
           },
-          body: JSON.stringify({ source: simulationAdvanceSource })
+          body: JSON.stringify({ source: simulationAdvanceSource, action })
         }
       )
 
       await loadPoolData(selectedPoolId)
       await loadPoolGames(selectedPoolId)
       setSimulationStatus(result.status ?? null)
-      setNotice(result.message ?? `${simulationAdvanceLabel} complete.`)
+      setNotice(result.message ?? `${action === 'live' ? 'Live score updated' : simulationAdvanceLabel + ' complete.'}`)
     } catch (simulationError) {
-      setError(simulationError instanceof Error ? simulationError.message : `Failed to ${simulationAdvanceLabel.toLowerCase()}`)
+      setError(
+        simulationError instanceof Error
+          ? simulationError.message
+          : action === 'live'
+            ? 'Failed to update the live score'
+            : `Failed to ${simulationAdvanceLabel.toLowerCase()}`
+      )
     } finally {
       setSimulationBusy(null)
     }
@@ -888,14 +895,26 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                     ) : null}
                   </span>
                   {showSimulationAdvance ? (
-                    <button
-                      type="button"
-                      className="primary"
-                      onClick={() => void handleSimulationAdvance()}
-                      disabled={saving || simulationBusy !== null || !selectedPoolId || !(simulationStatus?.canAdvance ?? false)}
-                    >
-                      {simulationBusy === 'advance-simulation' ? 'Completing...' : simulationAdvanceLabel}
-                    </button>
+                    <>
+                      {canRefreshLiveQuarter ? (
+                        <button
+                          type="button"
+                          className="secondary"
+                          onClick={() => void handleSimulationAdvance('live')}
+                          disabled={saving || simulationBusy !== null || !selectedPoolId || !(simulationStatus?.canAdvance ?? false)}
+                        >
+                          {simulationBusy === 'live-simulation' ? 'Updating...' : 'Update Live Score'}
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="primary"
+                        onClick={() => void handleSimulationAdvance('complete')}
+                        disabled={saving || simulationBusy !== null || !selectedPoolId || !(simulationStatus?.canAdvance ?? false)}
+                      >
+                        {simulationBusy === 'advance-simulation' ? 'Completing...' : simulationAdvanceLabel}
+                      </button>
+                    </>
                   ) : null}
                 </>
               ) : null}

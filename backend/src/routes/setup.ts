@@ -136,7 +136,8 @@ const createSimulationSchema = z.object({
 });
 
 const advanceSimulationSchema = z.object({
-  source: z.enum(['espn', 'mock']).optional()
+  source: z.enum(['espn', 'mock']).optional(),
+  action: z.enum(['complete', 'live']).optional().default('complete')
 });
 
 const userIdParams = z.object({
@@ -939,10 +940,11 @@ setupRouter.post('/pools/:poolId/simulation/advance', async (req, res) => {
 
   const client = await db.connect();
   const requestedSource = parsedBody.data.source ?? 'espn';
+  const requestedAction = parsedBody.data.action ?? 'complete';
 
   try {
     await client.query('BEGIN');
-    const result = await advancePoolSeasonSimulation(client, parsedParams.data.poolId, requestedSource);
+    const result = await advancePoolSeasonSimulation(client, parsedParams.data.poolId, requestedSource, requestedAction);
     await client.query('COMMIT');
 
     res.status(200).json(result);
@@ -957,7 +959,7 @@ setupRouter.post('/pools/:poolId/simulation/advance', async (req, res) => {
     if (shouldFallbackToMock) {
       try {
         await client.query('BEGIN');
-        const fallbackResult = await advancePoolSeasonSimulation(client, parsedParams.data.poolId, 'mock');
+        const fallbackResult = await advancePoolSeasonSimulation(client, parsedParams.data.poolId, 'mock', requestedAction);
         await client.query('COMMIT');
 
         res.status(200).json({
