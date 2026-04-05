@@ -1308,6 +1308,7 @@ describe('Football Pool API', () => {
       expect(response.body.templates.length).toBeGreaterThanOrEqual(6)
       expect(response.body.availableVariables).toHaveProperty('quarter_win')
       expect(response.body.availableVariables.quarter_win).toContain('winnerName')
+      expect(response.body.selectedPoolId).toBeNull()
     })
 
     it('should save a custom participant quarter-win template', async () => {
@@ -1324,6 +1325,146 @@ describe('Football Pool API', () => {
       expect(response.body.template.subjectTemplate).toBe('Quarter {{quarter}} winner in {{poolName}}')
       expect(response.body.template.bodyTemplate).toContain('{{winnerName}}')
       expect(response.body.template.markupFormat).toBe('markdown')
+      expect(response.body.template.poolId).toBeNull()
+      expect(response.body.template.source).toBe('global')
+    })
+
+    it('should allow pool-specific overrides with global fallback', async () => {
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({ teamName: `Template Team ${Date.now()}` })
+
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `Template Pool ${Date.now()}`,
+          teamId: Number(teamResponse.body.id),
+          season: 2026,
+          primaryTeam: 'Packers',
+          squareCost: 25,
+          q1Payout: 100,
+          q2Payout: 100,
+          q3Payout: 100,
+          q4Payout: 100
+        })
+
+      const poolId = Number(poolResponse.body.id)
+
+      await request(app)
+        .put('/api/setup/notifications/templates/participant/quarter_win')
+        .set(organizerHeaders)
+        .send({
+          subjectTemplate: 'GLOBAL quarter {{quarter}} in {{poolName}}',
+          bodyTemplate: 'Global winner {{winnerName}}',
+          markupFormat: 'plain_text'
+        })
+
+      const saveResponse = await request(app)
+        .put('/api/setup/notifications/templates/participant/quarter_win')
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          subjectTemplate: 'POOL quarter {{quarter}} in {{poolName}}',
+          bodyTemplate: 'Pool winner {{winnerName}}',
+          markupFormat: 'plain_text'
+        })
+
+      expect(saveResponse.status).toBe(200)
+      expect(saveResponse.body.template.poolId).toBe(poolId)
+      expect(saveResponse.body.template.source).toBe('pool')
+
+      const response = await request(app)
+        .get(`/api/setup/notifications/templates?poolId=${poolId}`)
+        .set(organizerHeaders)
+
+      expect(response.status).toBe(200)
+      expect(response.body.selectedPoolId).toBe(poolId)
+
+      const participantQuarterTemplate = response.body.templates.find(
+        (template: { recipientScope: string; notificationKind: string }) =>
+          template.recipientScope === 'participant' && template.notificationKind === 'quarter_win'
+      )
+      const poolContactQuarterTemplate = response.body.templates.find(
+        (template: { recipientScope: string; notificationKind: string }) =>
+          template.recipientScope === 'pool_contact' && template.notificationKind === 'quarter_win'
+      )
+
+      expect(participantQuarterTemplate).toMatchObject({
+        subjectTemplate: 'POOL quarter {{quarter}} in {{poolName}}',
+        poolId,
+        source: 'pool'
+      })
+      expect(poolContactQuarterTemplate).toMatchObject({
+        poolId: null,
+        source: 'global'
+      })
+    })
+
+    it('should reset a pool-specific override back to the GLOBAL template', async () => {
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({ teamName: `Reset Team ${Date.now()}` })
+
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `Reset Pool ${Date.now()}`,
+          teamId: Number(teamResponse.body.id),
+          season: 2026,
+          primaryTeam: 'Packers',
+          squareCost: 25,
+          q1Payout: 100,
+          q2Payout: 100,
+          q3Payout: 100,
+          q4Payout: 100
+        })
+
+      const poolId = Number(poolResponse.body.id)
+
+      await request(app)
+        .put('/api/setup/notifications/templates/participant/quarter_win')
+        .set(organizerHeaders)
+        .send({
+          subjectTemplate: 'GLOBAL reset {{quarter}} in {{poolName}}',
+          bodyTemplate: 'Global reset {{winnerName}}',
+          markupFormat: 'plain_text'
+        })
+
+      await request(app)
+        .put('/api/setup/notifications/templates/participant/quarter_win')
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          subjectTemplate: 'POOL reset {{quarter}} in {{poolName}}',
+          bodyTemplate: 'Pool reset {{winnerName}}',
+          markupFormat: 'plain_text'
+        })
+
+      const deleteResponse = await request(app)
+        .delete(`/api/setup/notifications/templates/participant/quarter_win?poolId=${poolId}`)
+        .set(organizerHeaders)
+
+      expect(deleteResponse.status).toBe(200)
+      expect(deleteResponse.body.reset).toBe(true)
+
+      const response = await request(app)
+        .get(`/api/setup/notifications/templates?poolId=${poolId}`)
+        .set(organizerHeaders)
+
+      const participantQuarterTemplate = response.body.templates.find(
+        (template: { recipientScope: string; notificationKind: string }) =>
+          template.recipientScope === 'participant' && template.notificationKind === 'quarter_win'
+      )
+
+      expect(participantQuarterTemplate).toMatchObject({
+        subjectTemplate: 'GLOBAL reset {{quarter}} in {{poolName}}',
+        poolId: null,
+        source: 'global'
+      })
     })
   })
 
@@ -1421,6 +1562,16 @@ describe('Football Pool API', () => {
         .put('/api/setup/notifications/templates/participant/quarter_win')
         .set(organizerHeaders)
         .send({
+          subjectTemplate: 'GLOBAL quarter {{quarter}} winner in {{poolName}}',
+          bodyTemplate: 'Global winner {{winnerName}}',
+          markupFormat: 'plain_text'
+        })
+
+      await request(app)
+        .put('/api/setup/notifications/templates/participant/quarter_win')
+        .set(organizerHeaders)
+        .send({
+          poolId,
           subjectTemplate: 'Quarter {{quarter}} winner in {{poolName}}',
           bodyTemplate: '## Quarter {{quarter}}\n\n{{winnerName}} won **{{poolName}}**.\n\n{{scoreLine}}',
           markupFormat: 'markdown'

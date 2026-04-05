@@ -15,9 +15,12 @@ export type NotificationTemplateRecord = {
   subjectTemplate: string;
   bodyTemplate: string;
   markupFormat: NotificationMarkupFormat;
+  poolId: number | null;
+  source: 'global' | 'pool';
 };
 
 type NotificationTemplateRow = {
+  pool_id: number | null;
   recipient_scope: NotificationTemplateScope;
   notification_kind: NotificationTemplateKind;
   subject_template: string;
@@ -27,7 +30,7 @@ type NotificationTemplateRow = {
 
 export const DEFAULT_NOTIFICATION_TEMPLATES: Record<
   NotificationTemplateScope,
-  Record<NotificationTemplateKind, Omit<NotificationTemplateRecord, 'recipientScope' | 'notificationKind'>>
+  Record<NotificationTemplateKind, Omit<NotificationTemplateRecord, 'recipientScope' | 'notificationKind' | 'poolId' | 'source'>>
 > = {
   participant: {
     quarter_win: {
@@ -128,12 +131,14 @@ export const availableNotificationVariables: Record<NotificationTemplateKind, st
 
 const buildTemplateKey = (scope: NotificationTemplateScope, kind: NotificationTemplateKind): string => `${scope}:${kind}`;
 
-const toTemplateRecord = (row: NotificationTemplateRow): NotificationTemplateRecord => ({
+const toTemplateRecord = (row: NotificationTemplateRow, selectedPoolId: number | null = null): NotificationTemplateRecord => ({
   recipientScope: row.recipient_scope,
   notificationKind: row.notification_kind,
   subjectTemplate: row.subject_template,
   bodyTemplate: row.body_template,
-  markupFormat: row.markup_format === 'markdown' ? 'markdown' : 'plain_text'
+  markupFormat: row.markup_format === 'markdown' ? 'markdown' : 'plain_text',
+  poolId: row.pool_id != null ? Number(row.pool_id) : null,
+  source: row.pool_id != null && selectedPoolId != null && Number(row.pool_id) === selectedPoolId ? 'pool' : 'global'
 });
 
 const createDefaultTemplateRecord = (
@@ -142,31 +147,60 @@ const createDefaultTemplateRecord = (
 ): NotificationTemplateRecord => ({
   recipientScope,
   notificationKind,
-  ...DEFAULT_NOTIFICATION_TEMPLATES[recipientScope][notificationKind]
+  ...DEFAULT_NOTIFICATION_TEMPLATES[recipientScope][notificationKind],
+  poolId: null,
+  source: 'global'
 });
 
-export const listNotificationTemplates = async (client: PoolClient): Promise<NotificationTemplateRecord[]> => {
-  const result = await client.query<NotificationTemplateRow>(
-    `SELECT recipient_scope,
-            notification_kind,
-            subject_template,
-            body_template,
-            markup_format
-     FROM football_pool.notification_template`
-  );
+export const listNotificationTemplates = async (
+  client: PoolClient,
+  poolId: number | null = null
+): Promise<NotificationTemplateRecord[]> => {
+  const result =
+    poolId == null
+      ? await client.query<NotificationTemplateRow>(
+          `SELECT pool_id,
+                  recipient_scope,
+                  notification_kind,
+                  subject_template,
+                  body_template,
+                  markup_format
+           FROM football_pool.notification_template
+           WHERE pool_id IS NULL`
+        )
+      : await client.query<NotificationTemplateRow>(
+          `SELECT pool_id,
+                  recipient_scope,
+                  notification_kind,
+                  subject_template,
+                  body_template,
+                  markup_format
+           FROM football_pool.notification_template
+           WHERE pool_id IS NULL
+              OR pool_id = $1`,
+          [poolId]
+        );
 
-  const templateMap = new Map<string, NotificationTemplateRecord>();
+  const globalTemplateMap = new Map<string, NotificationTemplateRecord>();
+  const poolTemplateMap = new Map<string, NotificationTemplateRecord>();
 
   for (const row of result.rows) {
-    const record = toTemplateRecord(row);
-    templateMap.set(buildTemplateKey(record.recipientScope, record.notificationKind), record);
+    const record = toTemplateRecord(row, poolId);
+    const key = buildTemplateKey(record.recipientScope, record.notificationKind);
+
+    if (record.poolId != null && poolId != null && record.poolId === poolId) {
+      poolTemplateMap.set(key, record);
+    } else {
+      globalTemplateMap.set(key, { ...record, poolId: null, source: 'global' });
+    }
   }
 
   const records: NotificationTemplateRecord[] = [];
 
   for (const scope of notificationTemplateScopeValues) {
     for (const kind of notificationTemplateKindValues) {
-      records.push(templateMap.get(buildTemplateKey(scope, kind)) ?? createDefaultTemplateRecord(scope, kind));
+      const key = buildTemplateKey(scope, kind);
+      records.push(poolTemplateMap.get(key) ?? globalTemplateMap.get(key) ?? createDefaultTemplateRecord(scope, kind));
     }
   }
 
@@ -174,9 +208,10 @@ export const listNotificationTemplates = async (client: PoolClient): Promise<Not
 };
 
 export const getNotificationTemplateMap = async (
-  client: PoolClient
+  client: PoolClient,
+  poolId: number | null = null
 ): Promise<Map<string, NotificationTemplateRecord>> => {
-  const templates = await listNotificationTemplates(client);
+  const templates = await listNotificationTemplates(client, poolId);
   return new Map(templates.map((template) => [buildTemplateKey(template.recipientScope, template.notificationKind), template]));
 };
 
@@ -185,13 +220,58 @@ export const saveNotificationTemplate = async (
   recipientScope: NotificationTemplateScope,
   notificationKind: NotificationTemplateKind,
   input: {
+    poolId?: number | null;
     subjectTemplate: string;
     bodyTemplate: string;
     markupFormat: NotificationMarkupFormat;
   }
 ): Promise<NotificationTemplateRecord> => {
-  const result = await client.query<NotificationTemplateRow>(
+  const poolId = input.poolId != null ? Number(input.poolId) : null;
+
+  const updateResult =
+    poolId == null
+      ? await client.query<NotificationTemplateRow>(
+          `UPDATE football_pool.notification_template
+           SET subject_template = $3,
+               body_template = $4,
+               markup_format = $5,
+               updated_at = NOW()
+           WHERE recipient_scope = $1
+             AND notification_kind = $2
+             AND pool_id IS NULL
+           RETURNING pool_id,
+                     recipient_scope,
+                     notification_kind,
+                     subject_template,
+                     body_template,
+                     markup_format`,
+          [recipientScope, notificationKind, input.subjectTemplate, input.bodyTemplate, input.markupFormat]
+        )
+      : await client.query<NotificationTemplateRow>(
+          `UPDATE football_pool.notification_template
+           SET subject_template = $4,
+               body_template = $5,
+               markup_format = $6,
+               updated_at = NOW()
+           WHERE recipient_scope = $1
+             AND notification_kind = $2
+             AND pool_id = $3
+           RETURNING pool_id,
+                     recipient_scope,
+                     notification_kind,
+                     subject_template,
+                     body_template,
+                     markup_format`,
+          [recipientScope, notificationKind, poolId, input.subjectTemplate, input.bodyTemplate, input.markupFormat]
+        );
+
+  if ((updateResult.rowCount ?? 0) > 0) {
+    return toTemplateRecord(updateResult.rows[0], poolId);
+  }
+
+  const insertResult = await client.query<NotificationTemplateRow>(
     `INSERT INTO football_pool.notification_template (
+       pool_id,
        recipient_scope,
        notification_kind,
        subject_template,
@@ -199,22 +279,34 @@ export const saveNotificationTemplate = async (
        markup_format,
        updated_at
      )
-     VALUES ($1, $2, $3, $4, $5, NOW())
-     ON CONFLICT (recipient_scope, notification_kind)
-     DO UPDATE SET
-       subject_template = EXCLUDED.subject_template,
-       body_template = EXCLUDED.body_template,
-       markup_format = EXCLUDED.markup_format,
-       updated_at = NOW()
-     RETURNING recipient_scope,
+     VALUES ($1, $2, $3, $4, $5, $6, NOW())
+     RETURNING pool_id,
+               recipient_scope,
                notification_kind,
                subject_template,
                body_template,
                markup_format`,
-    [recipientScope, notificationKind, input.subjectTemplate, input.bodyTemplate, input.markupFormat]
+    [poolId, recipientScope, notificationKind, input.subjectTemplate, input.bodyTemplate, input.markupFormat]
   );
 
-  return toTemplateRecord(result.rows[0]);
+  return toTemplateRecord(insertResult.rows[0], poolId);
+};
+
+export const resetNotificationTemplateToGlobal = async (
+  client: PoolClient,
+  recipientScope: NotificationTemplateScope,
+  notificationKind: NotificationTemplateKind,
+  poolId: number
+): Promise<boolean> => {
+  const result = await client.query(
+    `DELETE FROM football_pool.notification_template
+     WHERE pool_id = $1
+       AND recipient_scope = $2
+       AND notification_kind = $3`,
+    [poolId, recipientScope, notificationKind]
+  );
+
+  return (result.rowCount ?? 0) > 0;
 };
 
 const normalizeTemplateValue = (value: unknown): string => {

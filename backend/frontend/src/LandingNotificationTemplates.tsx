@@ -24,11 +24,14 @@ type NotificationTemplateRecord = {
   subjectTemplate: string
   bodyTemplate: string
   markupFormat: MarkupFormat
+  poolId: number | null
+  source: 'global' | 'pool'
 }
 
 type TemplatesResponse = {
   templates: NotificationTemplateRecord[]
   availableVariables: Record<NotificationKind, string[]>
+  selectedPoolId: number | null
 }
 
 type Props = {
@@ -51,6 +54,12 @@ const kindLabel: Record<NotificationKind, string> = {
   quarter_win: 'End of quarter',
   game_total: 'End of game',
   lead_warning: 'Score change / live lead'
+}
+
+const formatPoolSelectionLabel = (pool: LandingPool): string => {
+  const teamLabel = pool.team_name ?? pool.primary_team ?? `Pool ${pool.id}`
+  const poolLabel = pool.pool_name ?? `Pool ${pool.id}`
+  return pool.season ? `${teamLabel} — ${poolLabel} • ${pool.season}` : `${teamLabel} — ${poolLabel}`
 }
 
 const sampleValues: Record<NotificationKind, Record<string, string | number>> = {
@@ -156,6 +165,7 @@ export function LandingNotificationTemplates({ pools, token, authHeaders, apiBas
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [templates, setTemplates] = useState<NotificationTemplateRecord[]>([])
+  const [selectedPoolId, setSelectedPoolId] = useState<number | null>(null)
   const [availableVariables, setAvailableVariables] = useState<Record<NotificationKind, string[]>>({
     quarter_win: [],
     game_total: [],
@@ -189,7 +199,7 @@ export function LandingNotificationTemplates({ pools, token, authHeaders, apiBas
     })
   }
 
-  const loadTemplates = async (preferredKey?: string) => {
+  const loadTemplates = async (preferredKey?: string, poolId: number | null = selectedPoolId) => {
     if (!token) {
       setTemplates([])
       setError('Sign in as an organizer to manage outgoing email templates.')
@@ -200,7 +210,8 @@ export function LandingNotificationTemplates({ pools, token, authHeaders, apiBas
     setError(null)
 
     try {
-      const result = await request<TemplatesResponse>('/api/setup/notifications/templates', {
+      const query = poolId != null ? `?poolId=${encodeURIComponent(String(poolId))}` : ''
+      const result = await request<TemplatesResponse>(`/api/setup/notifications/templates${query}`, {
         headers: authHeaders
       })
 
@@ -223,9 +234,9 @@ export function LandingNotificationTemplates({ pools, token, authHeaders, apiBas
   }
 
   useEffect(() => {
-    void loadTemplates(selectedKey)
+    void loadTemplates(selectedKey, selectedPoolId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token])
+  }, [token, selectedPoolId])
 
   const selectedTemplate = useMemo(
     () => templates.find((template) => buildTemplateKey(template) === selectedKey) ?? null,
@@ -238,6 +249,11 @@ export function LandingNotificationTemplates({ pools, token, authHeaders, apiBas
     return pools.length === 1 ? pools[0] : null
   }, [pools])
 
+  const selectedPoolOption = useMemo(
+    () => pools.find((pool) => pool.id === selectedPoolId) ?? null,
+    [pools, selectedPoolId]
+  )
+
   const heroStyle = useMemo(
     () => ({
       backgroundColor: heroPool?.primary_color ?? DEFAULT_HERO_COLOR,
@@ -247,10 +263,20 @@ export function LandingNotificationTemplates({ pools, token, authHeaders, apiBas
   )
 
   const currentKind = selectedTemplate?.notificationKind ?? 'quarter_win'
-  const previewValues = sampleValues[currentKind]
+  const previewValues = {
+    ...sampleValues[currentKind],
+    poolName: selectedPoolOption?.pool_name ?? sampleValues[currentKind].poolName
+  }
   const previewSubject = renderTemplate(form.subjectTemplate, previewValues)
   const previewBody = renderTemplate(form.bodyTemplate, previewValues)
   const previewHtml = renderMarkupPreview(previewBody, form.markupFormat)
+  const selectedContextLabel = selectedPoolOption ? formatPoolSelectionLabel(selectedPoolOption) : 'GLOBAL defaults'
+  const sourceNotice =
+    selectedPoolId == null
+      ? 'You are editing the GLOBAL fallback used when a pool does not have its own template.'
+      : selectedTemplate?.source === 'pool'
+        ? `This message is currently overridden for ${selectedContextLabel}.`
+        : `This pool is currently inheriting the GLOBAL fallback. Saving now will create a pool-specific override for ${selectedContextLabel}.`
 
   const insertVariable = (variableName: string) => {
     const tokenValue = `{{${variableName}}}`
@@ -296,7 +322,10 @@ export function LandingNotificationTemplates({ pools, token, authHeaders, apiBas
             'Content-Type': 'application/json',
             ...authHeaders
           },
-          body: JSON.stringify(form)
+          body: JSON.stringify({
+            ...form,
+            poolId: selectedPoolId ?? undefined
+          })
         }
       )
 
@@ -304,9 +333,40 @@ export function LandingNotificationTemplates({ pools, token, authHeaders, apiBas
       setTemplates((current) => current.map((template) => (buildTemplateKey(template) === selectedKey ? nextTemplate : template)))
       setSelectedKey(buildTemplateKey(nextTemplate))
       loadTemplateIntoForm(nextTemplate)
-      setNotice('Notification template saved.')
+      setNotice(selectedPoolId != null ? 'Pool-specific notification template saved.' : 'GLOBAL notification template saved.')
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Failed to save notification template')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleResetToGlobal = async () => {
+    if (!selectedTemplate || selectedPoolId == null) {
+      return
+    }
+
+    if (!window.confirm(`Reset this template for ${selectedContextLabel} back to the GLOBAL default?`)) {
+      return
+    }
+
+    setSaving(true)
+    setError(null)
+    setNotice(null)
+
+    try {
+      await request<{ reset: boolean }>(
+        `/api/setup/notifications/templates/${selectedTemplate.recipientScope}/${selectedTemplate.notificationKind}?poolId=${encodeURIComponent(String(selectedPoolId))}`,
+        {
+          method: 'DELETE',
+          headers: authHeaders
+        }
+      )
+
+      await loadTemplates(selectedKey, selectedPoolId)
+      setNotice('Pool template reset to GLOBAL fallback.')
+    } catch (resetError) {
+      setError(resetError instanceof Error ? resetError.message : 'Failed to reset template to GLOBAL fallback')
     } finally {
       setSaving(false)
     }
@@ -338,6 +398,33 @@ export function LandingNotificationTemplates({ pools, token, authHeaders, apiBas
       {error ? <div className="error-banner">{error}</div> : null}
       {notice ? <div className="success-banner">{notice}</div> : null}
 
+      {token ? (
+        <article className="panel">
+          <label className="field-block" style={{ maxWidth: '28rem' }}>
+            <span>Template scope</span>
+            <select
+              value={selectedPoolId ?? ''}
+              onChange={(event) => {
+                const nextValue = event.target.value ? Number(event.target.value) : null
+                setSelectedPoolId(nextValue)
+                setNotice(null)
+              }}
+              disabled={loading || saving}
+            >
+              <option value="">GLOBAL (default fallback)</option>
+              {pools.map((pool) => (
+                <option key={pool.id} value={pool.id}>
+                  {formatPoolSelectionLabel(pool)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="small" style={{ marginTop: '0.5rem' }}>
+            {sourceNotice}
+          </p>
+        </article>
+      ) : null}
+
       <div style={{ display: 'grid', gap: '1rem', gridTemplateColumns: 'minmax(260px, 320px) minmax(0, 1fr)' }}>
         <article className="panel">
           <div className="panel-header-row">
@@ -360,6 +447,9 @@ export function LandingNotificationTemplates({ pools, token, authHeaders, apiBas
                 >
                   <strong>{scopeLabel[template.recipientScope]}</strong>
                   <div>{kindLabel[template.notificationKind]}</div>
+                  <div className="small" style={{ marginTop: '0.25rem', opacity: 0.85 }}>
+                    {template.source === 'pool' ? 'Pool-specific override' : selectedPoolId != null ? 'Using GLOBAL fallback' : 'GLOBAL default'}
+                  </div>
                 </button>
               )
             })}
@@ -374,6 +464,9 @@ export function LandingNotificationTemplates({ pools, token, authHeaders, apiBas
                   {selectedTemplate ? `${scopeLabel[selectedTemplate.recipientScope]} · ${kindLabel[selectedTemplate.notificationKind]}` : 'Edit template'}
                 </h2>
                 <p className="small">Click a variable to insert it into the last focused field.</p>
+                <p className="small" style={{ marginTop: '0.35rem' }}>
+                  <strong>Current target:</strong> {selectedContextLabel}
+                </p>
               </div>
             </div>
 
@@ -423,6 +516,17 @@ export function LandingNotificationTemplates({ pools, token, authHeaders, apiBas
                 <button type="submit" className="primary" disabled={loading || saving || !selectedTemplate}>
                   {saving ? 'Saving...' : 'Save template'}
                 </button>
+                {selectedPoolId != null ? (
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={loading || saving || selectedTemplate?.source !== 'pool'}
+                    onClick={() => void handleResetToGlobal()}
+                    title={selectedTemplate?.source === 'pool' ? 'Remove this pool override and fall back to GLOBAL' : 'Already using GLOBAL fallback'}
+                  >
+                    Reset to GLOBAL
+                  </button>
+                ) : null}
                 <button type="button" className="secondary" disabled={loading || saving} onClick={() => loadTemplateIntoForm(selectedTemplate)}>
                   Reset changes
                 </button>

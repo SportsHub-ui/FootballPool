@@ -22,6 +22,7 @@ import {
   notificationTemplateKindValues,
   notificationTemplateScopeValues,
   listNotificationTemplates,
+  resetNotificationTemplateToGlobal,
   saveNotificationTemplate
 } from '../services/notificationTemplates';
 
@@ -188,7 +189,16 @@ const notificationTemplateParams = z.object({
   notificationKind: z.enum(notificationTemplateKindValues)
 });
 
+const notificationTemplateQuerySchema = z.object({
+  poolId: z.coerce.number().int().positive().optional()
+});
+
+const deleteNotificationTemplateQuerySchema = z.object({
+  poolId: z.coerce.number().int().positive()
+});
+
 const updateNotificationTemplateSchema = z.object({
+  poolId: z.coerce.number().int().positive().optional(),
   subjectTemplate: z.string().trim().min(1).max(255),
   bodyTemplate: z.string().trim().min(1),
   markupFormat: z.enum(notificationMarkupFormatValues).default('plain_text')
@@ -335,15 +345,24 @@ const hasDuplicateTeamAssignments = (assignments: Array<{ teamId: number; jersey
 
 const hasDuplicateIds = (ids: number[]): boolean => new Set(ids).size !== ids.length;
 
-setupRouter.get('/notifications/templates', async (_req, res) => {
+setupRouter.get('/notifications/templates', async (req, res) => {
+  const parsedQuery = notificationTemplateQuerySchema.safeParse(req.query);
+
+  if (!parsedQuery.success) {
+    res.status(400).json({ error: parsedQuery.error.issues });
+    return;
+  }
+
+  const selectedPoolId = parsedQuery.data.poolId ?? null;
   const client = await db.connect();
 
   try {
     await ensureNotificationSupport(client);
-    const templates = await listNotificationTemplates(client);
+    const templates = await listNotificationTemplates(client, selectedPoolId);
     res.status(200).json({
       templates,
-      availableVariables: availableNotificationVariables
+      availableVariables: availableNotificationVariables,
+      selectedPoolId
     });
   } catch (error) {
     res.status(500).json({
@@ -377,13 +396,57 @@ setupRouter.put('/notifications/templates/:recipientScope/:notificationKind', as
       client,
       parsedParams.data.recipientScope,
       parsedParams.data.notificationKind,
-      parsedBody.data
+      {
+        poolId: parsedBody.data.poolId ?? null,
+        subjectTemplate: parsedBody.data.subjectTemplate,
+        bodyTemplate: parsedBody.data.bodyTemplate,
+        markupFormat: parsedBody.data.markupFormat
+      }
     );
 
     res.status(200).json({ template });
   } catch (error) {
     res.status(500).json({
       error: 'Failed to save notification template',
+      detail: error instanceof Error ? error.message : 'Unknown error'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+setupRouter.delete('/notifications/templates/:recipientScope/:notificationKind', async (req, res) => {
+  const parsedParams = notificationTemplateParams.safeParse(req.params);
+  const parsedQuery = deleteNotificationTemplateQuerySchema.safeParse(req.query);
+
+  if (!parsedParams.success) {
+    res.status(400).json({ error: parsedParams.error.issues });
+    return;
+  }
+
+  if (!parsedQuery.success) {
+    res.status(400).json({ error: parsedQuery.error.issues });
+    return;
+  }
+
+  const client = await db.connect();
+
+  try {
+    await ensureNotificationSupport(client);
+    const reset = await resetNotificationTemplateToGlobal(
+      client,
+      parsedParams.data.recipientScope,
+      parsedParams.data.notificationKind,
+      parsedQuery.data.poolId
+    );
+
+    res.status(200).json({
+      reset,
+      poolId: parsedQuery.data.poolId
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to reset notification template',
       detail: error instanceof Error ? error.message : 'Unknown error'
     });
   } finally {

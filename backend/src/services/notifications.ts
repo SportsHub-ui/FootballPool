@@ -221,9 +221,41 @@ export const ensureNotificationSupport = async (client: PoolClient): Promise<voi
           subject_template TEXT NOT NULL,
           body_template TEXT NOT NULL,
           markup_format VARCHAR(20) NOT NULL DEFAULT 'plain_text',
-          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          PRIMARY KEY (recipient_scope, notification_kind)
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
+      `);
+
+      await client.query(`
+        ALTER TABLE football_pool.notification_template
+        ADD COLUMN IF NOT EXISTS pool_id INTEGER NULL REFERENCES football_pool.pool(id) ON DELETE CASCADE
+      `);
+
+      await client.query(`
+        DO $$
+        BEGIN
+          IF EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conname = 'notification_template_pkey'
+              AND conrelid = 'football_pool.notification_template'::regclass
+          ) THEN
+            ALTER TABLE football_pool.notification_template DROP CONSTRAINT notification_template_pkey;
+          END IF;
+        EXCEPTION
+          WHEN undefined_table THEN NULL;
+        END $$;
+      `);
+
+      await client.query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_template_global_unique
+          ON football_pool.notification_template (recipient_scope, notification_kind)
+          WHERE pool_id IS NULL
+      `);
+
+      await client.query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_template_pool_unique
+          ON football_pool.notification_template (pool_id, recipient_scope, notification_kind)
+          WHERE pool_id IS NOT NULL
       `);
 
       for (const [recipientScope, templatesByKind] of Object.entries(DEFAULT_NOTIFICATION_TEMPLATES) as Array<
@@ -234,6 +266,7 @@ export const ensureNotificationSupport = async (client: PoolClient): Promise<voi
         >) {
           await client.query(
             `INSERT INTO football_pool.notification_template (
+               pool_id,
                recipient_scope,
                notification_kind,
                subject_template,
@@ -241,8 +274,20 @@ export const ensureNotificationSupport = async (client: PoolClient): Promise<voi
                markup_format,
                updated_at
              )
-             VALUES ($1, $2, $3, $4, $5, NOW())
-             ON CONFLICT (recipient_scope, notification_kind) DO NOTHING`,
+             SELECT NULL,
+                    $1::varchar(20),
+                    $2::varchar(30),
+                    $3::text,
+                    $4::text,
+                    $5::varchar(20),
+                    NOW()
+             WHERE NOT EXISTS (
+               SELECT 1
+               FROM football_pool.notification_template
+               WHERE pool_id IS NULL
+                 AND recipient_scope = $1::varchar(20)
+                 AND notification_kind = $2::varchar(30)
+             )`,
             [recipientScope, notificationKind, template.subjectTemplate, template.bodyTemplate, template.markupFormat]
           );
         }
@@ -519,7 +564,7 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
 
   const poolRecord = await loadPoolNotificationRecord(client, context.poolId);
   const gameRecord = await loadGameLabel(client, context.gameId);
-  const templateMap = await getNotificationTemplateMap(client);
+  const templateMap = await getNotificationTemplateMap(client, context.poolId);
 
   if (!poolRecord) {
     return;
