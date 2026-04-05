@@ -418,6 +418,278 @@ describe('Football Pool API', () => {
     })
   })
 
+  describe('Progressive simulation modes', () => {
+    it('should start a by-game simulation and advance to the next game', async () => {
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({ teamName: `Sim Team ${Date.now()}` })
+
+      const teamId = Number(teamResponse.body.id)
+
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `Sim Pool ${Date.now()}`,
+          teamId,
+          season: 2025,
+          primaryTeam: 'Green Bay Packers',
+          squareCost: 20,
+          q1Payout: 100,
+          q2Payout: 100,
+          q3Payout: 100,
+          q4Payout: 200
+        })
+
+      const poolId = Number(poolResponse.body.id)
+
+      await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Sim',
+          lastName: `User${Date.now()}`,
+          email: `sim-${Date.now()}@example.com`,
+          phone: '5551000000',
+          isPlayer: true,
+          playerTeams: [{ teamId, jerseyNum: 12 }]
+        })
+
+      const firstGame = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: 1,
+          opponent: 'Chicago Bears',
+          gameDate: '2025-09-07',
+          isSimulation: true
+        })
+
+      const secondGame = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: 2,
+          opponent: 'Detroit Lions',
+          gameDate: '2025-09-14',
+          isSimulation: true
+        })
+
+      const gameOneId = Number(firstGame.body.game.id)
+      const gameTwoId = Number(secondGame.body.game.id)
+
+      const startResponse = await request(app)
+        .post(`/api/setup/pools/${poolId}/simulation`)
+        .set(organizerHeaders)
+        .send({ mode: 'by_game' })
+
+      expect(startResponse.status).toBe(201)
+      expect(startResponse.body.result.mode).toBe('by_game')
+
+      const initialStatus = await request(app)
+        .get(`/api/setup/pools/${poolId}/simulation`)
+        .set(organizerHeaders)
+
+      expect(initialStatus.status).toBe(200)
+      expect(initialStatus.body.status.currentGameId).toBe(gameOneId)
+      expect(initialStatus.body.status.progressAction).toBe('complete_game')
+
+      const advanceResponse = await request(app)
+        .post(`/api/setup/pools/${poolId}/simulation/advance`)
+        .set(organizerHeaders)
+        .send({ source: 'mock' })
+
+      expect(advanceResponse.status).toBe(200)
+      expect(advanceResponse.body.status.currentGameId).toBe(gameTwoId)
+
+      const gamesResponse = await request(app)
+        .get(`/api/games?poolId=${poolId}`)
+        .set(organizerHeaders)
+
+      const completedFirstGame = gamesResponse.body.find((game: { id: number }) => game.id === gameOneId)
+      const preparedSecondGame = gamesResponse.body.find((game: { id: number }) => game.id === gameTwoId)
+
+      expect(completedFirstGame.q4_primary_score).not.toBeNull()
+      expect(completedFirstGame.q4_opponent_score).not.toBeNull()
+      expect(preparedSecondGame.row_numbers).toBeTruthy()
+      expect(preparedSecondGame.col_numbers).toBeTruthy()
+    })
+
+    it('should fall back to mock scores when ESPN cannot match the game during simulation advance', async () => {
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({ teamName: `Fallback Sim Team ${Date.now()}` })
+
+      const teamId = Number(teamResponse.body.id)
+
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `Fallback Sim Pool ${Date.now()}`,
+          teamId,
+          season: 2025,
+          primaryTeam: 'Green Bay Packers',
+          squareCost: 20,
+          q1Payout: 100,
+          q2Payout: 100,
+          q3Payout: 100,
+          q4Payout: 200
+        })
+
+      const poolId = Number(poolResponse.body.id)
+
+      await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Fallback',
+          lastName: `User${Date.now()}`,
+          email: `fallback-${Date.now()}@example.com`,
+          phone: '5552100000',
+          isPlayer: true,
+          playerTeams: [{ teamId, jerseyNum: 45 }]
+        })
+
+      await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: 1,
+          opponent: 'Seattle Seahawks',
+          gameDate: '2025-09-14',
+          isSimulation: true
+        })
+
+      await request(app)
+        .post(`/api/setup/pools/${poolId}/simulation`)
+        .set(organizerHeaders)
+        .send({ mode: 'by_quarter' })
+
+      const advanceResponse = await request(app)
+        .post(`/api/setup/pools/${poolId}/simulation/advance`)
+        .set(organizerHeaders)
+        .send({ source: 'espn' })
+
+      expect(advanceResponse.status).toBe(200)
+      expect(advanceResponse.body.message).toContain('mock scores were used instead')
+      expect(advanceResponse.body.completedQuarter).toBe(1)
+    })
+
+    it('should advance a by-quarter simulation one quarter at a time', async () => {
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({ teamName: `Quarter Sim Team ${Date.now()}` })
+
+      const teamId = Number(teamResponse.body.id)
+
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `Quarter Sim Pool ${Date.now()}`,
+          teamId,
+          season: 2025,
+          primaryTeam: 'Green Bay Packers',
+          squareCost: 20,
+          q1Payout: 100,
+          q2Payout: 100,
+          q3Payout: 100,
+          q4Payout: 200
+        })
+
+      const poolId = Number(poolResponse.body.id)
+
+      await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Quarter',
+          lastName: `User${Date.now()}`,
+          email: `quarter-${Date.now()}@example.com`,
+          phone: '5552000000',
+          isPlayer: true,
+          playerTeams: [{ teamId, jerseyNum: 34 }]
+        })
+
+      const firstGame = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: 1,
+          opponent: 'Minnesota Vikings',
+          gameDate: '2025-09-07',
+          isSimulation: true
+        })
+
+      const secondGame = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: 2,
+          opponent: 'Seattle Seahawks',
+          gameDate: '2025-09-14',
+          isSimulation: true
+        })
+
+      const gameOneId = Number(firstGame.body.game.id)
+      const gameTwoId = Number(secondGame.body.game.id)
+
+      const startResponse = await request(app)
+        .post(`/api/setup/pools/${poolId}/simulation`)
+        .set(organizerHeaders)
+        .send({ mode: 'by_quarter' })
+
+      expect(startResponse.status).toBe(201)
+      expect(startResponse.body.result.mode).toBe('by_quarter')
+
+      const quarterOne = await request(app)
+        .post(`/api/setup/pools/${poolId}/simulation/advance`)
+        .set(organizerHeaders)
+        .send({ source: 'mock' })
+
+      expect(quarterOne.status).toBe(200)
+      expect(quarterOne.body.status.currentGameId).toBe(gameOneId)
+      expect(quarterOne.body.status.nextQuarter).toBe(2)
+
+      const quarterTwo = await request(app)
+        .post(`/api/setup/pools/${poolId}/simulation/advance`)
+        .set(organizerHeaders)
+        .send({ source: 'mock' })
+      const quarterThree = await request(app)
+        .post(`/api/setup/pools/${poolId}/simulation/advance`)
+        .set(organizerHeaders)
+        .send({ source: 'mock' })
+      const quarterFour = await request(app)
+        .post(`/api/setup/pools/${poolId}/simulation/advance`)
+        .set(organizerHeaders)
+        .send({ source: 'mock' })
+
+      expect(quarterTwo.status).toBe(200)
+      expect(quarterThree.status).toBe(200)
+      expect(quarterFour.status).toBe(200)
+      expect(quarterFour.body.status.currentGameId).toBe(gameTwoId)
+
+      const gamesResponse = await request(app)
+        .get(`/api/games?poolId=${poolId}`)
+        .set(organizerHeaders)
+
+      const completedFirstGame = gamesResponse.body.find((game: { id: number }) => game.id === gameOneId)
+      expect(completedFirstGame.q1_primary_score).not.toBeNull()
+      expect(completedFirstGame.q2_primary_score).not.toBeNull()
+      expect(completedFirstGame.q3_primary_score).not.toBeNull()
+      expect(completedFirstGame.q4_primary_score).not.toBeNull()
+    })
+  })
+
   describe('Board weekly and season-to-date winnings', () => {
     let poolId: number
     let weekOneGameId: number

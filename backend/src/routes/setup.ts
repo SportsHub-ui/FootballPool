@@ -8,6 +8,7 @@ import { db } from '../config/db';
 import { env } from '../config/env';
 import { requireRole } from '../middleware/auth';
 import {
+  advancePoolSeasonSimulation,
   cleanupPoolSeasonSimulation,
   createPoolSeasonSimulation,
   getPoolSimulationStatus
@@ -127,6 +128,14 @@ const updatePlayerSchema = z.object({
 
 const poolIdParams = z.object({
   poolId: z.coerce.number().int().positive()
+});
+
+const createSimulationSchema = z.object({
+  mode: z.enum(['full_year', 'by_game', 'by_quarter']).default('full_year')
+});
+
+const advanceSimulationSchema = z.object({
+  source: z.enum(['espn', 'mock']).optional()
 });
 
 const userIdParams = z.object({
@@ -845,9 +854,15 @@ setupRouter.get('/pools/:poolId/simulation', async (req, res) => {
 
 setupRouter.post('/pools/:poolId/simulation', async (req, res) => {
   const parsedParams = poolIdParams.safeParse(req.params);
+  const parsedBody = createSimulationSchema.safeParse(req.body ?? {});
 
   if (!parsedParams.success) {
     res.status(400).json({ error: parsedParams.error.issues });
+    return;
+  }
+
+  if (!parsedBody.success) {
+    res.status(400).json({ error: parsedBody.error.issues });
     return;
   }
 
@@ -855,11 +870,25 @@ setupRouter.post('/pools/:poolId/simulation', async (req, res) => {
 
   try {
     await client.query('BEGIN');
-    const result = await createPoolSeasonSimulation(client, parsedParams.data.poolId);
+    const result = await createPoolSeasonSimulation(
+      client,
+      parsedParams.data.poolId,
+      parsedBody.data.mode
+    );
     await client.query('COMMIT');
 
+    const modeLabel =
+      result.mode === 'full_year'
+        ? 'Full Year'
+        : result.mode === 'by_game'
+          ? 'By Game'
+          : 'By Quarter';
+
     res.status(201).json({
-      message: `Simulation complete for ${result.teamName} (${result.season}). ${result.simulatedGames} games simulated and ${result.assignedSquares} squares assigned.`,
+      message:
+        result.mode === 'full_year'
+          ? `Simulation complete for ${result.teamName} (${result.season}). ${result.simulatedGames} games simulated and ${result.assignedSquares} squares assigned.`
+          : `Simulation started for ${result.teamName} (${result.season}) in ${modeLabel} mode. ${result.assignedSquares} squares assigned.`,
       result
     });
   } catch (error) {
@@ -870,13 +899,90 @@ setupRouter.post('/pools/:poolId/simulation', async (req, res) => {
       return;
     }
 
-    if (error instanceof Error && /disabled in production/i.test(error.message)) {
+    if (error instanceof Error && /disabled by configuration/i.test(error.message)) {
       res.status(403).json({ error: error.message });
+      return;
+    }
+
+    if (error instanceof Error && /not ready for simulation/i.test(error.message)) {
+      res.status(409).json({ error: error.message });
       return;
     }
 
     res.status(500).json({
       error: 'Failed to create simulation',
+      detail: error instanceof Error ? error.message : 'Unknown error'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+setupRouter.post('/pools/:poolId/simulation/advance', async (req, res) => {
+  const parsedParams = poolIdParams.safeParse(req.params);
+  const parsedBody = advanceSimulationSchema.safeParse(req.body ?? {});
+
+  if (!parsedParams.success) {
+    res.status(400).json({ error: parsedParams.error.issues });
+    return;
+  }
+
+  if (!parsedBody.success) {
+    res.status(400).json({ error: parsedBody.error.issues });
+    return;
+  }
+
+  const client = await db.connect();
+  const requestedSource = parsedBody.data.source ?? 'espn';
+
+  try {
+    await client.query('BEGIN');
+    const result = await advancePoolSeasonSimulation(client, parsedParams.data.poolId, requestedSource);
+    await client.query('COMMIT');
+
+    res.status(200).json(result);
+  } catch (error) {
+    await client.query('ROLLBACK');
+
+    const shouldFallbackToMock =
+      requestedSource === 'espn' &&
+      error instanceof Error &&
+      /(No matching ESPN game found|Failed to fetch ESPN|has not posted)/i.test(error.message);
+
+    if (shouldFallbackToMock) {
+      try {
+        await client.query('BEGIN');
+        const fallbackResult = await advancePoolSeasonSimulation(client, parsedParams.data.poolId, 'mock');
+        await client.query('COMMIT');
+
+        res.status(200).json({
+          ...fallbackResult,
+          message: `${fallbackResult.message} ESPN scores were unavailable, so mock scores were used instead.`
+        });
+        return;
+      } catch (fallbackError) {
+        await client.query('ROLLBACK');
+        error = fallbackError;
+      }
+    }
+
+    if (error instanceof Error && /no step-by-step simulation is active/i.test(error.message)) {
+      res.status(409).json({ error: error.message });
+      return;
+    }
+
+    if (error instanceof Error && /has not posted/i.test(error.message)) {
+      res.status(409).json({ error: error.message });
+      return;
+    }
+
+    if (error instanceof Error && /disabled by configuration/i.test(error.message)) {
+      res.status(403).json({ error: error.message });
+      return;
+    }
+
+    res.status(500).json({
+      error: 'Failed to advance simulation',
       detail: error instanceof Error ? error.message : 'Unknown error'
     });
   } finally {

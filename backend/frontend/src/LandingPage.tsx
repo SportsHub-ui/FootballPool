@@ -95,6 +95,25 @@ type LandingPlayerOption = {
   last_name: string | null
 }
 
+type SimulationMode = 'full_year' | 'by_game' | 'by_quarter'
+type SimulationProgressAction = 'complete_game' | 'complete_quarter'
+
+type SimulationControlStatus = {
+  enabledInEnvironment: boolean
+  hasSimulationData: boolean
+  hasAssignedSquares: boolean
+  userCount: number
+  playerCount: number
+  canSimulate: boolean
+  canCleanup: boolean
+  blockers: string[]
+  mode: SimulationMode | null
+  currentGameId: number | null
+  nextQuarter: number | null
+  progressAction: SimulationProgressAction | null
+  canAdvance: boolean
+}
+
 type TeamBrand = {
   key: string
   color: string
@@ -104,6 +123,8 @@ type TeamBrand = {
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 const DEFAULT_POOL_LOGO = '/football-pool.png'
+const SHOW_SIMULATION_CONTROLS =
+  (import.meta.env.VITE_ENABLE_SIMULATION_CONTROLS ?? 'true').toString().toLowerCase() === 'true'
 
 const NFL_TEAM_BRANDS: TeamBrand[] = [
   { key: 'cardinals', color: '#97233f', accent: '#000000', logo: 'https://a.espncdn.com/i/teamlogos/nfl/500/ari.png' },
@@ -264,11 +285,19 @@ const getApiErrorMessage = (payload: unknown, fallback: string): string => {
     }
   }
 
+  if (typeof data.detail === 'string' && data.detail.trim()) {
+    return data.detail
+  }
+
+  if (typeof data.message === 'string' && data.message.trim()) {
+    return data.message
+  }
+
   if (typeof data.error === 'string' && data.error.trim()) {
     return data.error
   }
 
-  return data.detail || data.message || fallback
+  return fallback
 }
 
 export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
@@ -278,6 +307,7 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [loginError, setLoginError] = useState<string | null>(null)
   const [pageError, setPageError] = useState<string | null>(null)
+  const [pageNotice, setPageNotice] = useState<string | null>(null)
   const [loginForm, setLoginForm] = useState({ email: '', password: '' })
   const [pools, setPools] = useState<LandingPool[]>([])
   const [selectedPoolId, setSelectedPoolId] = useState<number | null>(null)
@@ -285,6 +315,8 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null)
   const [board, setBoard] = useState<LandingBoard | null>(null)
   const [selectedSquare, setSelectedSquare] = useState<number | null>(null)
+  const [simulationStatus, setSimulationStatus] = useState<SimulationControlStatus | null>(null)
+  const simulationAdvanceSource: 'espn' = 'espn'
   const [assignForm, setAssignForm] = useState({
     participantId: '',
     playerId: '',
@@ -302,6 +334,18 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
     return headers
   }, [token])
 
+  const simulationHeaders = useMemo(() => {
+    if (!SHOW_SIMULATION_CONTROLS || token) {
+      return authHeaders
+    }
+
+    return {
+      ...authHeaders,
+      'x-user-id': 'dev-simulation-user',
+      'x-user-role': 'organizer'
+    }
+  }, [authHeaders, token])
+
   const loadBoard = async (poolId: number, gameId: number | null): Promise<void> => {
     const query = gameId ? `?gameId=${gameId}` : ''
     const response = await fetch(`${API_BASE}/api/landing/pools/${poolId}/board${query}`, {
@@ -314,6 +358,28 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
 
     const data = await response.json()
     setBoard(data.board ?? null)
+  }
+
+  const loadSimulationStatus = async (poolId: number): Promise<void> => {
+    if (!SHOW_SIMULATION_CONTROLS) {
+      setSimulationStatus(null)
+      return
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/api/setup/pools/${poolId}/simulation`, {
+        headers: simulationHeaders
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to load simulation status')
+      }
+
+      const data = await response.json()
+      setSimulationStatus(data.status ?? null)
+    } catch {
+      setSimulationStatus(null)
+    }
   }
 
   const loadPoolContext = async (poolId: number, preferredGameId?: number | null): Promise<void> => {
@@ -338,8 +404,9 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
       setSelectedPoolId(poolId)
       setSelectedGameId(nextGameId)
 
-      await loadBoard(poolId, nextGameId)
+      await Promise.all([loadBoard(poolId, nextGameId), loadSimulationStatus(poolId)])
     } catch (error) {
+      setSimulationStatus(null)
       setPageError(error instanceof Error ? error.message : 'Failed to load pool data')
       setGames([])
       setSelectedGameId(null)
@@ -373,8 +440,10 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
         setGames([])
         setSelectedGameId(null)
         setBoard(null)
+        setSimulationStatus(null)
       }
     } catch (error) {
+      setSimulationStatus(null)
       setPageError(error instanceof Error ? error.message : 'Failed to load landing page')
       setPools([])
       setSelectedPoolId(null)
@@ -442,6 +511,7 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
       setGames([])
       setSelectedGameId(null)
       setBoard(null)
+      setSimulationStatus(null)
       return
     }
 
@@ -602,6 +672,45 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
     }
   }
 
+  const handleSimulationAdvance = async (): Promise<void> => {
+    if (!selectedPoolId || !simulationStatus?.canAdvance) {
+      return
+    }
+
+    setBusy('advance-simulation')
+    setPageError(null)
+    setPageNotice(null)
+
+    try {
+      const response = await fetch(`${API_BASE}/api/setup/pools/${selectedPoolId}/simulation/advance`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...simulationHeaders
+        },
+        body: JSON.stringify({ source: simulationAdvanceSource })
+      })
+
+      const data = await response.json().catch(() => null)
+
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(data, 'Failed to advance simulation'))
+      }
+
+      setPageNotice(
+        typeof data?.message === 'string' && data.message.trim()
+          ? data.message
+          : `${simulationStatus.progressAction === 'complete_game' ? 'Game' : 'Quarter'} completed.`
+      )
+
+      await loadPoolContext(selectedPoolId, data?.status?.currentGameId ?? selectedGameId)
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'Failed to advance simulation')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const formatUserName = (user: LandingUserOption): string => {
     const fullName = `${user.first_name ?? ''} ${user.last_name ?? ''}`.trim()
     if (fullName) return fullName
@@ -691,6 +800,8 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   const nextGameId = currentGameIndex >= 0 && currentGameIndex < games.length - 1 ? games[currentGameIndex + 1]?.id ?? null : null
 
   const canManageSquares = Boolean(token && selectedPoolId && board)
+  const showSimulationAdvance = SHOW_SIMULATION_CONTROLS && Boolean(simulationStatus?.progressAction)
+  const simulationAdvanceLabel = simulationStatus?.progressAction === 'complete_game' ? 'Complete Game' : 'Complete Quarter'
 
   const heroTitle = selectedPool
     ? `${selectedPool.team_name ?? selectedPool.primary_team ?? 'Team'} • ${selectedPool.pool_name ?? 'Pool'}`
@@ -771,6 +882,11 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
       ) : null}
 
       {pageError ? <div className="error-banner landing-error-banner">{pageError}</div> : null}
+      {pageNotice ? (
+        <article className="panel">
+          <p className="small landing-readonly-note">{pageNotice}</p>
+        </article>
+      ) : null}
 
       {activePage === 'Squares' ? (
         <section className="landing-placeholder-card">
@@ -815,6 +931,23 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
                   : null}
               </select>
             </label>
+
+            {SHOW_SIMULATION_CONTROLS ? (
+              <div className="square-toolbar">
+                {showSimulationAdvance ? (
+                  <>
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={() => void handleSimulationAdvance()}
+                      disabled={busy !== null || !(simulationStatus?.canAdvance ?? false)}
+                    >
+                      {busy === 'advance-simulation' ? 'Completing...' : simulationAdvanceLabel}
+                    </button>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
 
           </div>
 

@@ -50,7 +50,8 @@ gamesRouter.post('/', async (req, res) => {
         `INSERT INTO football_pool.game 
          (id, pool_id, week_num, opponent, game_dt, is_simulation)
          VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING id, pool_id, week_num, opponent, game_dt, is_simulation, 
+         RETURNING id, pool_id, week_num, opponent, game_dt, is_simulation,
+                   row_numbers, col_numbers,
                    q1_primary_score, q1_opponent_score, q2_primary_score, q2_opponent_score,
                    q3_primary_score, q3_opponent_score, q4_primary_score, q4_opponent_score`,
         [gameId, input.poolId, input.weekNum ?? null, input.opponent, input.gameDate, input.isSimulation]
@@ -120,6 +121,7 @@ gamesRouter.patch('/:gameId', async (req, res) => {
              is_simulation = $6
          WHERE id = $1
          RETURNING id, pool_id, week_num, opponent, game_dt, is_simulation,
+                   row_numbers, col_numbers,
                    q1_primary_score, q1_opponent_score, q2_primary_score, q2_opponent_score,
                    q3_primary_score, q3_opponent_score, q4_primary_score, q4_opponent_score`,
         [gameId, input.poolId, input.weekNum ?? null, input.opponent, input.gameDate, input.isSimulation]
@@ -235,6 +237,7 @@ gamesRouter.get('/', async (req, res) => {
     try {
       const result = await client.query(
         `SELECT id, pool_id, week_num, opponent, game_dt, is_simulation,
+                row_numbers, col_numbers,
                 q1_primary_score, q1_opponent_score, q2_primary_score, q2_opponent_score,
                 q3_primary_score, q3_opponent_score, q4_primary_score, q4_opponent_score
          FROM football_pool.game
@@ -266,6 +269,7 @@ gamesRouter.get('/:gameId', async (req, res) => {
     try {
       const result = await client.query(
         `SELECT id, pool_id, week_num, opponent, game_dt, is_simulation,
+                row_numbers, col_numbers,
                 q1_primary_score, q1_opponent_score, q2_primary_score, q2_opponent_score,
                 q3_primary_score, q3_opponent_score, q4_primary_score, q4_opponent_score
          FROM football_pool.game

@@ -49,6 +49,9 @@ type PoolRecord = {
   team_name: string | null
 }
 
+type SimulationMode = 'full_year' | 'by_game' | 'by_quarter'
+type SimulationProgressAction = 'complete_game' | 'complete_quarter'
+
 type SimulationControlStatus = {
   enabledInEnvironment: boolean
   hasSimulationData: boolean
@@ -58,6 +61,11 @@ type SimulationControlStatus = {
   canSimulate: boolean
   canCleanup: boolean
   blockers: string[]
+  mode: SimulationMode | null
+  currentGameId: number | null
+  nextQuarter: number | null
+  progressAction: SimulationProgressAction | null
+  canAdvance: boolean
 }
 
 type Props = {
@@ -127,6 +135,12 @@ const hasRecordedQuarter = (primaryScore: number | null, opponentScore: number |
 
 const formatPoolName = (pool: Pick<PoolRecord, 'id' | 'pool_name'>): string => pool.pool_name?.trim() || 'Unnamed Pool'
 
+const formatSimulationMode = (mode: SimulationMode | null | undefined): string => {
+  if (mode === 'by_game') return 'By Game'
+  if (mode === 'by_quarter') return 'By Quarter'
+  return 'Full Year'
+}
+
 export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onRequireSignIn }: Props) {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -137,7 +151,9 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   const [poolGames, setPoolGames] = useState<GameRecord[]>([])
   const [selectedPoolId, setSelectedPoolId] = useState<number | null>(null)
   const [simulationStatus, setSimulationStatus] = useState<SimulationControlStatus | null>(null)
-  const [simulationBusy, setSimulationBusy] = useState<'create-simulation' | 'cleanup-simulation' | null>(null)
+  const [simulationMode, setSimulationMode] = useState<SimulationMode>('full_year')
+  const simulationAdvanceSource: 'espn' = 'espn'
+  const [simulationBusy, setSimulationBusy] = useState<'create-simulation' | 'cleanup-simulation' | 'advance-simulation' | null>(null)
   const [isCreatingNew, setIsCreatingNew] = useState(false)
   const [isPoolListExpanded, setIsPoolListExpanded] = useState(true)
   const [poolListHeight, setPoolListHeight] = useState(POOL_LIST_DEFAULT_HEIGHT)
@@ -172,7 +188,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     const data = await response.json().catch(() => ({}))
 
     if (!response.ok) {
-      const reason = data?.error || data?.detail || data?.message || `Request failed with status ${response.status}`
+      const reason = data?.detail || data?.message || data?.error || `Request failed with status ${response.status}`
       throw new Error(reason)
     }
 
@@ -336,7 +352,12 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
             playerCount: 0,
             canSimulate: false,
             canCleanup: poolGames.some((game) => game.is_simulation),
-            blockers: [fetchError instanceof Error ? fetchError.message : 'Failed to load simulation status']
+            blockers: [fetchError instanceof Error ? fetchError.message : 'Failed to load simulation status'],
+            mode: null,
+            currentGameId: null,
+            nextQuarter: null,
+            progressAction: null,
+            canAdvance: false
           })
         }
       }
@@ -526,7 +547,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   }
 
   const hasSimulationData = simulationStatus?.hasSimulationData ?? poolGames.some((game) => game.is_simulation)
-  const simulationButtonLabel = hasSimulationData ? 'Cleanup' : 'Simulation'
+  const simulationButtonLabel = hasSimulationData ? 'Cleanup' : `Start ${formatSimulationMode(simulationMode)}`
   const simulationButtonDisabled = hasSimulationData
     ? !selectedPoolId || saving || simulationBusy !== null || !(simulationStatus?.canCleanup ?? hasSimulationData)
     : !selectedPoolId || saving || simulationBusy !== null || !(simulationStatus?.canSimulate ?? false)
@@ -535,9 +556,20 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     : hasSimulationData
       ? 'Remove the simulated season data for this pool.'
       : simulationStatus?.canSimulate
-        ? 'Create a full season simulation for this pool.'
+        ? simulationMode === 'full_year'
+          ? 'Create the full season simulation for this pool.'
+          : simulationMode === 'by_game'
+            ? 'Start a simulation that advances one game at a time.'
+            : 'Start a simulation that advances one quarter at a time.'
         : simulationStatus?.blockers.join(' ') || 'Simulation unavailable for this pool.'
   const showSimulationTooltip = simulationButtonDisabled && Boolean(simulationButtonTitle)
+  const simulationProgressNote = simulationStatus?.hasSimulationData
+    ? simulationStatus.mode
+      ? `Active simulation: ${formatSimulationMode(simulationStatus.mode)}.`
+      : null
+    : null
+  const showSimulationAdvance = Boolean(simulationStatus?.progressAction)
+  const simulationAdvanceLabel = simulationStatus?.progressAction === 'complete_game' ? 'Complete Game' : 'Complete Quarter'
 
   const handleSimulationAction = async (): Promise<void> => {
     if (!selectedPoolId || !simulationStatus) {
@@ -548,7 +580,11 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     const confirmed = window.confirm(
       isCleanup
         ? 'Remove the simulated season data for this pool and clear all simulated square assignments?'
-        : 'Create a full season simulation for this pool? This will assign all squares, generate games, row/col numbers, and scores.'
+        : simulationMode === 'full_year'
+          ? 'Create a full season simulation for this pool? This will assign all squares, generate games, row/col numbers, and scores.'
+          : simulationMode === 'by_game'
+            ? 'Start a By Game simulation for this pool? The first game will get row/col numbers now, then Complete Game on the Scores page will finish one game at a time.'
+            : 'Start a By Quarter simulation for this pool? The first game will get row/col numbers now, then Complete Quarter on the Scores page will progress one quarter at a time.'
     )
 
     if (!confirmed) {
@@ -562,7 +598,11 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     try {
       const result = await request<{ message?: string }>(`/api/setup/pools/${selectedPoolId}/simulation`, {
         method: isCleanup ? 'DELETE' : 'POST',
-        headers: simulationHeaders
+        headers: {
+          'Content-Type': 'application/json',
+          ...simulationHeaders
+        },
+        body: isCleanup ? undefined : JSON.stringify({ mode: simulationMode })
       })
 
       await loadPoolData(selectedPoolId)
@@ -578,6 +618,39 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
       }
     } catch (simulationError) {
       setError(simulationError instanceof Error ? simulationError.message : isCleanup ? 'Failed to clean up simulation' : 'Failed to create simulation')
+    } finally {
+      setSimulationBusy(null)
+    }
+  }
+
+  const handleSimulationAdvance = async (): Promise<void> => {
+    if (!selectedPoolId || !simulationStatus?.canAdvance) {
+      return
+    }
+
+    setSimulationBusy('advance-simulation')
+    setError(null)
+    setNotice(null)
+
+    try {
+      const result = await request<{ message?: string; status?: SimulationControlStatus }>(
+        `/api/setup/pools/${selectedPoolId}/simulation/advance`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...simulationHeaders
+          },
+          body: JSON.stringify({ source: simulationAdvanceSource })
+        }
+      )
+
+      await loadPoolData(selectedPoolId)
+      await loadPoolGames(selectedPoolId)
+      setSimulationStatus(result.status ?? null)
+      setNotice(result.message ?? `${simulationAdvanceLabel} complete.`)
+    } catch (simulationError) {
+      setError(simulationError instanceof Error ? simulationError.message : `Failed to ${simulationAdvanceLabel.toLowerCase()}`)
     } finally {
       setSimulationBusy(null)
     }
@@ -723,26 +796,50 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                 {saving ? 'Filling...' : 'Fill Schedule'}
               </button>
               {SHOW_SIMULATION_CONTROLS ? (
-                <span className="landing-hover-tooltip-wrap">
-                  <button
-                    type="button"
-                    className={hasSimulationData ? 'secondary' : 'primary'}
-                    onClick={() => void handleSimulationAction()}
-                    disabled={simulationButtonDisabled}
-                    aria-label={simulationButtonTitle}
-                  >
-                    {simulationBusy === 'create-simulation'
-                      ? 'Simulating...'
-                      : simulationBusy === 'cleanup-simulation'
-                        ? 'Cleaning up...'
-                        : simulationButtonLabel}
-                  </button>
-                  {showSimulationTooltip ? (
-                    <span className="landing-hover-tooltip" role="tooltip">
-                      {simulationButtonTitle}
-                    </span>
+                <>
+                  {!hasSimulationData ? (
+                    <select
+                      value={simulationMode}
+                      onChange={(event) => setSimulationMode(event.target.value as SimulationMode)}
+                      disabled={saving || simulationBusy !== null || !selectedPoolId}
+                      aria-label="Simulation mode"
+                    >
+                      <option value="full_year">Full Year</option>
+                      <option value="by_game">By Game</option>
+                      <option value="by_quarter">By Quarter</option>
+                    </select>
                   ) : null}
-                </span>
+                                    <span className="landing-hover-tooltip-wrap">
+                    <button
+                      type="button"
+                      className={hasSimulationData ? 'secondary' : 'primary'}
+                      onClick={() => void handleSimulationAction()}
+                      disabled={simulationButtonDisabled}
+                      aria-label={simulationButtonTitle}
+                    >
+                      {simulationBusy === 'create-simulation'
+                        ? 'Simulating...'
+                        : simulationBusy === 'cleanup-simulation'
+                          ? 'Cleaning up...'
+                          : simulationButtonLabel}
+                    </button>
+                    {showSimulationTooltip ? (
+                      <span className="landing-hover-tooltip" role="tooltip">
+                        {simulationButtonTitle}
+                      </span>
+                    ) : null}
+                  </span>
+                  {showSimulationAdvance ? (
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={() => void handleSimulationAdvance()}
+                      disabled={saving || simulationBusy !== null || !selectedPoolId || !(simulationStatus?.canAdvance ?? false)}
+                    >
+                      {simulationBusy === 'advance-simulation' ? 'Completing...' : simulationAdvanceLabel}
+                    </button>
+                  ) : null}
+                </>
               ) : null}
               <button type="button" className="primary" onClick={onSavePool} disabled={saving || simulationBusy !== null}>
                 {saving ? 'Saving...' : 'Save'}
@@ -762,7 +859,8 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                     ? 'Update the pool details below or use Fill Schedule to add only the missing weeks.'
                     : 'Enter the pool details below. Save the pool before using Fill Schedule.'}
                 </p>
-              </div>
+                {simulationProgressNote ? <p className="small landing-readonly-note">{simulationProgressNote}</p> : null}
+                              </div>
             </div>
           </div>
 

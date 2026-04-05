@@ -97,6 +97,25 @@ type IngestionSummary = {
   failed: number
 }
 
+type SimulationMode = 'full_year' | 'by_game' | 'by_quarter'
+type SimulationProgressAction = 'complete_game' | 'complete_quarter'
+
+type SimulationControlStatus = {
+  enabledInEnvironment: boolean
+  hasSimulationData: boolean
+  hasAssignedSquares: boolean
+  userCount: number
+  playerCount: number
+  canSimulate: boolean
+  canCleanup: boolean
+  blockers: string[]
+  mode: SimulationMode | null
+  currentGameId: number | null
+  nextQuarter: number | null
+  progressAction: SimulationProgressAction | null
+  canAdvance: boolean
+}
+
 type BoardSquare = {
   id: number
   square_num: number
@@ -128,6 +147,8 @@ type BoardGame = {
   id: number
   opponent: string
   game_dt: string
+  row_numbers?: number[] | null
+  col_numbers?: number[] | null
 }
 
 type TeamBrand = {
@@ -194,6 +215,12 @@ const resolveTeamBrand = (
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 const DEFAULT_BOARD_LOGO = '/football-pool.png'
+
+const formatSimulationMode = (mode: SimulationMode | null | undefined): string => {
+  if (mode === 'by_game') return 'By Game'
+  if (mode === 'by_quarter') return 'By Quarter'
+  return 'Full Year'
+}
 
 const normalizeLogoFile = (value: string): string => {
   if (!value) return ''
@@ -323,6 +350,7 @@ function App() {
   const [managedPoolId, setManagedPoolId] = useState<number | null>(null)
   const [managedGames, setManagedGames] = useState<BoardGame[]>([])
   const [managedGameId, setManagedGameId] = useState<number | null>(null)
+  const [managedSimulationStatus, setManagedSimulationStatus] = useState<SimulationControlStatus | null>(null)
   const [organizerBoard, setOrganizerBoard] = useState<PoolBoard | null>(null)
 
   const organizerHeaders = useMemo(
@@ -831,6 +859,47 @@ function App() {
     }
   }
 
+  const onAdvanceSimulation = async (): Promise<void> => {
+    if (!managedPoolId || !managedSimulationStatus?.progressAction) {
+      setError('Select a pool with an active By Game or By Quarter simulation first.')
+      return
+    }
+
+    setBusy('simulation-advance')
+    setError(null)
+
+    try {
+      const result = await request<{ message?: string; status?: SimulationControlStatus }>(
+        `/api/setup/pools/${managedPoolId}/simulation/advance`,
+        {
+          method: 'POST',
+          headers: organizerHeaders,
+          body: JSON.stringify({ source: ingestSource === 'mock' ? 'mock' : 'espn' })
+        }
+      )
+
+      if (result.status) {
+        setManagedSimulationStatus(result.status)
+      }
+
+      const nextGameId = result.status?.currentGameId ?? null
+      setManagedGameId(nextGameId)
+
+      const games = await request<BoardGame[]>(`/api/participant/pools/${managedPoolId}/games`, {
+        headers: organizerHeaders
+      })
+      setManagedGames(games)
+
+      await loadSquares(String(managedPoolId))
+      await loadOrganizerBoard(managedPoolId, nextGameId ?? undefined)
+      await refreshDiagnostics()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to advance the simulation')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const refreshSetupLookups = async (): Promise<void> => {
     try {
       const [usersResult, teamsResult, poolsResult, imagesResult] = await Promise.all([
@@ -1240,6 +1309,21 @@ function App() {
     setOrganizerBoard(result.board)
   }
 
+  const loadManagedSimulationStatus = async (poolId: number): Promise<SimulationControlStatus | null> => {
+    try {
+      const result = await request<{ status?: SimulationControlStatus }>(`/api/setup/pools/${poolId}/simulation`, {
+        headers: organizerHeaders
+      })
+
+      const status = result.status ?? null
+      setManagedSimulationStatus(status)
+      return status
+    } catch {
+      setManagedSimulationStatus(null)
+      return null
+    }
+  }
+
   const onSelectManagedPool = async (poolId: number): Promise<void> => {
     setBusy('manage-pool')
     setError(null)
@@ -1254,9 +1338,12 @@ function App() {
       })
       setManagedGames(games)
 
-      setManagedGameId(null)
+      const simulationStatus = await loadManagedSimulationStatus(poolId)
+      const preferredGameId = simulationStatus?.currentGameId ?? null
 
-      await loadOrganizerBoard(poolId)
+      setManagedGameId(preferredGameId)
+
+      await loadOrganizerBoard(poolId, preferredGameId ?? undefined)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load selected pool')
     } finally {
@@ -2288,6 +2375,29 @@ function App() {
           <button className="primary" onClick={onRunSingleIngestion} disabled={busy !== null}>
             {busy === 'ingestion-one' ? 'Running...' : 'Run one game'}
           </button>
+        </div>
+
+        <div className="square-toolbar">
+          <button
+            className="primary"
+            onClick={onAdvanceSimulation}
+            disabled={busy !== null || !managedPoolId || !(managedSimulationStatus?.canAdvance ?? false)}
+          >
+            {busy === 'simulation-advance'
+              ? 'Completing...'
+              : managedSimulationStatus?.progressAction === 'complete_game'
+                ? 'Complete Game'
+                : 'Complete Quarter'}
+          </button>
+          <span className="small">
+            {!managedPoolId
+              ? 'Select a pool above to enable step-by-step simulation controls.'
+              : managedSimulationStatus?.progressAction === 'complete_game'
+                ? `Active ${formatSimulationMode(managedSimulationStatus.mode)} simulation. Complete the current game for pool #${managedPoolId} using ${ingestSource === 'mock' ? 'Mock' : 'ESPN'} scores.`
+                : managedSimulationStatus?.progressAction === 'complete_quarter'
+                  ? `Active ${formatSimulationMode(managedSimulationStatus.mode)} simulation. Next step is quarter ${managedSimulationStatus.nextQuarter ?? 1} for game #${managedSimulationStatus.currentGameId ?? '—'}.`
+                  : 'No By Game or By Quarter simulation is active for the selected pool.'}
+          </span>
         </div>
 
         {ingestSummary ? (

@@ -47,6 +47,64 @@ const toYyyyMmDd = (date: Date): string => {
   return `${year}${month}${day}`;
 };
 
+const toNullableScore = (value: unknown): number | null => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const toCumulativeQuarterScores = (lineScores: unknown): [number | null, number | null, number | null, number | null] => {
+  if (!Array.isArray(lineScores) || lineScores.length === 0) {
+    return [null, null, null, null];
+  }
+
+  let runningTotal = 0;
+  let sequenceBroken = false;
+  const cumulative = Array.from({ length: 4 }, (_, index) => {
+    if (sequenceBroken) {
+      return null;
+    }
+
+    const entry = lineScores[index];
+    const value =
+      entry && typeof entry === 'object'
+        ? toNullableScore((entry as { value?: unknown; displayValue?: unknown }).value ?? (entry as { value?: unknown; displayValue?: unknown }).displayValue)
+        : null;
+
+    if (value == null) {
+      sequenceBroken = true;
+      return null;
+    }
+
+    runningTotal += value;
+    return runningTotal;
+  }) as [number | null, number | null, number | null, number | null];
+
+  return cumulative;
+};
+
+const buildFallbackQuarterScoresFromFinal = (primaryFinal: number, opponentFinal: number): QuarterScoresInput => {
+  const q1Primary = Math.floor(primaryFinal * 0.2);
+  const q2Primary = Math.floor(primaryFinal * 0.5);
+  const q3Primary = Math.floor(primaryFinal * 0.75);
+  const q4Primary = primaryFinal;
+
+  const q1Opponent = Math.floor(opponentFinal * 0.2);
+  const q2Opponent = Math.floor(opponentFinal * 0.5);
+  const q3Opponent = Math.floor(opponentFinal * 0.75);
+  const q4Opponent = opponentFinal;
+
+  return {
+    q1PrimaryScore: q1Primary,
+    q1OpponentScore: q1Opponent,
+    q2PrimaryScore: q2Primary,
+    q2OpponentScore: q2Opponent,
+    q3PrimaryScore: q3Primary,
+    q3OpponentScore: q3Opponent,
+    q4PrimaryScore: q4Primary,
+    q4OpponentScore: q4Opponent
+  };
+};
+
 const getScoresFromEspn = async (gameId: number): Promise<QuarterScoresInput> => {
   const client = await db.connect();
 
@@ -86,13 +144,11 @@ const getScoresFromEspn = async (gameId: number): Promise<QuarterScoresInput> =>
     const data = (await response.json()) as {
       events?: Array<{
         competitions?: Array<{
-          competitors?: Array<{ team?: { displayName?: string; shortDisplayName?: string }; score?: string }>;
-          situation?: {
-            lastPlay?: {
-              homeScore?: number;
-              awayScore?: number;
-            };
-          };
+          competitors?: Array<{
+            team?: { displayName?: string; shortDisplayName?: string };
+            score?: string;
+            linescores?: Array<{ value?: number | string; displayValue?: string }>;
+          }>;
         }>;
       }>;
     };
@@ -127,31 +183,33 @@ const getScoresFromEspn = async (gameId: number): Promise<QuarterScoresInput> =>
 
       const primaryIsHome = primaryHint ? homeName.includes(primaryHint) : !homeName.includes(opponentHint);
 
-      const primaryFinal = Number(primaryIsHome ? home.score : away.score) || 0;
-      const opponentFinal = Number(primaryIsHome ? away.score : home.score) || 0;
+      const primaryCompetitor = primaryIsHome ? home : away;
+      const opponentCompetitor = primaryIsHome ? away : home;
 
-      // ESPN free scoreboard endpoint does not reliably expose per-quarter values without additional endpoints.
-      // We maintain deterministic quarter splits from final to keep ingestion idempotent.
-      const q1Primary = Math.floor(primaryFinal * 0.2);
-      const q2Primary = Math.floor(primaryFinal * 0.5);
-      const q3Primary = Math.floor(primaryFinal * 0.75);
-      const q4Primary = primaryFinal;
+      const [q1Primary, q2Primary, q3Primary, q4Primary] = toCumulativeQuarterScores(primaryCompetitor.linescores);
+      const [q1Opponent, q2Opponent, q3Opponent, q4Opponent] = toCumulativeQuarterScores(opponentCompetitor.linescores);
 
-      const q1Opponent = Math.floor(opponentFinal * 0.2);
-      const q2Opponent = Math.floor(opponentFinal * 0.5);
-      const q3Opponent = Math.floor(opponentFinal * 0.75);
-      const q4Opponent = opponentFinal;
+      const hasQuarterBreakdown =
+        [q1Primary, q2Primary, q3Primary, q4Primary].some((value) => value != null) &&
+        [q1Opponent, q2Opponent, q3Opponent, q4Opponent].some((value) => value != null);
 
-      return {
-        q1PrimaryScore: q1Primary,
-        q1OpponentScore: q1Opponent,
-        q2PrimaryScore: q2Primary,
-        q2OpponentScore: q2Opponent,
-        q3PrimaryScore: q3Primary,
-        q3OpponentScore: q3Opponent,
-        q4PrimaryScore: q4Primary,
-        q4OpponentScore: q4Opponent
-      };
+      if (hasQuarterBreakdown) {
+        return {
+          q1PrimaryScore: q1Primary,
+          q1OpponentScore: q1Opponent,
+          q2PrimaryScore: q2Primary,
+          q2OpponentScore: q2Opponent,
+          q3PrimaryScore: q3Primary,
+          q3OpponentScore: q3Opponent,
+          q4PrimaryScore: q4Primary,
+          q4OpponentScore: q4Opponent
+        };
+      }
+
+      const primaryFinal = Number(primaryCompetitor.score) || 0;
+      const opponentFinal = Number(opponentCompetitor.score) || 0;
+
+      return buildFallbackQuarterScoresFromFinal(primaryFinal, opponentFinal);
     }
 
     throw new Error('No matching ESPN game found for configured primary/opponent teams');

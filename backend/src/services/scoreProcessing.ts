@@ -2,14 +2,14 @@ import type { PoolClient } from 'pg';
 import { db } from '../config/db';
 
 export interface QuarterScoresInput {
-  q1PrimaryScore: number;
-  q1OpponentScore: number;
-  q2PrimaryScore: number;
-  q2OpponentScore: number;
-  q3PrimaryScore: number;
-  q3OpponentScore: number;
-  q4PrimaryScore: number;
-  q4OpponentScore: number;
+  q1PrimaryScore: number | null;
+  q1OpponentScore: number | null;
+  q2PrimaryScore: number | null;
+  q2OpponentScore: number | null;
+  q3PrimaryScore: number | null;
+  q3OpponentScore: number | null;
+  q4PrimaryScore: number | null;
+  q4OpponentScore: number | null;
 }
 
 interface QuarterSpec {
@@ -22,14 +22,14 @@ export interface ScoreProcessingResult {
   game: {
     id: number;
     pool_id: number;
-    q1_primary_score: number;
-    q1_opponent_score: number;
-    q2_primary_score: number;
-    q2_opponent_score: number;
-    q3_primary_score: number;
-    q3_opponent_score: number;
-    q4_primary_score: number;
-    q4_opponent_score: number;
+    q1_primary_score: number | null;
+    q1_opponent_score: number | null;
+    q2_primary_score: number | null;
+    q2_opponent_score: number | null;
+    q3_primary_score: number | null;
+    q3_opponent_score: number | null;
+    q4_primary_score: number | null;
+    q4_opponent_score: number | null;
   };
   winnersCalculated: boolean;
   winnersWritten: number;

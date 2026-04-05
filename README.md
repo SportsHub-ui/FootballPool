@@ -119,6 +119,12 @@ npm run test:ui
 - `GET /api/setup/pools/:poolId/squares` - List squares
 - `PATCH /api/setup/pools/:poolId/squares/:squareNum` - Assign/reassign square
 
+### Simulation Controls
+- `GET /api/setup/pools/:poolId/simulation` - Get simulation readiness and active mode
+- `POST /api/setup/pools/:poolId/simulation` - Start a simulation (`full_year`, `by_game`, or `by_quarter`)
+- `POST /api/setup/pools/:poolId/simulation/advance` - Complete the next game or quarter for step-by-step simulations
+- `DELETE /api/setup/pools/:poolId/simulation` - Remove simulated games, winnings, and square assignments
+
 ### Games & Scoring
 - `POST /api/games` - Create game
 - `GET /api/games?poolId=X` - List games for pool
@@ -218,6 +224,27 @@ Optional backend `.env` settings:
 - `SCORE_INGEST_SOURCE=mock` - `mock`, `payload`, or `espn`
 - `SCORE_INGEST_INTERVAL_MINUTES=30` - Scheduler cadence
 - `SCORE_INGEST_PRIMARY_TEAM=` - Team hint used for ESPN game matching
+- `SIMULATION_ENABLED=true` - Enables organizer simulation tools on the backend
+- `VITE_ENABLE_SIMULATION_CONTROLS=true` - Shows simulation controls in the frontend
+
+### Simulation Modes
+Use **Pool Maintenance** to start the simulation, then use the **Score Ingestion** page to advance it when applicable.
+
+- **Full Year**
+  - Current one-click behavior.
+  - Assigns all 100 squares, randomizes row/column numbers for every game, and fills the season with simulated scores immediately.
+
+- **By Game**
+  - Assigns squares and prepares only the first game initially.
+  - Use **Complete Game** to fetch ESPN scores when available; if ESPN is unavailable, the app automatically uses a mock score and notifies you.
+  - After the game completes, the next game is automatically prepared.
+
+- **By Quarter**
+  - Assigns squares and prepares only the first game initially.
+  - Use **Complete Quarter** to fetch the next posted ESPN quarter when available; if not, the app automatically uses a mock quarter score and notifies you.
+  - After quarter 4 is completed, the app automatically advances to the next game.
+
+This is mainly intended for demo and testing flows so the board can be watched as a season progresses gradually instead of completing all at once.
 
 ## Development Notes
 
