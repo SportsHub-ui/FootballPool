@@ -800,10 +800,6 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
     return board.squares.find((square) => square.square_num === selectedSquare) ?? null
   }, [board, selectedSquare])
 
-  const boardSeasonTotal = useMemo(
-    () => (board?.squares ?? []).reduce((sum, square) => sum + Number(square.season_won_total ?? 0), 0),
-    [board]
-  )
 
   const currentGameIndex = useMemo(
     () => games.findIndex((game) => game.id === selectedGameId),
@@ -1037,11 +1033,12 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
                           {row.map((square) => {
                             const hasWeekWin = square.current_game_won > 0
                             const hasSeasonWin = square.season_won_total > 0
-                            const ytdPercent = hasSeasonWin && boardSeasonTotal > 0
-                              ? Math.max(0, Math.min(100, (square.season_won_total / boardSeasonTotal) * 100))
-                              : 0
                             const winClass = hasWeekWin ? 'win-3' : hasSeasonWin ? 'win-1' : 'win-0'
                             const isSelectedSquare = selectedSquare === square.square_num
+                            const hasTooltip = hasWeekWin || hasSeasonWin
+                            const squareTooltip = hasTooltip
+                              ? `Week: ${formatBoardMoney(square.current_game_won)} • YTD: ${formatBoardMoney(square.season_won_total)}${hasActiveSelection ? ' • Click to manage assignment' : ''}`
+                              : undefined
 
                             return (
                               <button
@@ -1049,7 +1046,7 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
                                 type="button"
                                 className={`board-square ${square.participant_id ? 'owned' : 'open'} ${square.paid_flg ? 'paid' : ''} ${winClass} ${hasWeekWin ? 'current-win' : ''} ${isSelectedSquare ? 'selected' : ''}`}
                                 onClick={hasActiveSelection ? () => void handleOpenSquareAssignment(square) : undefined}
-                                title={canManageSquares ? `Manage square ${square.square_num}` : undefined}
+                                aria-label={squareTooltip}
                               >
                                 {square.participant_id ? (
                                   <span className="square-owner">
@@ -1061,21 +1058,10 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
                                   <span className="square-open-number">{square.square_num}</span>
                                 )}
 
-                                {hasSeasonWin ? (
-                                  <span className="square-payouts">
-                                    {hasWeekWin ? (
-                                      <span className="square-payout-pill is-week is-active">
-                                        <span>Wk</span>
-                                        <strong>{formatBoardMoney(square.current_game_won)}</strong>
-                                      </span>
-                                    ) : null}
-                                    <span
-                                      className="square-payout-pill is-ytd"
-                                      style={{ ['--fill-pct' as string]: `${ytdPercent}%` }}
-                                    >
-                                      <span>YTD</span>
-                                      <strong>{formatBoardMoney(square.season_won_total)}</strong>
-                                    </span>
+                                {hasTooltip ? (
+                                  <span className="square-hover-tooltip" aria-hidden="true">
+                                    <span><strong>Week</strong>{formatBoardMoney(square.current_game_won)}</span>
+                                    <span><strong>YTD</strong>{formatBoardMoney(square.season_won_total)}</span>
                                   </span>
                                 ) : null}
                               </button>

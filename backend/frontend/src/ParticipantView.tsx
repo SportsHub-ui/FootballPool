@@ -362,10 +362,6 @@ export function ParticipantView() {
 
   const topDigits = useMemo(() => normalizeDigits(poolBoard?.colNumbers), [poolBoard?.colNumbers])
   const leftDigits = useMemo(() => normalizeDigits(poolBoard?.rowNumbers), [poolBoard?.rowNumbers])
-  const poolBoardSeasonTotal = useMemo(
-    () => (poolBoard?.squares ?? []).reduce((sum, square) => sum + Number(square.season_won_total ?? 0), 0),
-    [poolBoard]
-  )
 
   if (view === 'login') {
     return (
@@ -604,20 +600,22 @@ export function ParticipantView() {
                               {row.map((sq) => {
                                 const hasWeekWin = sq.current_game_won > 0
                                 const hasSeasonWin = sq.season_won_total > 0
-                                const ytdPercent = hasSeasonWin && poolBoardSeasonTotal > 0
-                                  ? Math.max(0, Math.min(100, (sq.season_won_total / poolBoardSeasonTotal) * 100))
-                                  : 0
                                 const winClass = hasWeekWin
                                   ? 'win-3'
                                   : hasSeasonWin
                                     ? 'win-1'
                                     : 'win-0'
+                                const hasTooltip = hasWeekWin || hasSeasonWin
+                                const squareTooltip = hasTooltip
+                                  ? `Week: ${formatBoardMoney(sq.current_game_won)} • YTD: ${formatBoardMoney(sq.season_won_total)}`
+                                  : undefined
 
                                 return (
                                   <button
                                     key={sq.id}
                                     type="button"
                                     className={`board-square ${sq.participant_id ? 'owned' : 'open'} ${winClass} ${hasWeekWin ? 'current-win' : ''}`}
+                                    aria-label={squareTooltip}
                                   >
                                     {sq.participant_id ? (
                                       <span className="square-owner">
@@ -631,21 +629,10 @@ export function ParticipantView() {
                                       <span className="square-open-number">{sq.square_num}</span>
                                     )}
 
-                                    {hasSeasonWin ? (
-                                      <span className="square-payouts">
-                                        {hasWeekWin ? (
-                                          <span className="square-payout-pill is-week is-active">
-                                            <span>Wk</span>
-                                            <strong>{formatBoardMoney(sq.current_game_won)}</strong>
-                                          </span>
-                                        ) : null}
-                                        <span
-                                          className="square-payout-pill is-ytd"
-                                          style={{ ['--fill-pct' as string]: `${ytdPercent}%` }}
-                                        >
-                                          <span>YTD</span>
-                                          <strong>{formatBoardMoney(sq.season_won_total)}</strong>
-                                        </span>
+                                    {hasTooltip ? (
+                                      <span className="square-hover-tooltip" aria-hidden="true">
+                                        <span><strong>Week</strong>{formatBoardMoney(sq.current_game_won)}</span>
+                                        <span><strong>YTD</strong>{formatBoardMoney(sq.season_won_total)}</span>
                                       </span>
                                     ) : null}
                                   </button>

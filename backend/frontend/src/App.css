@@ -875,8 +875,13 @@ button:disabled {
   place-items: center;
   gap: 0.2rem;
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   background: #f4c7c3;
+}
+
+.board-square:hover,
+.board-square:focus-visible {
+  z-index: 4;
 }
 
 .board-square.open {
@@ -970,52 +975,57 @@ button:disabled {
   bottom: 3px;
 }
 
-.square-payouts {
+
+.square-hover-tooltip {
   position: absolute;
-  left: 3px;
-  right: 3px;
-  bottom: 3px;
+  left: 50%;
+  bottom: calc(100% + 0.35rem);
+  transform: translate(-50%, 0.3rem);
   display: grid;
-  gap: 2px;
+  gap: 0.18rem;
+  min-width: 7.5rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.96);
+  color: #f8fafc;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.28);
+  font-size: 0.74rem;
+  line-height: 1.2;
+  text-align: left;
+  white-space: nowrap;
+  opacity: 0;
   pointer-events: none;
+  transition: opacity 120ms ease, transform 120ms ease;
+  z-index: 20;
 }
 
-.square-payout-pill {
+.square-hover-tooltip::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  transform: translateX(-50%);
+  border-width: 6px 6px 0 6px;
+  border-style: solid;
+  border-color: rgba(15, 23, 42, 0.96) transparent transparent transparent;
+}
+
+.square-hover-tooltip span {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.25rem;
-  padding: 0.08rem 0.28rem;
-  border-radius: 999px;
-  font-size: 0.5rem;
-  line-height: 1.1;
-  font-weight: 700;
-  border: 1px solid rgba(20, 35, 30, 0.12);
-  background: rgba(255, 255, 255, 0.82);
-  color: #203126;
+  gap: 0.5rem;
 }
 
-.square-payout-pill strong {
+.square-hover-tooltip strong {
   font-weight: 800;
+  color: #bbf7d0;
 }
 
-.square-payout-pill.is-active,
-.square-payout-pill.is-week {
-  background: linear-gradient(90deg, rgba(21, 149, 70, 0.95) 0%, rgba(21, 149, 70, 0.95) 100%);
-  color: #ffffff;
-  border-color: rgba(12, 76, 35, 0.55);
-}
-
-.square-payout-pill.is-ytd {
-  background: linear-gradient(
-    90deg,
-    rgba(21, 149, 70, 0.28) 0%,
-    rgba(21, 149, 70, 0.28) var(--fill-pct, 0%),
-    rgba(120, 132, 145, 0.24) var(--fill-pct, 0%),
-    rgba(120, 132, 145, 0.24) 100%
-  );
-  color: #19311f;
-  border-color: rgba(33, 66, 47, 0.22);
+.board-square:hover .square-hover-tooltip,
+.board-square:focus-visible .square-hover-tooltip {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 .board-game-selector {

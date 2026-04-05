@@ -1307,10 +1307,6 @@ function App() {
     return organizerBoard.squares.find((sq) => sq.square_num === selectedSquare) ?? null
   }, [organizerBoard, selectedSquare])
 
-  const organizerBoardSeasonTotal = useMemo(
-    () => (organizerBoard?.squares ?? []).reduce((sum, sq) => sum + Number(sq.season_won_total ?? 0), 0),
-    [organizerBoard]
-  )
 
   const onOpenSquareAssignment = (square: BoardSquare): void => {
     setSelectedSquare(square.square_num)
@@ -2074,14 +2070,15 @@ function App() {
                         {row.map((sq) => {
                           const hasWeekWin = sq.current_game_won > 0
                           const hasSeasonWin = sq.season_won_total > 0
-                          const ytdPercent = hasSeasonWin && organizerBoardSeasonTotal > 0
-                            ? Math.max(0, Math.min(100, (sq.season_won_total / organizerBoardSeasonTotal) * 100))
-                            : 0
                           const winClass = hasWeekWin
                             ? 'win-3'
                             : hasSeasonWin
                               ? 'win-1'
                               : 'win-0'
+                          const hasTooltip = hasWeekWin || hasSeasonWin
+                          const squareTooltip = hasTooltip
+                            ? `Week: ${formatUsd(sq.current_game_won)} • YTD: ${formatUsd(sq.season_won_total)} • Click to edit assignment`
+                            : 'Click to edit assignment'
 
                           return (
                             <button
@@ -2089,6 +2086,7 @@ function App() {
                               type="button"
                               className={`board-square ${sq.participant_id ? 'owned' : 'open'} ${sq.paid_flg ? 'paid' : ''} ${winClass} ${hasWeekWin ? 'current-win' : ''} ${selectedSquare === sq.square_num ? 'selected' : ''}`}
                               onClick={() => onOpenSquareAssignment(sq)}
+                              aria-label={squareTooltip}
                             >
                               {sq.participant_id ? (
                                 <span className="square-owner">
@@ -2099,21 +2097,10 @@ function App() {
                               ) : (
                                 <span className="square-open-number">{sq.square_num}</span>
                               )}
-                              {hasSeasonWin ? (
-                                <span className="square-payouts">
-                                  {hasWeekWin ? (
-                                    <span className="square-payout-pill is-week is-active">
-                                      <span>Wk</span>
-                                      <strong>{formatUsd(sq.current_game_won)}</strong>
-                                    </span>
-                                  ) : null}
-                                  <span
-                                    className="square-payout-pill is-ytd"
-                                    style={{ ['--fill-pct' as string]: `${ytdPercent}%` }}
-                                  >
-                                    <span>YTD</span>
-                                    <strong>{formatUsd(sq.season_won_total)}</strong>
-                                  </span>
+                              {hasTooltip ? (
+                                <span className="square-hover-tooltip" aria-hidden="true">
+                                  <span><strong>Week</strong>{formatUsd(sq.current_game_won)}</span>
+                                  <span><strong>YTD</strong>{formatUsd(sq.season_won_total)}</span>
                                 </span>
                               ) : null}
                             </button>
