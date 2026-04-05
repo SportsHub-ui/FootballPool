@@ -173,6 +173,7 @@ landingRouter.get('/players', async (req, res) => {
             u.last_name,
             u.email,
             u.phone,
+            u.venmo_acct,
             COALESCE(u.is_player_flg, FALSE) AS is_player_flg,
             pt.team_id,
             t.team_name,
@@ -209,6 +210,7 @@ landingRouter.get('/players', async (req, res) => {
         last_name: string | null;
         email: string | null;
         phone: string | null;
+        venmo_acct: string | null;
         is_player_flg: boolean;
         player_teams: Array<{ team_id: number; team_name: string | null; jersey_num: number | null }>;
       };
@@ -223,6 +225,7 @@ landingRouter.get('/players', async (req, res) => {
           last_name: row.last_name ?? null,
           email: row.email ?? null,
           phone: row.phone ?? null,
+          venmo_acct: row.venmo_acct ?? null,
           is_player_flg: Boolean(row.is_player_flg),
           player_teams: []
         };
@@ -271,6 +274,7 @@ landingRouter.get('/users', async (req, res) => {
             u.last_name,
             u.email,
             u.phone,
+            u.venmo_acct,
             COALESCE(u.is_player_flg, FALSE) AS is_player_flg,
             up.pool_id,
             p.pool_name,
@@ -320,6 +324,7 @@ landingRouter.get('/users', async (req, res) => {
         last_name: string | null;
         email: string | null;
         phone: string | null;
+        venmo_acct: string | null;
         is_player_flg: boolean;
         user_pools: Array<{
           pool_id: number;
@@ -343,6 +348,7 @@ landingRouter.get('/users', async (req, res) => {
           last_name: row.last_name ?? null,
           email: row.email ?? null,
           phone: row.phone ?? null,
+          venmo_acct: row.venmo_acct ?? null,
           is_player_flg: Boolean(row.is_player_flg),
           user_pools: [],
           player_teams: []

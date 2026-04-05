@@ -85,6 +85,53 @@ describe('Football Pool API', () => {
       createdUserId = response.body.id
     })
 
+    it('should persist venmo account details for a user', async () => {
+      const email = `venmo-${Date.now()}@example.com`
+      const createResponse = await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Venmo',
+          lastName: 'Tester',
+          email,
+          phone: '5551239999',
+          venmoAcct: '@venmo-tester'
+        })
+
+      expect(createResponse.status).toBe(201)
+      expect(createResponse.body).toHaveProperty('id')
+
+      const createdUserId = Number(createResponse.body.id)
+
+      const listResponse = await request(app)
+        .get('/api/setup/users')
+        .set(organizerHeaders)
+
+      expect(listResponse.status).toBe(200)
+      const createdUser = listResponse.body.users.find((user: { id: number }) => user.id === createdUserId)
+      expect(createdUser?.venmo_acct).toBe('@venmo-tester')
+
+      const updateResponse = await request(app)
+        .patch(`/api/setup/users/${createdUserId}`)
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Venmo',
+          lastName: 'Tester',
+          email,
+          phone: '5551239999',
+          venmoAcct: '@updated-venmo'
+        })
+
+      expect(updateResponse.status).toBe(200)
+
+      const updatedListResponse = await request(app)
+        .get('/api/setup/users')
+        .set(organizerHeaders)
+
+      const updatedUser = updatedListResponse.body.users.find((user: { id: number }) => user.id === createdUserId)
+      expect(updatedUser?.venmo_acct).toBe('@updated-venmo')
+    })
+
     it('should list users', async () => {
       const response = await request(app)
         .get('/api/setup/users')

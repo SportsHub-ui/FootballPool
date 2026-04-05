@@ -35,6 +35,7 @@ type LandingPlayerRecord = {
   last_name: string | null
   email: string | null
   phone: string | null
+  venmo_acct: string | null
   is_player_flg: boolean
   player_teams: LandingPlayerTeam[]
 }
@@ -51,6 +52,7 @@ type DirectoryUser = {
   last_name: string | null
   email: string | null
   phone: string | null
+  venmo_acct: string | null
   is_player_flg?: boolean | null
   player_teams?: LandingPlayerTeam[]
 }
@@ -107,7 +109,8 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
     firstName: '',
     lastName: '',
     email: '',
-    phone: ''
+    phone: '',
+    venmoAcct: ''
   })
   const [playerAssignments, setPlayerAssignments] = useState<TeamAssignmentDraft[]>([])
   const [isPlayerListExpanded, setIsPlayerListExpanded] = useState(true)
@@ -135,7 +138,8 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
       firstName: player?.first_name ?? '',
       lastName: player?.last_name ?? '',
       email: player?.email ?? '',
-      phone: formatPhoneNumber(player?.phone ?? '')
+      phone: formatPhoneNumber(player?.phone ?? ''),
+      venmoAcct: player?.venmo_acct ?? ''
     })
     setPlayerAssignments(buildAssignmentDrafts(nextTeams, player))
   }
@@ -264,6 +268,7 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
     const trimmedLastName = playerForm.lastName.trim()
     const trimmedEmail = playerForm.email.trim()
     const trimmedPhone = playerForm.phone.trim()
+    const trimmedVenmoAcct = playerForm.venmoAcct.trim()
     const selectedAssignments = playerAssignments.filter((assignment) => assignment.assigned)
 
     if (!trimmedFirstName || !trimmedLastName) {
@@ -313,6 +318,7 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
                 lastName: trimmedLastName,
                 email: trimmedEmail || nonPlayerMatch.email || undefined,
                 phone: trimmedPhone || nonPlayerMatch.phone || undefined,
+                venmoAcct: trimmedVenmoAcct || nonPlayerMatch.venmo_acct || undefined,
                 isPlayer: true,
                 playerTeams: playerTeamsPayload
               })
@@ -342,6 +348,7 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
             lastName: trimmedLastName,
             email: trimmedEmail || undefined,
             phone: trimmedPhone || undefined,
+            venmoAcct: trimmedVenmoAcct || undefined,
             isPlayer: true,
             playerTeams: playerTeamsPayload
           })
@@ -364,6 +371,7 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
           lastName: trimmedLastName,
           email: trimmedEmail || undefined,
           phone: trimmedPhone || undefined,
+          venmoAcct: trimmedVenmoAcct || undefined,
           isPlayer: true,
           playerTeams: playerTeamsPayload
         })
@@ -464,6 +472,7 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
                   <th>Player</th>
                   <th>Email</th>
                   <th>Phone</th>
+                  <th>Venmo</th>
                   <th>Teams</th>
                 </tr>
               </thead>
@@ -477,6 +486,7 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
                     <td>{formatPersonName(player)}</td>
                     <td>{player.email ?? '—'}</td>
                     <td>{formatPhoneNumber(player.phone) || '—'}</td>
+                    <td>{player.venmo_acct ?? '—'}</td>
                     <td>
                       {player.player_teams.length > 0
                         ? player.player_teams.map((assignment) => `${assignment.team_name ?? `Team ${assignment.team_id}`} #${assignment.jersey_num ?? '—'}`).join(' | ')
@@ -563,6 +573,15 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
                 onChange={(event) => setPlayerForm((current) => ({ ...current, phone: formatPhoneNumber(event.target.value) }))}
                 placeholder="(555) 555-1234"
                 inputMode="tel"
+              />
+            </label>
+
+            <label className="field-block">
+              <span>Venmo</span>
+              <input
+                value={playerForm.venmoAcct}
+                onChange={(event) => setPlayerForm((current) => ({ ...current, venmoAcct: event.target.value }))}
+                placeholder="@venmo-handle"
               />
             </label>
           </div>

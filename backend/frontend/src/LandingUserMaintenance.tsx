@@ -34,6 +34,7 @@ type LandingUserRecord = {
   last_name: string | null
   email: string | null
   phone: string | null
+  venmo_acct: string | null
   is_player_flg: boolean
   user_pools: LandingUserPool[]
   player_teams: LandingPlayerTeam[]
@@ -117,7 +118,8 @@ export function LandingUserMaintenance({
     firstName: '',
     lastName: '',
     email: '',
-    phone: ''
+    phone: '',
+    venmoAcct: ''
   })
   const [poolAssignments, setPoolAssignments] = useState<PoolAssignmentDraft[]>([])
   const [selectedPlayerTeams, setSelectedPlayerTeams] = useState<LandingPlayerTeam[]>([])
@@ -149,7 +151,8 @@ export function LandingUserMaintenance({
       firstName: user?.first_name ?? '',
       lastName: user?.last_name ?? '',
       email: user?.email ?? '',
-      phone: formatPhoneNumber(user?.phone ?? '')
+      phone: formatPhoneNumber(user?.phone ?? ''),
+      venmoAcct: user?.venmo_acct ?? ''
     })
     setPoolAssignments(buildPoolAssignmentDrafts(nextPools, user))
   }
@@ -286,6 +289,7 @@ export function LandingUserMaintenance({
     const trimmedLastName = userForm.lastName.trim()
     const trimmedEmail = userForm.email.trim()
     const trimmedPhone = userForm.phone.trim()
+    const trimmedVenmoAcct = userForm.venmoAcct.trim()
     const poolIdsPayload = poolAssignments.filter((assignment) => assignment.assigned).map((assignment) => assignment.poolId)
 
     if (!trimmedFirstName || !trimmedLastName) {
@@ -314,6 +318,7 @@ export function LandingUserMaintenance({
             lastName: trimmedLastName,
             email: trimmedEmail || undefined,
             phone: trimmedPhone || undefined,
+            venmoAcct: trimmedVenmoAcct || undefined,
             isPlayer: selectedIsPlayer,
             poolIds: poolIdsPayload
           })
@@ -336,6 +341,7 @@ export function LandingUserMaintenance({
           lastName: trimmedLastName,
           email: trimmedEmail || undefined,
           phone: trimmedPhone || undefined,
+          venmoAcct: trimmedVenmoAcct || undefined,
           isPlayer: selectedIsPlayer,
           poolIds: poolIdsPayload
         })
@@ -450,6 +456,7 @@ export function LandingUserMaintenance({
                   <th>User</th>
                   <th>Email</th>
                   <th>Phone</th>
+                  <th>Venmo</th>
                   <th>Pools</th>
                   <th>Teams</th>
                 </tr>
@@ -464,6 +471,7 @@ export function LandingUserMaintenance({
                     <td>{formatUserName(user)}</td>
                     <td>{user.email ?? '—'}</td>
                     <td>{formatPhoneNumber(user.phone) || '—'}</td>
+                    <td>{user.venmo_acct ?? '—'}</td>
                     <td>{user.user_pools.length > 0 ? user.user_pools.map(buildAssignedPoolLabel).join(' | ') : 'Not assigned'}</td>
                     <td>
                       {user.player_teams.length > 0
@@ -579,6 +587,15 @@ export function LandingUserMaintenance({
                 onChange={(event) => setUserForm((current) => ({ ...current, phone: formatPhoneNumber(event.target.value) }))}
                 placeholder="(555) 555-1234"
                 inputMode="tel"
+              />
+            </label>
+
+            <label className="field-block">
+              <span>Venmo</span>
+              <input
+                value={userForm.venmoAcct}
+                onChange={(event) => setUserForm((current) => ({ ...current, venmoAcct: event.target.value }))}
+                placeholder="@venmo-handle"
               />
             </label>
 

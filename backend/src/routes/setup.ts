@@ -56,11 +56,19 @@ const optionalPhoneSchema = z
   .optional()
   .or(z.literal(''));
 
+const optionalVenmoAcctSchema = z
+  .string()
+  .trim()
+  .max(255)
+  .optional()
+  .or(z.literal(''));
+
 const createUserSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
   email: optionalEmailSchema,
   phone: optionalPhoneSchema,
+  venmoAcct: optionalVenmoAcctSchema,
   isPlayer: z.boolean().optional(),
   playerTeams: z
     .array(
@@ -333,8 +341,8 @@ setupRouter.post('/users', async (req, res) => {
 
     await client.query(
       `
-        INSERT INTO football_pool.users (id, first_name, last_name, email, phone, created_at, is_player_flg)
-        VALUES ($1, $2, $3, $4, $5, NOW(), $6)
+        INSERT INTO football_pool.users (id, first_name, last_name, email, phone, venmo_acct, created_at, is_player_flg)
+        VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
       `,
       [
         id,
@@ -342,6 +350,7 @@ setupRouter.post('/users', async (req, res) => {
         parsed.data.lastName,
         parsed.data.email ? parsed.data.email : null,
         parsed.data.phone ? parsed.data.phone : null,
+        parsed.data.venmoAcct ? parsed.data.venmoAcct : null,
         parsed.data.isPlayer ?? false
       ]
     );
@@ -838,6 +847,7 @@ setupRouter.get('/users', async (_req, res) => {
           u.last_name,
           u.email,
           u.phone,
+          u.venmo_acct,
           u.is_player_flg,
           pt.team_id,
           pt.jersey_num,
@@ -856,6 +866,7 @@ setupRouter.get('/users', async (_req, res) => {
       last_name: string | null;
       email: string | null;
       phone: string | null;
+      venmo_acct: string | null;
       is_player_flg: boolean;
       player_teams: Array<{ team_id: number; team_name: string | null; jersey_num: number }>;
     };
@@ -870,6 +881,7 @@ setupRouter.get('/users', async (_req, res) => {
         last_name: row.last_name,
         email: row.email,
         phone: row.phone,
+        venmo_acct: row.venmo_acct,
         is_player_flg: Boolean(row.is_player_flg),
         player_teams: []
       };
@@ -932,7 +944,8 @@ setupRouter.patch('/users/:userId', async (req, res) => {
           last_name = $3,
           email = $4,
           phone = $5,
-          is_player_flg = COALESCE($6, is_player_flg)
+          venmo_acct = $6,
+          is_player_flg = COALESCE($7, is_player_flg)
         WHERE id = $1
         RETURNING id
       `,
@@ -942,6 +955,7 @@ setupRouter.patch('/users/:userId', async (req, res) => {
         parsedBody.data.lastName,
         parsedBody.data.email ? parsedBody.data.email : null,
         parsedBody.data.phone ? parsedBody.data.phone : null,
+        parsedBody.data.venmoAcct ? parsedBody.data.venmoAcct : null,
         parsedBody.data.isPlayer ?? null
       ]
     );

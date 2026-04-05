@@ -32,6 +32,7 @@ type UserOption = {
   last_name: string | null
   email: string | null
   phone: string | null
+  venmo_acct: string | null
   is_player_flg?: boolean | null
   player_teams?: Array<{
     team_id: number
@@ -233,7 +234,8 @@ function App() {
     firstName: '',
     lastName: '',
     email: '',
-    phone: ''
+    phone: '',
+    venmoAcct: ''
   })
   const [createUserIsPlayer, setCreateUserIsPlayer] = useState(false)
   const [createUserPlayerTeams, setCreateUserPlayerTeams] = useState<Array<{ teamId: string; jerseyNum: string }>>([])
@@ -259,7 +261,8 @@ function App() {
     firstName: '',
     lastName: '',
     email: '',
-    phone: ''
+    phone: '',
+    venmoAcct: ''
   })
   const [editUserIsPlayer, setEditUserIsPlayer] = useState(false)
   const [editUserPlayerTeams, setEditUserPlayerTeams] = useState<Array<{ teamId: string; jerseyNum: string }>>([])
@@ -417,6 +420,7 @@ function App() {
           ...userForm,
           email: userForm.email.trim() || undefined,
           phone: userForm.phone.trim() || undefined,
+          venmoAcct: userForm.venmoAcct.trim() || undefined,
           isPlayer: createUserIsPlayer,
           playerTeams: playerTeamsPayload
         })
@@ -424,7 +428,7 @@ function App() {
 
       setCreated((current) => ({ ...current, userId: result.id }))
       setTeamForm((current) => ({ ...current, primaryContactId: String(result.id) }))
-      setUserForm({ firstName: '', lastName: '', email: '', phone: '' })
+      setUserForm({ firstName: '', lastName: '', email: '', phone: '', venmoAcct: '' })
       setCreateUserIsPlayer(false)
       setCreateUserPlayerTeams([])
       await refreshSetupLookups()
@@ -849,7 +853,7 @@ function App() {
     setEditingUserId(userIdText)
 
     if (!userIdText) {
-      setEditUserForm({ firstName: '', lastName: '', email: '', phone: '' })
+      setEditUserForm({ firstName: '', lastName: '', email: '', phone: '', venmoAcct: '' })
       setEditUserIsPlayer(false)
       setEditUserPlayerTeams([])
       return
@@ -862,7 +866,8 @@ function App() {
       firstName: user.first_name ?? '',
       lastName: user.last_name ?? '',
       email: user.email ?? '',
-      phone: formatPhoneNumber(user.phone ?? '')
+      phone: formatPhoneNumber(user.phone ?? ''),
+      venmoAcct: user.venmo_acct ?? ''
     })
 
     const assignments = user.player_teams ?? []
@@ -971,6 +976,7 @@ function App() {
           ...editUserForm,
           email: editUserForm.email.trim() || undefined,
           phone: editUserForm.phone.trim() || undefined,
+          venmoAcct: editUserForm.venmoAcct.trim() || undefined,
           isPlayer: editUserIsPlayer,
           playerTeams: playerTeamsPayload
         })
@@ -1001,7 +1007,7 @@ function App() {
       })
 
       setEditingUserId('')
-      setEditUserForm({ firstName: '', lastName: '', email: '', phone: '' })
+      setEditUserForm({ firstName: '', lastName: '', email: '', phone: '', venmoAcct: '' })
       setEditUserIsPlayer(false)
       setEditUserPlayerTeams([])
       await refreshSetupLookups()
@@ -1430,6 +1436,7 @@ function App() {
             <input value={userForm.lastName} onChange={(e) => setUserForm({ ...userForm, lastName: e.target.value })} placeholder="Last name" />
             <input value={userForm.email} onChange={(e) => setUserForm({ ...userForm, email: e.target.value })} placeholder="Email" />
             <input value={userForm.phone} onChange={(e) => setUserForm({ ...userForm, phone: formatPhoneNumber(e.target.value) })} placeholder="Phone" inputMode="tel" />
+            <input value={userForm.venmoAcct} onChange={(e) => setUserForm({ ...userForm, venmoAcct: e.target.value })} placeholder="Venmo account" />
             <label className="checkbox-row">
               <input
                 type="checkbox"
@@ -1657,6 +1664,7 @@ function App() {
             <input value={editUserForm.lastName} onChange={(e) => setEditUserForm({ ...editUserForm, lastName: e.target.value })} placeholder="Last name" />
             <input value={editUserForm.email} onChange={(e) => setEditUserForm({ ...editUserForm, email: e.target.value })} placeholder="Email" />
             <input value={editUserForm.phone} onChange={(e) => setEditUserForm({ ...editUserForm, phone: formatPhoneNumber(e.target.value) })} placeholder="Phone" inputMode="tel" />
+            <input value={editUserForm.venmoAcct} onChange={(e) => setEditUserForm({ ...editUserForm, venmoAcct: e.target.value })} placeholder="Venmo account" />
             <label className="checkbox-row">
               <input
                 type="checkbox"
