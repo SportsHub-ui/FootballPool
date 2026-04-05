@@ -181,6 +181,14 @@ const resolveTeamBrand = (
   }
 }
 
+const boardMoneyFormatter = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  maximumFractionDigits: 0
+})
+
+const formatBoardMoney = (value: number | null | undefined): string => boardMoneyFormatter.format(Number(value ?? 0))
+
 const formatDate = (value: string | null | undefined): string => {
   if (!value) return new Date().toLocaleDateString()
   return new Date(value).toLocaleDateString()
@@ -792,6 +800,11 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
     return board.squares.find((square) => square.square_num === selectedSquare) ?? null
   }, [board, selectedSquare])
 
+  const boardSeasonTotal = useMemo(
+    () => (board?.squares ?? []).reduce((sum, square) => sum + Number(square.season_won_total ?? 0), 0),
+    [board]
+  )
+
   const currentGameIndex = useMemo(
     () => games.findIndex((game) => game.id === selectedGameId),
     [games, selectedGameId]
@@ -1022,14 +1035,19 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
                           <div className="digit-cell digit-row">{leftDigits[rowIndex]}</div>
 
                           {row.map((square) => {
-                            const winClass = square.current_game_won > 0 ? 'win-3' : square.season_won_total > 0 ? 'win-1' : 'win-0'
+                            const hasWeekWin = square.current_game_won > 0
+                            const hasSeasonWin = square.season_won_total > 0
+                            const ytdPercent = hasSeasonWin && boardSeasonTotal > 0
+                              ? Math.max(0, Math.min(100, (square.season_won_total / boardSeasonTotal) * 100))
+                              : 0
+                            const winClass = hasWeekWin ? 'win-3' : hasSeasonWin ? 'win-1' : 'win-0'
                             const isSelectedSquare = selectedSquare === square.square_num
 
                             return (
                               <button
                                 key={square.square_num}
                                 type="button"
-                                className={`board-square ${square.participant_id ? 'owned' : 'open'} ${square.paid_flg ? 'paid' : ''} ${winClass} ${isSelectedSquare ? 'selected' : ''}`}
+                                className={`board-square ${square.participant_id ? 'owned' : 'open'} ${square.paid_flg ? 'paid' : ''} ${winClass} ${hasWeekWin ? 'current-win' : ''} ${isSelectedSquare ? 'selected' : ''}`}
                                 onClick={hasActiveSelection ? () => void handleOpenSquareAssignment(square) : undefined}
                                 title={canManageSquares ? `Manage square ${square.square_num}` : undefined}
                               >
@@ -1043,9 +1061,22 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
                                   <span className="square-open-number">{square.square_num}</span>
                                 )}
 
-                                {square.current_game_won > 0 ? <span className="square-win">${square.current_game_won}</span> : null}
-                                {square.current_game_won === 0 && square.season_won_total > 0 ? (
-                                  <span className="square-win">Season ${square.season_won_total}</span>
+                                {hasSeasonWin ? (
+                                  <span className="square-payouts">
+                                    {hasWeekWin ? (
+                                      <span className="square-payout-pill is-week is-active">
+                                        <span>Wk</span>
+                                        <strong>{formatBoardMoney(square.current_game_won)}</strong>
+                                      </span>
+                                    ) : null}
+                                    <span
+                                      className="square-payout-pill is-ytd"
+                                      style={{ ['--fill-pct' as string]: `${ytdPercent}%` }}
+                                    >
+                                      <span>YTD</span>
+                                      <strong>{formatBoardMoney(square.season_won_total)}</strong>
+                                    </span>
+                                  </span>
                                 ) : null}
                               </button>
                             )

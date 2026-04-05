@@ -14,9 +14,8 @@ export interface QuarterScoresInput {
 
 interface QuarterSpec {
   num: number;
-  primaryScore: number;
-  opponentScore: number;
   payout: number;
+  squareNum: number | null;
 }
 
 export interface ScoreProcessingResult {
@@ -37,9 +36,49 @@ export interface ScoreProcessingResult {
   unresolvedWinners: number;
 }
 
-const calculateSquareNumber = (opponentDigit: number, primaryDigit: number): number => {
-  // Grid is 1..100, where each row has 10 entries.
-  return (opponentDigit * 10) + primaryDigit + 1;
+const defaultDigitOrder = Array.from({ length: 10 }, (_, index) => index);
+
+const toDigitOrder = (value: unknown): number[] => {
+  if (typeof value === 'string') {
+    try {
+      return toDigitOrder(JSON.parse(value));
+    } catch {
+      return defaultDigitOrder;
+    }
+  }
+
+  if (Array.isArray(value)) {
+    const normalized = value.map((entry) => Number(entry));
+    if (normalized.length === 10 && normalized.every((entry) => Number.isFinite(entry))) {
+      return normalized;
+    }
+  }
+
+  return defaultDigitOrder;
+};
+
+export const resolveWinningSquareNumber = (
+  rowNumbers: unknown,
+  colNumbers: unknown,
+  opponentScore: number | null | undefined,
+  primaryScore: number | null | undefined
+): number | null => {
+  if (opponentScore == null || primaryScore == null) {
+    return null;
+  }
+
+  const rowDigits = toDigitOrder(rowNumbers);
+  const colDigits = toDigitOrder(colNumbers);
+  const opponentDigit = Number(opponentScore) % 10;
+  const primaryDigit = Number(primaryScore) % 10;
+  const rowIndex = rowDigits.findIndex((digit) => digit === opponentDigit);
+  const colIndex = colDigits.findIndex((digit) => digit === primaryDigit);
+
+  if (rowIndex === -1 || colIndex === -1) {
+    return null;
+  }
+
+  return (rowIndex * 10) + colIndex + 1;
 };
 
 const ensurePoolPayouts = async (client: PoolClient, poolId: number) => {
@@ -68,9 +107,11 @@ const upsertWinningsForQuarter = async (
   poolId: number,
   quarter: QuarterSpec
 ): Promise<{ written: boolean; unresolved: boolean }> => {
-  const primaryDigit = quarter.primaryScore % 10;
-  const opponentDigit = quarter.opponentScore % 10;
-  const squareNum = calculateSquareNumber(opponentDigit, primaryDigit);
+  const squareNum = quarter.squareNum;
+
+  if (squareNum == null) {
+    return { written: false, unresolved: true };
+  }
 
   const winnerSquareResult = await client.query(
     `SELECT id, participant_id
@@ -138,6 +179,7 @@ export const processGameScoresWithClient = async (
          q4_opponent_score = $8
      WHERE id = $9
      RETURNING id, pool_id,
+               row_numbers, col_numbers,
                q1_primary_score, q1_opponent_score,
                q2_primary_score, q2_opponent_score,
                q3_primary_score, q3_opponent_score,
@@ -163,10 +205,26 @@ export const processGameScoresWithClient = async (
   const payouts = await ensurePoolPayouts(client, game.pool_id);
 
   const quarters: QuarterSpec[] = [
-    { num: 1, primaryScore: scores.q1PrimaryScore, opponentScore: scores.q1OpponentScore, payout: payouts.q1_payout },
-    { num: 2, primaryScore: scores.q2PrimaryScore, opponentScore: scores.q2OpponentScore, payout: payouts.q2_payout },
-    { num: 3, primaryScore: scores.q3PrimaryScore, opponentScore: scores.q3OpponentScore, payout: payouts.q3_payout },
-    { num: 4, primaryScore: scores.q4PrimaryScore, opponentScore: scores.q4OpponentScore, payout: payouts.q4_payout }
+    {
+      num: 1,
+      payout: payouts.q1_payout,
+      squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, scores.q1OpponentScore, scores.q1PrimaryScore)
+    },
+    {
+      num: 2,
+      payout: payouts.q2_payout,
+      squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, scores.q2OpponentScore, scores.q2PrimaryScore)
+    },
+    {
+      num: 3,
+      payout: payouts.q3_payout,
+      squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, scores.q3OpponentScore, scores.q3PrimaryScore)
+    },
+    {
+      num: 4,
+      payout: payouts.q4_payout,
+      squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, scores.q4OpponentScore, scores.q4PrimaryScore)
+    }
   ];
 
   let winnersWritten = 0;

@@ -3,6 +3,7 @@ import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { db } from '../config/db';
 import { ensurePoolSquaresInitialized } from '../services/poolSquares';
+import { resolveWinningSquareNumber } from '../services/scoreProcessing';
 
 export const landingRouter = Router();
 
@@ -670,6 +671,7 @@ landingRouter.get('/pools/:poolId/board', async (req, res) => {
         ? await client.query(
             `SELECT id,
                     pool_id,
+                    week_num,
                     opponent,
                     game_dt,
                     row_numbers,
@@ -691,6 +693,7 @@ landingRouter.get('/pools/:poolId/board', async (req, res) => {
         : await client.query(
             `SELECT id,
                     pool_id,
+                    week_num,
                     opponent,
                     game_dt,
                     row_numbers,
@@ -706,6 +709,7 @@ landingRouter.get('/pools/:poolId/board', async (req, res) => {
              FROM football_pool.game
              WHERE pool_id = $1
              ORDER BY CASE WHEN game_dt >= CURRENT_DATE THEN 0 ELSE 1 END,
+                      COALESCE(week_num, 999),
                       game_dt ASC,
                       id ASC
              LIMIT 1`,
@@ -723,114 +727,107 @@ landingRouter.get('/pools/:poolId/board', async (req, res) => {
         );
       }
 
-      const squaresResult = await client.query(
-        `WITH season_winners AS (
-           SELECT ((g.q1_opponent_score % 10) * 10 + (g.q1_primary_score % 10) + 1) AS square_num,
-                  p.q1_payout AS amount
-           FROM football_pool.game g
-           JOIN football_pool.pool p ON p.id = g.pool_id
-           WHERE g.pool_id = $1
-             AND g.q1_primary_score IS NOT NULL
-             AND g.q1_opponent_score IS NOT NULL
+      const [payoutsResult, gamesUpToSelectionResult, squaresResult] = await Promise.all([
+        client.query(
+          `SELECT q1_payout, q2_payout, q3_payout, q4_payout
+           FROM football_pool.pool
+           WHERE id = $1
+           LIMIT 1`,
+          [poolId]
+        ),
+        client.query(
+          `SELECT id,
+                  week_num,
+                  game_dt,
+                  row_numbers,
+                  col_numbers,
+                  q1_primary_score,
+                  q1_opponent_score,
+                  q2_primary_score,
+                  q2_opponent_score,
+                  q3_primary_score,
+                  q3_opponent_score,
+                  q4_primary_score,
+                  q4_opponent_score
+           FROM football_pool.game
+           WHERE pool_id = $1
+             AND (
+               $2::int IS NULL
+               OR COALESCE(week_num, 999) < COALESCE($2::int, 999)
+               OR (
+                 COALESCE(week_num, 999) = COALESCE($2::int, 999)
+                 AND ($3::timestamptz IS NULL OR game_dt <= $3::timestamptz)
+               )
+             )
+           ORDER BY COALESCE(week_num, 999), game_dt ASC, id ASC`,
+          [poolId, selectedGame?.week_num ?? null, selectedGame?.game_dt ?? null]
+        ),
+        client.query(
+          `SELECT s.id,
+                  s.square_num,
+                  s.participant_id,
+                  s.player_id,
+                  s.paid_flg,
+                  u.first_name AS participant_first_name,
+                  u.last_name AS participant_last_name,
+                  pt.jersey_num AS player_jersey_num
+           FROM football_pool.square s
+           LEFT JOIN football_pool.users u ON u.id = s.participant_id
+           LEFT JOIN football_pool.player_team pt ON pt.id = s.player_id
+           WHERE s.pool_id = $1
+           ORDER BY s.square_num`,
+          [poolId]
+        )
+      ]);
 
-           UNION ALL
+      const payouts = payoutsResult.rows[0] ?? {
+        q1_payout: 0,
+        q2_payout: 0,
+        q3_payout: 0,
+        q4_payout: 0
+      };
 
-           SELECT ((g.q2_opponent_score % 10) * 10 + (g.q2_primary_score % 10) + 1) AS square_num,
-                  p.q2_payout AS amount
-           FROM football_pool.game g
-           JOIN football_pool.pool p ON p.id = g.pool_id
-           WHERE g.pool_id = $1
-             AND g.q2_primary_score IS NOT NULL
-             AND g.q2_opponent_score IS NOT NULL
+      const currentGameTotals = new Map<number, number>();
+      const seasonTotals = new Map<number, number>();
 
-           UNION ALL
+      for (const game of gamesUpToSelectionResult.rows) {
+        const entries = [
+          {
+            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, game.q1_opponent_score, game.q1_primary_score),
+            amount: Number(payouts.q1_payout ?? 0)
+          },
+          {
+            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, game.q2_opponent_score, game.q2_primary_score),
+            amount: Number(payouts.q2_payout ?? 0)
+          },
+          {
+            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, game.q3_opponent_score, game.q3_primary_score),
+            amount: Number(payouts.q3_payout ?? 0)
+          },
+          {
+            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, game.q4_opponent_score, game.q4_primary_score),
+            amount: Number(payouts.q4_payout ?? 0)
+          }
+        ];
 
-           SELECT ((g.q3_opponent_score % 10) * 10 + (g.q3_primary_score % 10) + 1) AS square_num,
-                  p.q3_payout AS amount
-           FROM football_pool.game g
-           JOIN football_pool.pool p ON p.id = g.pool_id
-           WHERE g.pool_id = $1
-             AND g.q3_primary_score IS NOT NULL
-             AND g.q3_opponent_score IS NOT NULL
+        for (const entry of entries) {
+          if (entry.squareNum == null || entry.amount <= 0) {
+            continue;
+          }
 
-           UNION ALL
+          seasonTotals.set(entry.squareNum, (seasonTotals.get(entry.squareNum) ?? 0) + entry.amount);
 
-           SELECT ((g.q4_opponent_score % 10) * 10 + (g.q4_primary_score % 10) + 1) AS square_num,
-                  p.q4_payout AS amount
-           FROM football_pool.game g
-           JOIN football_pool.pool p ON p.id = g.pool_id
-           WHERE g.pool_id = $1
-             AND g.q4_primary_score IS NOT NULL
-             AND g.q4_opponent_score IS NOT NULL
-         ),
-         current_game_winners AS (
-           SELECT ((g.q1_opponent_score % 10) * 10 + (g.q1_primary_score % 10) + 1) AS square_num,
-                  p.q1_payout AS amount
-           FROM football_pool.game g
-           JOIN football_pool.pool p ON p.id = g.pool_id
-           WHERE g.pool_id = $1
-             AND g.id = $2
-             AND g.q1_primary_score IS NOT NULL
-             AND g.q1_opponent_score IS NOT NULL
+          if (selectedGame && Number(game.id) === Number(selectedGame.id)) {
+            currentGameTotals.set(entry.squareNum, (currentGameTotals.get(entry.squareNum) ?? 0) + entry.amount);
+          }
+        }
+      }
 
-           UNION ALL
-
-           SELECT ((g.q2_opponent_score % 10) * 10 + (g.q2_primary_score % 10) + 1) AS square_num,
-                  p.q2_payout AS amount
-           FROM football_pool.game g
-           JOIN football_pool.pool p ON p.id = g.pool_id
-           WHERE g.pool_id = $1
-             AND g.id = $2
-             AND g.q2_primary_score IS NOT NULL
-             AND g.q2_opponent_score IS NOT NULL
-
-           UNION ALL
-
-           SELECT ((g.q3_opponent_score % 10) * 10 + (g.q3_primary_score % 10) + 1) AS square_num,
-                  p.q3_payout AS amount
-           FROM football_pool.game g
-           JOIN football_pool.pool p ON p.id = g.pool_id
-           WHERE g.pool_id = $1
-             AND g.id = $2
-             AND g.q3_primary_score IS NOT NULL
-             AND g.q3_opponent_score IS NOT NULL
-
-           UNION ALL
-
-           SELECT ((g.q4_opponent_score % 10) * 10 + (g.q4_primary_score % 10) + 1) AS square_num,
-                  p.q4_payout AS amount
-           FROM football_pool.game g
-           JOIN football_pool.pool p ON p.id = g.pool_id
-           WHERE g.pool_id = $1
-             AND g.id = $2
-             AND g.q4_primary_score IS NOT NULL
-             AND g.q4_opponent_score IS NOT NULL
-         )
-         SELECT s.id,
-                s.square_num,
-                s.participant_id,
-                s.player_id,
-                s.paid_flg,
-                u.first_name AS participant_first_name,
-                u.last_name AS participant_last_name,
-                pt.jersey_num AS player_jersey_num,
-                COALESCE((
-                  SELECT SUM(cgw.amount)
-                  FROM current_game_winners cgw
-                  WHERE cgw.square_num = s.square_num
-                ), 0)::int AS current_game_won,
-                COALESCE((
-                  SELECT SUM(sw.amount)
-                  FROM season_winners sw
-                  WHERE sw.square_num = s.square_num
-                ), 0)::int AS season_won_total
-         FROM football_pool.square s
-         LEFT JOIN football_pool.users u ON u.id = s.participant_id
-         LEFT JOIN football_pool.player_team pt ON pt.id = s.player_id
-         WHERE s.pool_id = $1
-         ORDER BY s.square_num`,
-        [poolId, selectedGame?.id ?? null]
-      );
+      const squares = squaresResult.rows.map((square) => ({
+        ...square,
+        current_game_won: Number(currentGameTotals.get(Number(square.square_num)) ?? 0),
+        season_won_total: Number(seasonTotals.get(Number(square.square_num)) ?? 0)
+      }));
 
       return res.json({
         board: {
@@ -846,7 +843,7 @@ landingRouter.get('/pools/:poolId/board', async (req, res) => {
           teamLogo: pool.logo_file ?? null,
           rowNumbers: Array.isArray(selectedGame?.row_numbers) ? selectedGame.row_numbers : null,
           colNumbers: Array.isArray(selectedGame?.col_numbers) ? selectedGame.col_numbers : null,
-          squares: squaresResult.rows
+          squares
         }
       });
     } finally {

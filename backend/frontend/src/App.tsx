@@ -105,8 +105,8 @@ type BoardSquare = {
   participant_first_name: string | null
   participant_last_name: string | null
   player_jersey_num: number | null
-  wins_count: number
-  won_total: number
+  current_game_won: number
+  season_won_total: number
 }
 
 type PoolBoard = {
@@ -1289,8 +1289,8 @@ function App() {
           participant_first_name: null,
           participant_last_name: null,
           player_jersey_num: null,
-          wins_count: 0,
-          won_total: 0
+          current_game_won: 0,
+          season_won_total: 0
         }
       })
     )
@@ -1300,6 +1300,11 @@ function App() {
     if (!organizerBoard || selectedSquare == null) return null
     return organizerBoard.squares.find((sq) => sq.square_num === selectedSquare) ?? null
   }, [organizerBoard, selectedSquare])
+
+  const organizerBoardSeasonTotal = useMemo(
+    () => (organizerBoard?.squares ?? []).reduce((sum, sq) => sum + Number(sq.season_won_total ?? 0), 0),
+    [organizerBoard]
+  )
 
   const onOpenSquareAssignment = (square: BoardSquare): void => {
     setSelectedSquare(square.square_num)
@@ -2059,19 +2064,22 @@ function App() {
                       <div key={`row-${rowIndex}`} className="board-row">
                         <div className="digit-cell digit-row">{rowIndex}</div>
                         {row.map((sq) => {
-                          const winClass = sq.wins_count >= 3
+                          const hasWeekWin = sq.current_game_won > 0
+                          const hasSeasonWin = sq.season_won_total > 0
+                          const ytdPercent = hasSeasonWin && organizerBoardSeasonTotal > 0
+                            ? Math.max(0, Math.min(100, (sq.season_won_total / organizerBoardSeasonTotal) * 100))
+                            : 0
+                          const winClass = hasWeekWin
                             ? 'win-3'
-                            : sq.wins_count === 2
-                              ? 'win-2'
-                              : sq.wins_count === 1
-                                ? 'win-1'
-                                : 'win-0'
+                            : hasSeasonWin
+                              ? 'win-1'
+                              : 'win-0'
 
                           return (
                             <button
                               key={sq.id}
                               type="button"
-                              className={`board-square ${sq.participant_id ? 'owned' : 'open'} ${sq.paid_flg ? 'paid' : ''} ${winClass} ${selectedSquare === sq.square_num ? 'selected' : ''}`}
+                              className={`board-square ${sq.participant_id ? 'owned' : 'open'} ${sq.paid_flg ? 'paid' : ''} ${winClass} ${hasWeekWin ? 'current-win' : ''} ${selectedSquare === sq.square_num ? 'selected' : ''}`}
                               onClick={() => onOpenSquareAssignment(sq)}
                             >
                               {sq.participant_id ? (
@@ -2083,7 +2091,23 @@ function App() {
                               ) : (
                                 <span className="square-open-number">{sq.square_num}</span>
                               )}
-                              {sq.wins_count > 0 ? <span className="square-win">{formatUsd(sq.won_total)}</span> : null}
+                              {hasSeasonWin ? (
+                                <span className="square-payouts">
+                                  {hasWeekWin ? (
+                                    <span className="square-payout-pill is-week is-active">
+                                      <span>Wk</span>
+                                      <strong>{formatUsd(sq.current_game_won)}</strong>
+                                    </span>
+                                  ) : null}
+                                  <span
+                                    className="square-payout-pill is-ytd"
+                                    style={{ ['--fill-pct' as string]: `${ytdPercent}%` }}
+                                  >
+                                    <span>YTD</span>
+                                    <strong>{formatUsd(sq.season_won_total)}</strong>
+                                  </span>
+                                </span>
+                              ) : null}
                             </button>
                           )
                         })}

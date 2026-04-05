@@ -47,6 +47,7 @@ type WinningsResponse = {
 type Game = {
   id: number
   pool_id: number
+  week_num: number | null
   opponent: string
   game_dt: string
   is_simulation: boolean
@@ -69,8 +70,8 @@ type BoardSquare = {
   participant_first_name: string | null
   participant_last_name: string | null
   player_jersey_num: number | null
-  wins_count: number
-  won_total: number
+  current_game_won: number
+  season_won_total: number
 }
 
 type PoolBoard = {
@@ -84,11 +85,33 @@ type PoolBoard = {
   teamPrimaryColor: string
   teamSecondaryColor: string
   teamLogo: string | null
+  rowNumbers: Array<number | string> | null
+  colNumbers: Array<number | string> | null
   squares: BoardSquare[]
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 const DEFAULT_BOARD_LOGO = '/football-pool.png'
+const boardMoneyFormatter = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  maximumFractionDigits: 0
+})
+
+const formatBoardMoney = (value: number | null | undefined): string => boardMoneyFormatter.format(Number(value ?? 0))
+
+const normalizeDigits = (value: Array<number | string> | null | undefined): Array<number | string> => {
+  if (!Array.isArray(value) || value.length !== 10) {
+    return Array.from({ length: 10 }, (_, index) => index)
+  }
+
+  return value.map((entry, index) => (typeof entry === 'number' || typeof entry === 'string' ? entry : index))
+}
+
+const formatBoardGameOption = (game: Game): string => {
+  const weekLabel = game.week_num != null ? `Week ${game.week_num} • ` : ''
+  return `${weekLabel}${new Date(game.game_dt).toLocaleDateString()} vs ${game.opponent}`
+}
 
 const resolveImageUrl = (value: string): string => {
   if (!value) return ''
@@ -315,8 +338,8 @@ export function ParticipantView() {
           participant_first_name: null,
           participant_last_name: null,
           player_jersey_num: null,
-          wins_count: 0,
-          won_total: 0
+          current_game_won: 0,
+          season_won_total: 0
         }
       })
     )
@@ -336,6 +359,13 @@ export function ParticipantView() {
     if (!poolBoard) return null
     return resolveTeamBrand(poolBoard.opponent, '#0076b6', '#b0b7bc', null)
   }, [poolBoard])
+
+  const topDigits = useMemo(() => normalizeDigits(poolBoard?.colNumbers), [poolBoard?.colNumbers])
+  const leftDigits = useMemo(() => normalizeDigits(poolBoard?.rowNumbers), [poolBoard?.rowNumbers])
+  const poolBoardSeasonTotal = useMemo(
+    () => (poolBoard?.squares ?? []).reduce((sum, square) => sum + Number(square.season_won_total ?? 0), 0),
+    [poolBoard]
+  )
 
   if (view === 'login') {
     return (
@@ -551,8 +581,8 @@ export function ParticipantView() {
                       </div>
 
                       <div className="board-top-digits">
-                        {Array.from({ length: 10 }, (_, d) => (
-                          <div key={`top-${d}`} className="digit-cell">{d}</div>
+                        {topDigits.map((digit, index) => (
+                          <div key={`top-${index}`} className="digit-cell">{digit}</div>
                         ))}
                       </div>
 
@@ -570,21 +600,24 @@ export function ParticipantView() {
                         <div className="board-grid">
                           {boardRows.map((row, rowIndex) => (
                             <div key={`row-${rowIndex}`} className="board-row">
-                              <div className="digit-cell digit-row">{rowIndex}</div>
+                              <div className="digit-cell digit-row">{leftDigits[rowIndex]}</div>
                               {row.map((sq) => {
-                                const winClass = sq.wins_count >= 3
+                                const hasWeekWin = sq.current_game_won > 0
+                                const hasSeasonWin = sq.season_won_total > 0
+                                const ytdPercent = hasSeasonWin && poolBoardSeasonTotal > 0
+                                  ? Math.max(0, Math.min(100, (sq.season_won_total / poolBoardSeasonTotal) * 100))
+                                  : 0
+                                const winClass = hasWeekWin
                                   ? 'win-3'
-                                  : sq.wins_count === 2
-                                    ? 'win-2'
-                                    : sq.wins_count === 1
-                                      ? 'win-1'
-                                      : 'win-0'
+                                  : hasSeasonWin
+                                    ? 'win-1'
+                                    : 'win-0'
 
                                 return (
                                   <button
                                     key={sq.id}
                                     type="button"
-                                    className={`board-square ${sq.participant_id ? 'owned' : 'open'} ${winClass}`}
+                                    className={`board-square ${sq.participant_id ? 'owned' : 'open'} ${winClass} ${hasWeekWin ? 'current-win' : ''}`}
                                   >
                                     {sq.participant_id ? (
                                       <span className="square-owner">
@@ -597,8 +630,23 @@ export function ParticipantView() {
                                     ) : (
                                       <span className="square-open-number">{sq.square_num}</span>
                                     )}
-                                    {sq.wins_count > 0 ? (
-                                      <span className="square-win">${sq.won_total}</span>
+
+                                    {hasSeasonWin ? (
+                                      <span className="square-payouts">
+                                        {hasWeekWin ? (
+                                          <span className="square-payout-pill is-week is-active">
+                                            <span>Wk</span>
+                                            <strong>{formatBoardMoney(sq.current_game_won)}</strong>
+                                          </span>
+                                        ) : null}
+                                        <span
+                                          className="square-payout-pill is-ytd"
+                                          style={{ ['--fill-pct' as string]: `${ytdPercent}%` }}
+                                        >
+                                          <span>YTD</span>
+                                          <strong>{formatBoardMoney(sq.season_won_total)}</strong>
+                                        </span>
+                                      </span>
                                     ) : null}
                                   </button>
                                 )
@@ -620,7 +668,7 @@ export function ParticipantView() {
                       >
                         {poolGames.map((game) => (
                           <option key={game.id} value={game.id}>
-                            {new Date(game.game_dt).toLocaleDateString()} vs {game.opponent}
+                            {formatBoardGameOption(game)}
                           </option>
                         ))}
                       </select>

@@ -346,6 +346,163 @@ describe('Football Pool API', () => {
     })
   })
 
+  describe('Board weekly and season-to-date winnings', () => {
+    let poolId: number
+    let weekOneGameId: number
+    let weekTwoGameId: number
+    let userId: number
+
+    beforeAll(async () => {
+      const userRes = await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Board',
+          lastName: 'Winner',
+          email: `board-${Date.now()}@example.com`,
+          phone: '5551234567'
+        })
+
+      userId = userRes.body.id
+
+      const teamRes = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({ teamName: 'Board Test Team' })
+
+      const poolRes = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: 'Board Winnings Test Pool',
+          teamId: teamRes.body.id,
+          season: 2026,
+          primaryTeam: 'Packers',
+          squareCost: 20,
+          q1Payout: 200,
+          q2Payout: 200,
+          q3Payout: 200,
+          q4Payout: 400
+        })
+
+      poolId = poolRes.body.id
+
+      await request(app)
+        .post(`/api/setup/pools/${poolId}/squares/init`)
+        .set(organizerHeaders)
+        .send({})
+
+      await request(app)
+        .patch(`/api/setup/pools/${poolId}/squares/1`)
+        .set(organizerHeaders)
+        .send({
+          participantId: userId,
+          playerId: null,
+          paidFlg: true,
+          reassign: false
+        })
+
+      const weekOneGameRes = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: 1,
+          opponent: 'Week One Opponent',
+          gameDate: '2026-09-13T18:00:00.000Z',
+          isSimulation: true
+        })
+
+      weekOneGameId = weekOneGameRes.body.game.id
+
+      const weekTwoGameRes = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: 2,
+          opponent: 'Week Two Opponent',
+          gameDate: '2026-09-20T18:00:00.000Z',
+          isSimulation: true
+        })
+
+      weekTwoGameId = weekTwoGameRes.body.game.id
+
+      const shuffledRows = [9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+      const shuffledCols = [4, 5, 6, 7, 8, 9, 0, 1, 2, 3]
+
+      await db.query(
+        `UPDATE football_pool.game
+         SET row_numbers = $2::jsonb,
+             col_numbers = $3::jsonb
+         WHERE id IN ($1, $4)`,
+        [weekOneGameId, JSON.stringify(shuffledRows), JSON.stringify(shuffledCols), weekTwoGameId]
+      )
+
+      const repeatedWinningScores = {
+        q1PrimaryScore: 0,
+        q1OpponentScore: 0,
+        q2PrimaryScore: 10,
+        q2OpponentScore: 10,
+        q3PrimaryScore: 20,
+        q3OpponentScore: 20,
+        q4PrimaryScore: 30,
+        q4OpponentScore: 30
+      }
+
+      await request(app)
+        .patch(`/api/games/${weekOneGameId}/scores`)
+        .set(organizerHeaders)
+        .send(repeatedWinningScores)
+
+      await request(app)
+        .patch(`/api/games/${weekTwoGameId}/scores`)
+        .set(organizerHeaders)
+        .send(repeatedWinningScores)
+    })
+
+    it('should show current-week and season-to-date winnings on the landing board', async () => {
+      const weekOneResponse = await request(app).get(`/api/landing/pools/${poolId}/board?gameId=${weekOneGameId}`)
+      const weekTwoResponse = await request(app).get(`/api/landing/pools/${poolId}/board?gameId=${weekTwoGameId}`)
+
+      expect(weekOneResponse.status).toBe(200)
+      expect(weekTwoResponse.status).toBe(200)
+
+      const weekOneSquare = weekOneResponse.body.board.squares.find((sq: { square_num: number }) => sq.square_num === 97)
+      const weekTwoSquare = weekTwoResponse.body.board.squares.find((sq: { square_num: number }) => sq.square_num === 97)
+      const identitySquare = weekTwoResponse.body.board.squares.find((sq: { square_num: number }) => sq.square_num === 1)
+
+      expect(weekOneSquare).toMatchObject({
+        current_game_won: 1000,
+        season_won_total: 1000
+      })
+
+      expect(weekTwoSquare).toMatchObject({
+        current_game_won: 1000,
+        season_won_total: 2000
+      })
+
+      expect(identitySquare).toMatchObject({
+        current_game_won: 0,
+        season_won_total: 0
+      })
+    })
+
+    it('should expose the same weekly and season-to-date totals on the participant board', async () => {
+      const response = await request(app)
+        .get(`/api/participant/pools/${poolId}/board?gameId=${weekTwoGameId}`)
+        .set(participantHeaders)
+
+      expect(response.status).toBe(200)
+
+      const winningSquare = response.body.board.squares.find((sq: { square_num: number }) => sq.square_num === 97)
+      expect(winningSquare).toMatchObject({
+        current_game_won: 1000,
+        season_won_total: 2000
+      })
+    })
+  })
+
   describe('Authentication', () => {
     it('should accept JWT token in Authorization header', async () => {
       // For now, just verify the endpoint exists and handles auth

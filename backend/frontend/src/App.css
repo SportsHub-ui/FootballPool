@@ -867,7 +867,7 @@ button:disabled {
 }
 
 .board-square {
-  min-height: 66px;
+  min-height: 74px;
   border-right: 1px solid #9f9f9f;
   border-bottom: 1px solid #9f9f9f;
   padding: 0.3rem;
@@ -875,6 +875,7 @@ button:disabled {
   place-items: center;
   gap: 0.2rem;
   position: relative;
+  overflow: hidden;
   background: #f4c7c3;
 }
 
@@ -883,15 +884,19 @@ button:disabled {
 }
 
 .board-square.win-1 {
-  background: #f8ef9f;
+  background: rgba(31, 157, 85, 0.06);
 }
 
 .board-square.win-2 {
-  background: #f4dc52;
+  background: rgba(31, 157, 85, 0.1);
 }
 
 .board-square.win-3 {
-  background: #e8c200;
+  background: rgba(31, 157, 85, 0.12);
+}
+
+.board-square.current-win {
+  box-shadow: inset 0 0 0 3px #159546;
 }
 
 .board-square.selected {
@@ -900,7 +905,16 @@ button:disabled {
 }
 
 .board-square.paid {
-  background: transparent;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.board-square.paid.win-1 {
+  background: rgba(31, 157, 85, 0.06);
+}
+
+.board-square.paid.win-3,
+.board-square.paid.current-win {
+  background: rgba(31, 157, 85, 0.12);
 }
 
 .square-label {
@@ -923,6 +937,7 @@ button:disabled {
   text-align: center;
   justify-items: center;
   align-self: center;
+  padding-bottom: 1.35rem;
 }
 
 .square-player-num {
@@ -937,6 +952,7 @@ button:disabled {
   line-height: 1;
   font-weight: 700;
   color: #444;
+  padding-bottom: 0.9rem;
 }
 
 .board-square.open .square-label {
@@ -952,6 +968,54 @@ button:disabled {
   position: absolute;
   right: 4px;
   bottom: 3px;
+}
+
+.square-payouts {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  bottom: 3px;
+  display: grid;
+  gap: 2px;
+  pointer-events: none;
+}
+
+.square-payout-pill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem;
+  padding: 0.08rem 0.28rem;
+  border-radius: 999px;
+  font-size: 0.5rem;
+  line-height: 1.1;
+  font-weight: 700;
+  border: 1px solid rgba(20, 35, 30, 0.12);
+  background: rgba(255, 255, 255, 0.82);
+  color: #203126;
+}
+
+.square-payout-pill strong {
+  font-weight: 800;
+}
+
+.square-payout-pill.is-active,
+.square-payout-pill.is-week {
+  background: linear-gradient(90deg, rgba(21, 149, 70, 0.95) 0%, rgba(21, 149, 70, 0.95) 100%);
+  color: #ffffff;
+  border-color: rgba(12, 76, 35, 0.55);
+}
+
+.square-payout-pill.is-ytd {
+  background: linear-gradient(
+    90deg,
+    rgba(21, 149, 70, 0.28) 0%,
+    rgba(21, 149, 70, 0.28) var(--fill-pct, 0%),
+    rgba(120, 132, 145, 0.24) var(--fill-pct, 0%),
+    rgba(120, 132, 145, 0.24) 100%
+  );
+  color: #19311f;
+  border-color: rgba(33, 66, 47, 0.22);
 }
 
 .board-game-selector {
