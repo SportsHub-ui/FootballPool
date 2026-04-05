@@ -99,8 +99,8 @@ const buildRandomScores = (): QuarterScoresInput => {
 }
 
 const assertSimulationEnabled = (): void => {
-  if (env.APP_ENV === 'production') {
-    throw new Error('Simulation tools are disabled in production.')
+  if (!env.SIMULATION_ENABLED) {
+    throw new Error('Simulation tools are disabled by configuration.')
   }
 }
 
@@ -170,8 +170,8 @@ export const getPoolSimulationStatus = async (
   const hasSimulationData = simulationGameCount > 0
   const blockers: string[] = []
 
-  if (env.APP_ENV === 'production') {
-    blockers.push('Simulation tools are disabled in production.')
+  if (!env.SIMULATION_ENABLED) {
+    blockers.push('Simulation tools are disabled by configuration.')
   }
 
   if (!pool.team_id) {
@@ -191,19 +191,19 @@ export const getPoolSimulationStatus = async (
   }
 
   return {
-    enabledInEnvironment: env.APP_ENV !== 'production',
+    enabledInEnvironment: env.SIMULATION_ENABLED,
     hasSimulationData,
     hasAssignedSquares,
     userCount,
     playerCount,
     canSimulate:
-      env.APP_ENV !== 'production' &&
+      env.SIMULATION_ENABLED &&
       !hasSimulationData &&
       !hasAssignedSquares &&
       userCount > 0 &&
       playerCount > 0 &&
       Boolean(pool.team_id),
-    canCleanup: env.APP_ENV !== 'production' && hasSimulationData,
+    canCleanup: env.SIMULATION_ENABLED && hasSimulationData,
     blockers
   }
 }

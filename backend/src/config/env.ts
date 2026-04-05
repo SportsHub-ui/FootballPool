@@ -31,7 +31,12 @@ const envSchema = z.object({
     .transform((value) => value === 'true'),
   SCORE_INGEST_SOURCE: z.enum(['mock', 'payload', 'espn']).default('mock'),
   SCORE_INGEST_INTERVAL_MINUTES: z.coerce.number().int().positive().default(30),
-  SCORE_INGEST_PRIMARY_TEAM: z.string().optional().default('')
+  SCORE_INGEST_PRIMARY_TEAM: z.string().optional().default(''),
+  SIMULATION_ENABLED: z
+    .enum(['true', 'false'])
+    .optional()
+    .default('true')
+    .transform((value) => value === 'true')
 });
 
 const parsed = envSchema.safeParse(process.env);

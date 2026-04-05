@@ -116,7 +116,7 @@ type TeamBrand = {
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000'
 const DEFAULT_POOL_LOGO = '/football-pool.png'
 const SHOW_SIMULATION_CONTROLS =
-  typeof window !== 'undefined' && /^(localhost|127(?:\.\d{1,3}){3})$/i.test(window.location.hostname)
+  (import.meta.env.VITE_ENABLE_SIMULATION_CONTROLS ?? 'true').toString().toLowerCase() === 'true'
 
 const NFL_TEAM_BRANDS: TeamBrand[] = [
   { key: 'cardinals', color: '#97233f', accent: '#000000', logo: 'https://a.espncdn.com/i/teamlogos/nfl/500/ari.png' },
