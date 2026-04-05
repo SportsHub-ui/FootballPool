@@ -12,6 +12,7 @@ A complete system for managing season-long football pools with real-time square 
 - Winnings ledger generation and tracking
 - Automated score ingestion (mock and ESPN sources)
 - Ingestion run history logging and review endpoint
+- Unique pool display links for read-only Squares board viewing
 - JWT authentication with fallback mock auth for development
 - Request/response logging with assignment-specific debug logs
 
@@ -156,6 +157,12 @@ npm run test:ui
 - `GET /api/participant/pools/:poolId/games` - Games for pool
 - `GET /api/participant/pools/:poolId/board` - Public pool square board with win heat data
 - `GET /api/participant/winnings` - User's winnings summary
+
+### Display Links
+- Every pool gets an automatically generated `display_token`.
+- Open the app with `?display=<display_token>` to launch directly into the Squares page for that pool in display-only mode.
+- The display view hides menus, sign-in, and pool/game selectors and opens on the last completed game for the linked pool.
+- `GET /api/landing/display/:displayToken` - Resolve a public read-only board payload for the linked pool
 
 ## Authentication
 

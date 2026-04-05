@@ -8,6 +8,7 @@ type LandingPool = {
   primary_team: string | null
   default_flg: boolean
   sign_in_req_flg: boolean
+  display_token: string | null
   team_name: string | null
   primary_color: string | null
   secondary_color: string | null
@@ -46,6 +47,7 @@ type PoolRecord = {
   q2_payout: number | null
   q3_payout: number | null
   q4_payout: number | null
+  display_token: string | null
   team_name: string | null
 }
 
@@ -141,6 +143,22 @@ const formatSimulationMode = (mode: SimulationMode | null | undefined): string =
   return 'Full Year'
 }
 
+const buildReadonlyPoolRecords = (pools: LandingPool[]): PoolRecord[] =>
+  pools.map((pool) => ({
+    id: pool.id,
+    pool_name: pool.pool_name,
+    team_id: null,
+    season: pool.season,
+    primary_team: pool.primary_team,
+    square_cost: null,
+    q1_payout: null,
+    q2_payout: null,
+    q3_payout: null,
+    q4_payout: null,
+    display_token: pool.display_token,
+    team_name: pool.team_name
+  }))
+
 export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onRequireSignIn }: Props) {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -149,6 +167,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   const [teamOptions, setTeamOptions] = useState<TeamRecord[]>([])
   const [poolRecords, setPoolRecords] = useState<PoolRecord[]>([])
   const [poolGames, setPoolGames] = useState<GameRecord[]>([])
+  const [hasOrganizerAccess, setHasOrganizerAccess] = useState(false)
   const [selectedPoolId, setSelectedPoolId] = useState<number | null>(null)
   const [simulationStatus, setSimulationStatus] = useState<SimulationControlStatus | null>(null)
   const [simulationMode, setSimulationMode] = useState<SimulationMode>('full_year')
@@ -169,7 +188,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     q4Payout: 0
   })
 
-  const canManagePools = Boolean(token)
+  const canManagePools = hasOrganizerAccess
 
   const simulationHeaders = useMemo(() => {
     if (!SHOW_SIMULATION_CONTROLS || token) {
@@ -212,10 +231,15 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   }
 
   const loadPoolData = async (preferredPoolId?: number | null): Promise<void> => {
+    const readonlyPools = buildReadonlyPoolRecords(pools)
+
     if (!token) {
-      setPoolRecords([])
+      setHasOrganizerAccess(false)
+      setPoolRecords(readonlyPools)
       setTeamOptions([])
-      loadPoolIntoForm(null)
+      const nextPool =
+        (preferredPoolId ? readonlyPools.find((pool) => pool.id === preferredPoolId) : null) ?? readonlyPools[0] ?? null
+      loadPoolIntoForm(nextPool)
       setError(null)
       setNotice(null)
       return
@@ -231,6 +255,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
         request<{ pools: PoolRecord[] }>('/api/setup/pools', { headers: authHeaders })
       ])
 
+      setHasOrganizerAccess(true)
       setTeamOptions(teamResult.teams)
       setPoolRecords(poolResult.pools)
 
@@ -242,10 +267,24 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
       const nextPool = poolResult.pools.find((pool) => pool.id === nextSelectedPoolId) ?? null
       loadPoolIntoForm(nextPool)
     } catch (fetchError) {
-      setError(fetchError instanceof Error ? fetchError.message : 'Failed to load pools')
-      setPoolRecords([])
-      setTeamOptions([])
-      loadPoolIntoForm(null)
+      const message = fetchError instanceof Error ? fetchError.message : 'Failed to load pools'
+      const isAuthIssue = /forbidden|unauthorized|sign in/i.test(message)
+
+      if (isAuthIssue) {
+        setHasOrganizerAccess(false)
+        setPoolRecords(readonlyPools)
+        setTeamOptions([])
+        const nextPool =
+          (preferredPoolId ? readonlyPools.find((pool) => pool.id === preferredPoolId) : null) ?? readonlyPools[0] ?? null
+        loadPoolIntoForm(nextPool)
+        setError(null)
+        setNotice('Sign in as an organizer to edit pool records.')
+      } else {
+        setError(message)
+        setPoolRecords([])
+        setTeamOptions([])
+        loadPoolIntoForm(null)
+      }
     } finally {
       setLoading(false)
     }
@@ -254,7 +293,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   useEffect(() => {
     void loadPoolData(selectedPoolId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token])
+  }, [pools, token])
 
   const authorizedHeroPool = useMemo(() => {
     const defaultPool = pools.find((pool) => pool.default_flg)
@@ -271,19 +310,40 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   )
 
   const heroSubtitle = useMemo(() => {
-    if (!token) {
-      return 'Sign in as an organizer to review and maintain pools.'
+    if (!canManagePools) {
+      return poolRecords.length > 0
+        ? 'You can review visible pools below. Sign in as an organizer to make changes.'
+        : 'Sign in as an organizer to review and maintain pools.'
     }
 
     return `${poolRecords.length} pool record${poolRecords.length === 1 ? '' : 's'} ready for maintenance.`
-  }, [poolRecords.length, token])
+  }, [canManagePools, poolRecords.length])
 
   const selectedPool = useMemo(
     () => poolRecords.find((pool) => pool.id === selectedPoolId) ?? null,
     [poolRecords, selectedPoolId]
   )
 
+  const displayUrl = useMemo(() => {
+    if (!selectedPool?.display_token) {
+      return ''
+    }
+
+    if (typeof window === 'undefined') {
+      return `?display=${selectedPool.display_token}`
+    }
+
+    const url = new URL(window.location.pathname, window.location.origin)
+    url.searchParams.set('display', selectedPool.display_token)
+    return url.toString()
+  }, [selectedPool])
+
   const loadPoolGames = async (poolId: number): Promise<GameRecord[]> => {
+    if (!canManagePools) {
+      setPoolGames([])
+      return []
+    }
+
     const games = await request<GameRecord[]>(`/api/games?poolId=${poolId}`, {
       headers: authHeaders
     })
@@ -293,7 +353,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   }
 
   useEffect(() => {
-    if (!token || !selectedPoolId) {
+    if (!canManagePools || !selectedPoolId) {
       setPoolGames([])
       return
     }
@@ -326,7 +386,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   }, [selectedPoolId, token])
 
   useEffect(() => {
-    if (!SHOW_SIMULATION_CONTROLS || !selectedPoolId) {
+    if (!SHOW_SIMULATION_CONTROLS || !canManagePools || !selectedPoolId) {
       setSimulationStatus(null)
       return
     }
@@ -734,10 +794,8 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
         <div className="landing-player-list-wrap is-scrollable" style={isPoolListExpanded ? { height: `${poolListHeight}px` } : undefined}>
           {loading ? (
             <p className="small">Loading pools...</p>
-          ) : !token ? (
-            <p className="small">Sign in to load pool maintenance records.</p>
           ) : poolRecords.length === 0 ? (
-            <p className="small">No pools are available yet.</p>
+            <p className="small">{canManagePools ? 'No pools are available yet.' : 'No visible pools are available.'}</p>
           ) : (
             <table className="landing-player-table">
               <thead>
@@ -860,7 +918,21 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                     : 'Enter the pool details below. Save the pool before using Fill Schedule.'}
                 </p>
                 {simulationProgressNote ? <p className="small landing-readonly-note">{simulationProgressNote}</p> : null}
-                              </div>
+                {selectedPool ? (
+                  displayUrl ? (
+                    <div>
+                      <p className="small landing-readonly-note">Display link opens the Squares board in read-only mode on the last completed game.</p>
+                      <label className="field-block">
+                        <span>Display URL</span>
+                        <input value={displayUrl} readOnly onFocus={(event) => event.currentTarget.select()} />
+                      </label>
+                      <a href={displayUrl} target="_blank" rel="noreferrer">Open display view</a>
+                    </div>
+                  ) : (
+                    <p className="small">Save the pool to generate its display URL.</p>
+                  )
+                ) : null}
+              </div>
             </div>
           </div>
 

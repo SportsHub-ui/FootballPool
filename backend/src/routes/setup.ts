@@ -14,6 +14,7 @@ import {
   getPoolSimulationStatus
 } from '../services/poolSimulation';
 import { ensurePoolSquaresInitialized } from '../services/poolSquares';
+import { ensurePoolDisplayTokenSupport, generateUniquePoolDisplayToken } from '../services/poolDisplay';
 
 export const setupRouter = Router();
 
@@ -733,8 +734,10 @@ setupRouter.post('/pools', async (req, res) => {
   const client = await db.connect();
 
   try {
+    await ensurePoolDisplayTokenSupport(client);
     await client.query('BEGIN');
     const id = await nextId(client, 'pool');
+    const displayToken = await generateUniquePoolDisplayToken(client);
 
     await client.query(
       `
@@ -749,9 +752,10 @@ setupRouter.post('/pools', async (req, res) => {
           q2_payout,
           q3_payout,
           q4_payout,
+          display_token,
           created_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
       `,
       [
         id,
@@ -763,14 +767,15 @@ setupRouter.post('/pools', async (req, res) => {
         parsed.data.q1Payout,
         parsed.data.q2Payout,
         parsed.data.q3Payout,
-        parsed.data.q4Payout
+        parsed.data.q4Payout,
+        displayToken
       ]
     );
 
     await ensurePoolSquaresInitialized(client, id);
 
     await client.query('COMMIT');
-    res.status(201).json({ id });
+    res.status(201).json({ id, displayToken });
   } catch (error) {
     await client.query('ROLLBACK');
     res.status(500).json({
@@ -1449,8 +1454,12 @@ setupRouter.delete('/teams/:teamId', async (req, res) => {
 });
 
 setupRouter.get('/pools', async (_req, res) => {
+  const client = await db.connect();
+
   try {
-    const result = await db.query(
+    await ensurePoolDisplayTokenSupport(client);
+
+    const result = await client.query(
       `
         SELECT
           p.id,
@@ -1463,6 +1472,7 @@ setupRouter.get('/pools', async (_req, res) => {
           p.q2_payout,
           p.q3_payout,
           p.q4_payout,
+          p.display_token,
           t.team_name
         FROM football_pool.pool p
         LEFT JOIN football_pool.team t ON t.id = p.team_id
@@ -1477,6 +1487,8 @@ setupRouter.get('/pools', async (_req, res) => {
       error: 'Failed to load pools',
       detail: error instanceof Error ? error.message : 'Unknown error'
     });
+  } finally {
+    client.release();
   }
 });
 

@@ -202,6 +202,7 @@ describe('Football Pool API', () => {
 
   describe('Setup Endpoints - Pools', () => {
     let createdPoolId: number
+    let displayToken: string
     let teamId: number
 
     beforeAll(async () => {
@@ -233,9 +234,11 @@ describe('Football Pool API', () => {
           q4Payout: 500
         })
 
-      expect(response.status).toBe(200)
+      expect(response.status).toBe(201)
       expect(response.body).toHaveProperty('id')
+      expect(response.body).toHaveProperty('displayToken')
       createdPoolId = response.body.id
+      displayToken = response.body.displayToken
     })
 
     it('should initialize 100 squares in a pool', async () => {
@@ -256,6 +259,84 @@ describe('Football Pool API', () => {
       expect(response.status).toBe(200)
       expect(Array.isArray(response.body)).toBe(true)
       expect(response.body.length).toBe(100)
+    })
+
+    it('should open a display link on the last completed game for the pool', async () => {
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `Display Link Pool ${Date.now()}`,
+          teamId: teamId,
+          season: 2026,
+          primaryTeam: 'Packers',
+          squareCost: 25,
+          q1Payout: 250,
+          q2Payout: 250,
+          q3Payout: 250,
+          q4Payout: 500
+        })
+
+      expect(poolResponse.status).toBe(201)
+      const displayPoolId = Number(poolResponse.body.id)
+      const displayPoolToken = String(poolResponse.body.displayToken)
+
+      const weekOneResponse = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId: displayPoolId,
+          weekNum: 1,
+          opponent: 'Chicago Bears',
+          gameDate: '2026-09-10T18:00:00.000Z'
+        })
+
+      const weekTwoResponse = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId: displayPoolId,
+          weekNum: 2,
+          opponent: 'Detroit Lions',
+          gameDate: '2026-09-17T18:00:00.000Z'
+        })
+
+      expect(weekOneResponse.status).toBe(200)
+      expect(weekTwoResponse.status).toBe(200)
+
+      const weekOneGameId = Number(weekOneResponse.body.game.id)
+
+      const scoreResponse = await request(app)
+        .patch(`/api/games/${weekOneGameId}/scores`)
+        .set(organizerHeaders)
+        .send({
+          q1PrimaryScore: 7,
+          q1OpponentScore: 0,
+          q2PrimaryScore: 14,
+          q2OpponentScore: 3,
+          q3PrimaryScore: 21,
+          q3OpponentScore: 10,
+          q4PrimaryScore: 28,
+          q4OpponentScore: 17
+        })
+
+      expect(scoreResponse.status).toBe(200)
+
+      const listResponse = await request(app)
+        .get('/api/setup/pools')
+        .set(organizerHeaders)
+
+      expect(listResponse.status).toBe(200)
+      const createdPool = listResponse.body.pools.find((pool: { id: number }) => pool.id === displayPoolId)
+      expect(createdPool?.display_token).toBe(displayPoolToken)
+
+      const displayResponse = await request(app).get(`/api/landing/display/${displayPoolToken}`)
+
+      expect(displayResponse.status).toBe(200)
+      expect(displayResponse.body.pool?.id).toBe(displayPoolId)
+      expect(displayResponse.body.selectedGameId).toBe(weekOneGameId)
+      expect(displayResponse.body.board?.poolId).toBe(displayPoolId)
+      expect(displayResponse.body.board?.gameId).toBe(weekOneGameId)
     })
   })
 

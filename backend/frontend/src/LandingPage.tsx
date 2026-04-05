@@ -15,6 +15,7 @@ type LandingPool = {
   primary_team: string | null
   default_flg: boolean
   sign_in_req_flg: boolean
+  display_token: string | null
   team_name: string | null
   primary_color: string | null
   secondary_color: string | null
@@ -78,6 +79,14 @@ type LoginResponse = {
     email: string
     role: string
   }
+}
+
+type DisplayBoardLaunchResponse = {
+  displayOnly: boolean
+  pool: LandingPool | null
+  games: LandingGame[]
+  selectedGameId: number | null
+  board: LandingBoard | null
 }
 
 type LandingUserOption = {
@@ -305,6 +314,13 @@ const getApiErrorMessage = (payload: unknown, fallback: string): string => {
 
 export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('auth-token'))
+  const [displayToken] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null
+
+    const value = new URLSearchParams(window.location.search).get('display')
+    return value?.trim() ? value.trim() : null
+  })
+  const displayOnlyMode = Boolean(displayToken)
   const [showLogin, setShowLogin] = useState(false)
   const [activePage, setActivePage] = useState<'Squares' | 'Metrics' | 'Players' | 'Teams' | 'Pools' | 'Schedules' | 'Users'>('Squares')
   const [busy, setBusy] = useState<string | null>(null)
@@ -419,6 +435,44 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
     }
   }
 
+  const loadDisplayBoard = async (displayCode: string): Promise<void> => {
+    setBusy('loading')
+    setPageError(null)
+    setPageNotice(null)
+    setSelectedSquare(null)
+
+    try {
+      const response = await fetch(`${API_BASE}/api/landing/display/${encodeURIComponent(displayCode)}`, {
+        headers: authHeaders
+      })
+      const data = await response.json().catch(() => null)
+
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(data, 'Failed to load display board'))
+      }
+
+      const launch = data as DisplayBoardLaunchResponse
+      const linkedPool = launch.pool ?? null
+
+      setPools(linkedPool ? [linkedPool] : [])
+      setSelectedPoolId(linkedPool?.id ?? null)
+      setGames(launch.games ?? [])
+      setSelectedGameId(launch.selectedGameId ?? null)
+      setBoard(launch.board ?? null)
+      setSimulationStatus(null)
+    } catch (error) {
+      setSimulationStatus(null)
+      setPageError(error instanceof Error ? error.message : 'Failed to load display board')
+      setPools([])
+      setSelectedPoolId(null)
+      setGames([])
+      setSelectedGameId(null)
+      setBoard(null)
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const loadPools = async (preferredPoolId?: number | null): Promise<void> => {
     setBusy('loading')
     setPageError(null)
@@ -459,9 +513,14 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   }
 
   useEffect(() => {
+    if (displayOnlyMode && displayToken) {
+      void loadDisplayBoard(displayToken)
+      return
+    }
+
     void loadPools(selectedPoolId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token])
+  }, [displayOnlyMode, displayToken, token])
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -756,7 +815,7 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   const logoSrc = selectedPool?.logo_file ? resolveImageUrl(selectedPool.logo_file) : DEFAULT_POOL_LOGO
   const topDigits = normalizeDigits(board?.colNumbers)
   const leftDigits = normalizeDigits(board?.rowNumbers)
-  const hasActiveSelection = Boolean(selectedPool && selectedGame && board)
+  const hasActiveSelection = Boolean(selectedPool && selectedGame && board && !displayOnlyMode)
 
   const boardRows = useMemo(() => {
     const byNumber = new Map<number, LandingBoardSquare>()
@@ -802,8 +861,8 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   const previousGameId = currentGameIndex > 0 ? games[currentGameIndex - 1]?.id ?? null : null
   const nextGameId = currentGameIndex >= 0 && currentGameIndex < games.length - 1 ? games[currentGameIndex + 1]?.id ?? null : null
 
-  const canManageSquares = Boolean(token && selectedPoolId && board)
-  const showSimulationAdvance = SHOW_SIMULATION_CONTROLS && Boolean(simulationStatus?.progressAction)
+  const canManageSquares = Boolean(!displayOnlyMode && token && selectedPoolId && board)
+  const showSimulationAdvance = !displayOnlyMode && SHOW_SIMULATION_CONTROLS && Boolean(simulationStatus?.progressAction)
   const simulationAdvanceLabel = simulationStatus?.progressAction === 'complete_game' ? 'Complete Game' : 'Complete Quarter'
 
   const heroTitle = selectedPool
@@ -818,70 +877,74 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
 
   return (
     <div className={`landing-page-shell ${activePage === 'Squares' ? 'is-squares-page' : 'is-scroll-page'}`}>
-      <nav className="landing-nav-bar">
-        <div className="landing-nav-links">
-          {(['Squares', 'Players', 'Teams', 'Pools', 'Schedules', 'Users'] as const).map((item) => (
-            <button
-              key={item}
-              type="button"
-              className={`landing-nav-link ${activePage === item ? 'is-active' : ''}`}
-              onClick={() => setActivePage(item)}
-            >
-              {item}
-            </button>
-          ))}
-          <button type="button" className="landing-nav-link landing-nav-admin" onClick={onOpenAdmin}>
-            Admin
-          </button>
-          <button
-            type="button"
-            className={`landing-nav-link ${activePage === 'Metrics' ? 'is-active' : ''}`}
-            onClick={() => setActivePage('Metrics')}
-          >
-            Metrics
-          </button>
-        </div>
-
-        <button
-          type="button"
-          className="landing-signin-btn"
-          onClick={() => (token ? handleLogout() : setShowLogin((current) => !current))}
-        >
-          {token ? 'Sign Out' : 'Sign In'}
-        </button>
-      </nav>
-
-      {showLogin && !token ? (
-        <section className="landing-login-card">
-          <div>
-            <h2>Sign in</h2>
-            <p>Access follower pools and keep your view personalized.</p>
-          </div>
-          <form className="landing-login-form" onSubmit={handleLogin}>
-            <input
-              type="email"
-              placeholder="Email"
-              value={loginForm.email}
-              onChange={(event) => setLoginForm((current) => ({ ...current, email: event.target.value }))}
-              required
-              disabled={busy !== null}
-            />
-            <input
-              type="password"
-              placeholder="Password"
-              value={loginForm.password}
-              onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))}
-              required
-              disabled={busy !== null}
-            />
-            <div className="landing-login-actions">
-              <button type="submit" className="primary" disabled={busy !== null}>
-                {busy === 'login' ? 'Signing in...' : 'Sign In'}
+      {!displayOnlyMode ? (
+        <>
+          <nav className="landing-nav-bar">
+            <div className="landing-nav-links">
+              {(['Squares', 'Players', 'Teams', 'Pools', 'Schedules', 'Users'] as const).map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  className={`landing-nav-link ${activePage === item ? 'is-active' : ''}`}
+                  onClick={() => setActivePage(item)}
+                >
+                  {item}
+                </button>
+              ))}
+              <button type="button" className="landing-nav-link landing-nav-admin" onClick={onOpenAdmin}>
+                Admin
+              </button>
+              <button
+                type="button"
+                className={`landing-nav-link ${activePage === 'Metrics' ? 'is-active' : ''}`}
+                onClick={() => setActivePage('Metrics')}
+              >
+                Metrics
               </button>
             </div>
-          </form>
-          {loginError ? <div className="error-banner">{loginError}</div> : null}
-        </section>
+
+            <button
+              type="button"
+              className="landing-signin-btn"
+              onClick={() => (token ? handleLogout() : setShowLogin((current) => !current))}
+            >
+              {token ? 'Sign Out' : 'Sign In'}
+            </button>
+          </nav>
+
+          {showLogin && !token ? (
+            <section className="landing-login-card">
+              <div>
+                <h2>Sign in</h2>
+                <p>Access follower pools and keep your view personalized.</p>
+              </div>
+              <form className="landing-login-form" onSubmit={handleLogin}>
+                <input
+                  type="email"
+                  placeholder="Email"
+                  value={loginForm.email}
+                  onChange={(event) => setLoginForm((current) => ({ ...current, email: event.target.value }))}
+                  required
+                  disabled={busy !== null}
+                />
+                <input
+                  type="password"
+                  placeholder="Password"
+                  value={loginForm.password}
+                  onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))}
+                  required
+                  disabled={busy !== null}
+                />
+                <div className="landing-login-actions">
+                  <button type="submit" className="primary" disabled={busy !== null}>
+                    {busy === 'login' ? 'Signing in...' : 'Sign In'}
+                  </button>
+                </div>
+              </form>
+              {loginError ? <div className="error-banner">{loginError}</div> : null}
+            </section>
+          ) : null}
+        </>
       ) : null}
 
       {pageError ? <div className="error-banner landing-error-banner">{pageError}</div> : null}
@@ -893,66 +956,67 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
 
       {activePage === 'Squares' ? (
         <section className="landing-placeholder-card">
-          <div className="board-game-selector landing-board-selector-bar">
-            <label className="field-block">
-              <span>Pool</span>
-              <select
-                value={selectedPoolId ?? ''}
-                onChange={(event) => {
-                  const value = event.target.value ? Number(event.target.value) : null
-                  void handlePoolChange(value)
-                }}
-                disabled={busy === 'loading' || pools.length === 0}
-              >
-                <option value="">{pools.length > 0 ? 'Select Pool' : 'No Pools Available'}</option>
-                {pools.map((pool) => (
-                  <option key={pool.id} value={pool.id}>
-                    {pool.team_name ?? pool.primary_team ?? 'Team'} • {pool.pool_name}
-                  </option>
-                ))}
-              </select>
-            </label>
+          {!displayOnlyMode ? (
+            <div className="board-game-selector landing-board-selector-bar">
+              <label className="field-block">
+                <span>Pool</span>
+                <select
+                  value={selectedPoolId ?? ''}
+                  onChange={(event) => {
+                    const value = event.target.value ? Number(event.target.value) : null
+                    void handlePoolChange(value)
+                  }}
+                  disabled={busy === 'loading' || pools.length === 0}
+                >
+                  <option value="">{pools.length > 0 ? 'Select Pool' : 'No Pools Available'}</option>
+                  {pools.map((pool) => (
+                    <option key={pool.id} value={pool.id}>
+                      {pool.team_name ?? pool.primary_team ?? 'Team'} • {pool.pool_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-            <label className="field-block">
-              <span>Week / Game</span>
-              <select
-                value={selectedGameId ?? ''}
-                onChange={(event) => {
-                  const value = event.target.value ? Number(event.target.value) : null
-                  void handleGameChange(value)
-                }}
-                disabled={busy === 'loading' || !selectedPool || games.length === 0}
-              >
-                {!selectedPool ? <option value="">Select pool first</option> : null}
-                {selectedPool && games.length === 0 ? <option value="">No games available</option> : null}
-                {selectedPool
-                  ? games.map((game) => (
-                      <option key={game.id} value={game.id}>
-                        {formatGameOption(game, board?.primaryTeam ?? selectedPool.primary_team ?? selectedPool.team_name ?? 'Team')}
-                      </option>
-                    ))
-                  : null}
-              </select>
-            </label>
+              <label className="field-block">
+                <span>Week / Game</span>
+                <select
+                  value={selectedGameId ?? ''}
+                  onChange={(event) => {
+                    const value = event.target.value ? Number(event.target.value) : null
+                    void handleGameChange(value)
+                  }}
+                  disabled={busy === 'loading' || !selectedPool || games.length === 0}
+                >
+                  {!selectedPool ? <option value="">Select pool first</option> : null}
+                  {selectedPool && games.length === 0 ? <option value="">No games available</option> : null}
+                  {selectedPool
+                    ? games.map((game) => (
+                        <option key={game.id} value={game.id}>
+                          {formatGameOption(game, board?.primaryTeam ?? selectedPool.primary_team ?? selectedPool.team_name ?? 'Team')}
+                        </option>
+                      ))
+                    : null}
+                </select>
+              </label>
 
-            {SHOW_SIMULATION_CONTROLS ? (
-              <div className="square-toolbar">
-                {showSimulationAdvance ? (
-                  <>
-                    <button
-                      type="button"
-                      className="primary"
-                      onClick={() => void handleSimulationAdvance()}
-                      disabled={busy !== null || !(simulationStatus?.canAdvance ?? false)}
-                    >
-                      {busy === 'advance-simulation' ? 'Completing...' : simulationAdvanceLabel}
-                    </button>
-                  </>
-                ) : null}
-              </div>
-            ) : null}
-
-          </div>
+              {SHOW_SIMULATION_CONTROLS ? (
+                <div className="square-toolbar">
+                  {showSimulationAdvance ? (
+                    <>
+                      <button
+                        type="button"
+                        className="primary"
+                        onClick={() => void handleSimulationAdvance()}
+                        disabled={busy !== null || !(simulationStatus?.canAdvance ?? false)}
+                      >
+                        {busy === 'advance-simulation' ? 'Completing...' : simulationAdvanceLabel}
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
           {selectedPool && board ? (
             <div
@@ -963,27 +1027,31 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
               }}
             >
               <div className="pool-board-header">
-                <button
-                  type="button"
-                  className="pool-board-nav-arrow"
-                  onClick={() => void handleGameChange(previousGameId)}
-                  disabled={!previousGameId || busy === 'loading'}
-                  aria-label="Previous week"
-                  title="Previous week"
-                >
-                  ←
-                </button>
+                {!displayOnlyMode ? (
+                  <button
+                    type="button"
+                    className="pool-board-nav-arrow"
+                    onClick={() => void handleGameChange(previousGameId)}
+                    disabled={!previousGameId || busy === 'loading'}
+                    aria-label="Previous week"
+                    title="Previous week"
+                  >
+                    ←
+                  </button>
+                ) : <span />}
                 <span className="pool-board-header-title">{`${heroTitle} • ${heroDate}`}</span>
-                <button
-                  type="button"
-                  className="pool-board-nav-arrow"
-                  onClick={() => void handleGameChange(nextGameId)}
-                  disabled={!nextGameId || busy === 'loading'}
-                  aria-label="Next week"
-                  title="Next week"
-                >
-                  →
-                </button>
+                {!displayOnlyMode ? (
+                  <button
+                    type="button"
+                    className="pool-board-nav-arrow"
+                    onClick={() => void handleGameChange(nextGameId)}
+                    disabled={!nextGameId || busy === 'loading'}
+                    aria-label="Next week"
+                    title="Next week"
+                  >
+                    →
+                  </button>
+                ) : <span />}
               </div>
 
               <div className="pool-board-main">
