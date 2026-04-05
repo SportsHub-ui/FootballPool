@@ -49,6 +49,17 @@ type PoolRecord = {
   team_name: string | null
 }
 
+type SimulationControlStatus = {
+  enabledInEnvironment: boolean
+  hasSimulationData: boolean
+  hasAssignedSquares: boolean
+  userCount: number
+  playerCount: number
+  canSimulate: boolean
+  canCleanup: boolean
+  blockers: string[]
+}
+
 type Props = {
   pools: LandingPool[]
   token: string | null
@@ -64,6 +75,8 @@ const POOL_LIST_MAX_HEIGHT = 360
 const POOL_LIST_DEFAULT_HEIGHT = 170
 const TOTAL_SQUARES = 100
 const NFL_SEASON_GAMES = 17
+const SHOW_SIMULATION_CONTROLS =
+  (import.meta.env.VITE_ENABLE_SIMULATION_CONTROLS ?? 'true').toString().toLowerCase() === 'true'
 const NFL_TEAMS = [
   'Arizona Cardinals',
   'Atlanta Falcons',
@@ -123,6 +136,8 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   const [poolRecords, setPoolRecords] = useState<PoolRecord[]>([])
   const [poolGames, setPoolGames] = useState<GameRecord[]>([])
   const [selectedPoolId, setSelectedPoolId] = useState<number | null>(null)
+  const [simulationStatus, setSimulationStatus] = useState<SimulationControlStatus | null>(null)
+  const [simulationBusy, setSimulationBusy] = useState<'create-simulation' | 'cleanup-simulation' | null>(null)
   const [isCreatingNew, setIsCreatingNew] = useState(false)
   const [isPoolListExpanded, setIsPoolListExpanded] = useState(true)
   const [poolListHeight, setPoolListHeight] = useState(POOL_LIST_DEFAULT_HEIGHT)
@@ -139,6 +154,18 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   })
 
   const canManagePools = Boolean(token)
+
+  const simulationHeaders = useMemo(() => {
+    if (!SHOW_SIMULATION_CONTROLS || token) {
+      return authHeaders
+    }
+
+    return {
+      ...authHeaders,
+      'x-user-id': 'dev-simulation-user',
+      'x-user-role': 'organizer'
+    }
+  }, [authHeaders, token])
 
   const request = async <T,>(path: string, init?: RequestInit): Promise<T> => {
     const response = await fetch(`${apiBase}${path}`, init)
@@ -240,6 +267,15 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     [poolRecords, selectedPoolId]
   )
 
+  const loadPoolGames = async (poolId: number): Promise<GameRecord[]> => {
+    const games = await request<GameRecord[]>(`/api/games?poolId=${poolId}`, {
+      headers: authHeaders
+    })
+
+    setPoolGames(games)
+    return games
+  }
+
   useEffect(() => {
     if (!token || !selectedPoolId) {
       setPoolGames([])
@@ -248,7 +284,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
 
     let isActive = true
 
-    const loadPoolGames = async (): Promise<void> => {
+    const hydratePoolGames = async (): Promise<void> => {
       try {
         const games = await request<GameRecord[]>(`/api/games?poolId=${selectedPoolId}`, {
           headers: authHeaders
@@ -265,13 +301,54 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
       }
     }
 
-    void loadPoolGames()
+    void hydratePoolGames()
 
     return () => {
       isActive = false
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPoolId, token])
+
+  useEffect(() => {
+    if (!SHOW_SIMULATION_CONTROLS || !selectedPoolId) {
+      setSimulationStatus(null)
+      return
+    }
+
+    let isActive = true
+
+    const loadSimulationStatus = async (): Promise<void> => {
+      try {
+        const data = await request<{ status?: SimulationControlStatus }>(`/api/setup/pools/${selectedPoolId}/simulation`, {
+          headers: simulationHeaders
+        })
+
+        if (isActive) {
+          setSimulationStatus(data.status ?? null)
+        }
+      } catch (fetchError) {
+        if (isActive) {
+          setSimulationStatus({
+            enabledInEnvironment: true,
+            hasSimulationData: poolGames.some((game) => game.is_simulation),
+            hasAssignedSquares: false,
+            userCount: 0,
+            playerCount: 0,
+            canSimulate: false,
+            canCleanup: poolGames.some((game) => game.is_simulation),
+            blockers: [fetchError instanceof Error ? fetchError.message : 'Failed to load simulation status']
+          })
+        }
+      }
+    }
+
+    void loadSimulationStatus()
+
+    return () => {
+      isActive = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [poolGames, selectedPoolId, simulationHeaders])
 
   const payoutSummary = useMemo(() => {
     const squareCost = Math.max(0, Number(poolForm.squareCost) || 0)
@@ -448,6 +525,64 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     }
   }
 
+  const hasSimulationData = simulationStatus?.hasSimulationData ?? poolGames.some((game) => game.is_simulation)
+  const simulationButtonLabel = hasSimulationData ? 'Cleanup' : 'Simulation'
+  const simulationButtonDisabled = hasSimulationData
+    ? !selectedPoolId || saving || simulationBusy !== null || !(simulationStatus?.canCleanup ?? hasSimulationData)
+    : !selectedPoolId || saving || simulationBusy !== null || !(simulationStatus?.canSimulate ?? false)
+  const simulationButtonTitle = !selectedPoolId
+    ? 'Select a pool to enable simulation.'
+    : hasSimulationData
+      ? 'Remove the simulated season data for this pool.'
+      : simulationStatus?.canSimulate
+        ? 'Create a full season simulation for this pool.'
+        : simulationStatus?.blockers.join(' ') || 'Simulation unavailable for this pool.'
+  const showSimulationTooltip = simulationButtonDisabled && Boolean(simulationButtonTitle)
+
+  const handleSimulationAction = async (): Promise<void> => {
+    if (!selectedPoolId || !simulationStatus) {
+      return
+    }
+
+    const isCleanup = simulationStatus.hasSimulationData
+    const confirmed = window.confirm(
+      isCleanup
+        ? 'Remove the simulated season data for this pool and clear all simulated square assignments?'
+        : 'Create a full season simulation for this pool? This will assign all squares, generate games, row/col numbers, and scores.'
+    )
+
+    if (!confirmed) {
+      return
+    }
+
+    setSimulationBusy(isCleanup ? 'cleanup-simulation' : 'create-simulation')
+    setError(null)
+    setNotice(null)
+
+    try {
+      const result = await request<{ message?: string }>(`/api/setup/pools/${selectedPoolId}/simulation`, {
+        method: isCleanup ? 'DELETE' : 'POST',
+        headers: simulationHeaders
+      })
+
+      await loadPoolData(selectedPoolId)
+      await loadPoolGames(selectedPoolId)
+
+      const statusResult = await request<{ status?: SimulationControlStatus }>(`/api/setup/pools/${selectedPoolId}/simulation`, {
+        headers: simulationHeaders
+      })
+      setSimulationStatus(statusResult.status ?? null)
+
+      if (result.message) {
+        setNotice(result.message)
+      }
+    } catch (simulationError) {
+      setError(simulationError instanceof Error ? simulationError.message : isCleanup ? 'Failed to clean up simulation' : 'Failed to create simulation')
+    } finally {
+      setSimulationBusy(null)
+    }
+  }
+
   const onDeletePool = async (): Promise<void> => {
     if (!selectedPoolId) {
       setError('Select a pool to delete.')
@@ -581,16 +716,38 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
               <p className="small">Create a new pool or update the selected one.</p>
             </div>
             <div className="landing-maintenance-actions">
-              <button type="button" className="secondary compact" onClick={onAddPool} disabled={saving}>
+              <button type="button" className="secondary compact" onClick={onAddPool} disabled={saving || simulationBusy !== null}>
                 Add
               </button>
-              <button type="button" className="secondary" onClick={onFillSchedule} disabled={saving || !selectedPoolId}>
+              <button type="button" className="secondary" onClick={onFillSchedule} disabled={saving || simulationBusy !== null || !selectedPoolId}>
                 {saving ? 'Filling...' : 'Fill Schedule'}
               </button>
-              <button type="button" className="primary" onClick={onSavePool} disabled={saving}>
+              {SHOW_SIMULATION_CONTROLS ? (
+                <span className="landing-hover-tooltip-wrap">
+                  <button
+                    type="button"
+                    className={hasSimulationData ? 'secondary' : 'primary'}
+                    onClick={() => void handleSimulationAction()}
+                    disabled={simulationButtonDisabled}
+                    aria-label={simulationButtonTitle}
+                  >
+                    {simulationBusy === 'create-simulation'
+                      ? 'Simulating...'
+                      : simulationBusy === 'cleanup-simulation'
+                        ? 'Cleaning up...'
+                        : simulationButtonLabel}
+                  </button>
+                  {showSimulationTooltip ? (
+                    <span className="landing-hover-tooltip" role="tooltip">
+                      {simulationButtonTitle}
+                    </span>
+                  ) : null}
+                </span>
+              ) : null}
+              <button type="button" className="primary" onClick={onSavePool} disabled={saving || simulationBusy !== null}>
                 {saving ? 'Saving...' : 'Save'}
               </button>
-              <button type="button" className="secondary" onClick={onDeletePool} disabled={saving || !selectedPoolId}>
+              <button type="button" className="secondary" onClick={onDeletePool} disabled={saving || simulationBusy !== null || !selectedPoolId}>
                 Delete
               </button>
             </div>
