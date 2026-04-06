@@ -1706,7 +1706,9 @@ button:disabled {
 
 .landing-square-card.is-open,
 .landing-square-card.is-current-win {
-  background: #b7e1cb;
+  background: linear-gradient(180deg, #fff4a3 0%, #ffe066 100%);
+  box-shadow: inset 0 0 0 3px #c49102;
+  animation: current-win-pulse 1.6s ease-in-out infinite;
 }
 
 .landing-square-card.is-unpaid {
