@@ -1176,8 +1176,11 @@ button:disabled {
   color: #bbf7d0;
 }
 
+
 .board-square:hover .square-hover-tooltip,
-.board-square:focus-visible .square-hover-tooltip {
+.board-square:focus-visible .square-hover-tooltip,
+.landing-square-card:hover .square-hover-tooltip,
+.landing-square-card:focus-visible .square-hover-tooltip {
   opacity: 1;
   transform: translate(-50%, 0);
 }
