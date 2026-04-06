@@ -221,6 +221,77 @@ const isCompletedGame = (game: LandingGame | null): boolean => {
   return game.q4_primary_score !== null && game.q4_opponent_score !== null
 }
 
+const getLatestScoredQuarter = (game: LandingGame | null): number | null => {
+  if (!game) return null
+  if (game.q4_primary_score !== null && game.q4_opponent_score !== null) return 4
+  if (game.q3_primary_score !== null && game.q3_opponent_score !== null) return 3
+  if (game.q2_primary_score !== null && game.q2_opponent_score !== null) return 2
+  if (game.q1_primary_score !== null && game.q1_opponent_score !== null) return 1
+  return null
+}
+
+const getQuarterScores = (
+  game: LandingGame,
+  quarter: number
+): { primaryScore: number | null; opponentScore: number | null } => {
+  if (quarter === 1) return { primaryScore: game.q1_primary_score, opponentScore: game.q1_opponent_score }
+  if (quarter === 2) return { primaryScore: game.q2_primary_score, opponentScore: game.q2_opponent_score }
+  if (quarter === 3) return { primaryScore: game.q3_primary_score, opponentScore: game.q3_opponent_score }
+  return { primaryScore: game.q4_primary_score, opponentScore: game.q4_opponent_score }
+}
+
+const resolveWinningSquareNumber = (
+  rowNumbers: Array<number | string> | null | undefined,
+  colNumbers: Array<number | string> | null | undefined,
+  opponentScore: number | null,
+  primaryScore: number | null
+): number | null => {
+  if (opponentScore == null || primaryScore == null) {
+    return null
+  }
+
+  const normalizedRows = (rowNumbers ?? []).map((entry) => Number(entry))
+  const normalizedCols = (colNumbers ?? []).map((entry) => Number(entry))
+
+  if (
+    normalizedRows.length !== 10 ||
+    normalizedCols.length !== 10 ||
+    normalizedRows.some((entry) => !Number.isFinite(entry)) ||
+    normalizedCols.some((entry) => !Number.isFinite(entry))
+  ) {
+    return null
+  }
+
+  const opponentDigit = Number(opponentScore) % 10
+  const primaryDigit = Number(primaryScore) % 10
+  const rowIndex = normalizedRows.findIndex((digit) => digit === opponentDigit)
+  const colIndex = normalizedCols.findIndex((digit) => digit === primaryDigit)
+
+  if (rowIndex === -1 || colIndex === -1) {
+    return null
+  }
+
+  return rowIndex * 10 + colIndex + 1
+}
+
+const formatQuarterSquareOwner = (square: LandingBoardSquare | null | undefined, squareNum: number | null): string => {
+  const fullName = `${square?.participant_first_name ?? ''} ${square?.participant_last_name ?? ''}`.trim()
+
+  if (fullName) {
+    return fullName
+  }
+
+  if (square?.participant_id != null) {
+    return `Participant #${square.participant_id}`
+  }
+
+  if (squareNum != null) {
+    return `Open square #${squareNum}`
+  }
+
+  return 'Awaiting score'
+}
+
 const formatGameOption = (game: LandingGame, primaryTeam: string): string => {
   const dateLabel = formatDate(game.game_dt)
   const weekLabel = game.week_num != null ? `Week ${game.week_num} • ` : ''
@@ -314,7 +385,7 @@ const getApiErrorMessage = (payload: unknown, fallback: string): string => {
   return fallback
 }
 
-export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
+export function LandingPage() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('auth-token'))
   const [displayToken] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null
@@ -860,6 +931,41 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
     return board.squares.find((square) => square.square_num === selectedSquare) ?? null
   }, [board, selectedSquare])
 
+  const latestScoredQuarter = getLatestScoredQuarter(selectedGame)
+
+  const quarterSummaries = useMemo(() => {
+    if (!board || !selectedGame || latestScoredQuarter == null) {
+      return []
+    }
+
+    const squaresByNumber = new Map<number, LandingBoardSquare>()
+
+    for (const square of board.squares) {
+      squaresByNumber.set(square.square_num, square)
+    }
+
+    const gameComplete = isCompletedGame(selectedGame)
+
+    return [1, 2, 3, 4].map((quarter) => {
+      const { primaryScore, opponentScore } = getQuarterScores(selectedGame, quarter)
+      const hasScore = primaryScore !== null && opponentScore !== null
+      const squareNum = hasScore
+        ? resolveWinningSquareNumber(board.rowNumbers, board.colNumbers, opponentScore, primaryScore)
+        : null
+      const matchingSquare = squareNum != null ? squaresByNumber.get(squareNum) ?? null : null
+
+      return {
+        quarter,
+        status: !hasScore ? 'pending' : !gameComplete && quarter === latestScoredQuarter ? 'active' : 'completed',
+        primaryScore,
+        opponentScore,
+        squareNum,
+        ownerName: hasScore ? formatQuarterSquareOwner(matchingSquare, squareNum) : 'Awaiting score'
+      }
+    })
+  }, [board, latestScoredQuarter, selectedGame])
+
+  const showQuarterSummaries = quarterSummaries.length > 0
 
   const currentGameIndex = useMemo(
     () => games.findIndex((game) => game.id === selectedGameId),
@@ -873,6 +979,10 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
   const showSimulationAdvance = !displayOnlyMode && SHOW_SIMULATION_CONTROLS && Boolean(simulationStatus?.progressAction)
   const canRefreshLiveQuarter = simulationStatus?.progressAction === 'complete_quarter'
   const simulationAdvanceLabel = simulationStatus?.progressAction === 'complete_game' ? 'Complete Game' : 'Complete Quarter'
+  const primaryTeamLabel = board?.primaryTeam ?? selectedPool?.primary_team ?? selectedPool?.team_name ?? 'Preferred Team'
+  const opponentTeamLabel = selectedGame?.opponent ?? board?.opponent ?? 'Opponent'
+  const primaryTeamLogo = primaryBrand.logo
+  const opponentTeamLogo = opponentBrand.logo
 
   const heroTitle = selectedPool
     ? `${selectedPool.team_name ?? selectedPool.primary_team ?? 'Team'} • ${selectedPool.pool_name ?? 'Pool'}`
@@ -900,9 +1010,6 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
                   {item}
                 </button>
               ))}
-              <button type="button" className="landing-nav-link landing-nav-admin" onClick={onOpenAdmin}>
-                Admin
-              </button>
               <button
                 type="button"
                 className={`landing-nav-link ${activePage === 'Metrics' ? 'is-active' : ''}`}
@@ -1080,23 +1187,23 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
 
                 <div className="pool-board-grid-wrap">
                   <div className="board-axis-title board-axis-top" style={{ backgroundColor: primaryBrand.color, color: primaryBrand.accent }}>
-                    {primaryBrand.logo ? <img className="axis-team-logo" src={primaryBrand.logo} alt={board?.primaryTeam ?? 'Preferred team'} /> : null}
-                    <span>{board?.primaryTeam ?? selectedPool.primary_team ?? selectedPool.team_name ?? 'Preferred Team'}</span>
+                    {primaryBrand.logo ? <img className="axis-team-logo" src={primaryBrand.logo} alt={primaryTeamLabel} /> : null}
+                    <span>{primaryTeamLabel}</span>
                   </div>
 
-                  <div className="board-top-digits">
+                  <div className={`board-top-digits ${showQuarterSummaries ? 'with-quarter-summaries' : ''}`}>
                     {topDigits.map((digit, index) => (
                       <div key={`top-digit-${index}`} className="digit-cell">{digit}</div>
                     ))}
                   </div>
 
-                  <div className="board-middle">
+                  <div className={`board-middle ${showQuarterSummaries ? 'with-quarter-summaries' : ''}`}>
                     <div
                       className="board-axis-title board-axis-left"
                       style={selectedGame ? { backgroundColor: opponentBrand.color, color: opponentBrand.accent } : undefined}
                     >
-                      {selectedGame && opponentBrand.logo ? <img className="axis-team-logo" src={opponentBrand.logo} alt={selectedGame.opponent} /> : null}
-                      <span>{selectedGame?.opponent ?? board?.opponent ?? 'Opponent'}</span>
+                      {selectedGame && opponentBrand.logo ? <img className="axis-team-logo" src={opponentBrand.logo} alt={opponentTeamLabel} /> : null}
+                      <span>{opponentTeamLabel}</span>
                     </div>
 
                     <div className="board-grid">
@@ -1119,7 +1226,7 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
                               <button
                                 key={square.square_num}
                                 type="button"
-                                className={`board-square ${square.participant_id ? 'owned' : 'open'} ${square.paid_flg ? 'paid' : ''} ${winClass} ${isCurrentLeader ? 'current-win' : ''} ${isSelectedSquare ? 'selected' : ''}`}
+                                className={`landing-square-card ${square.participant_id ? 'owned' : 'open'} ${square.paid_flg ? 'paid' : ''} ${winClass} ${isCurrentLeader ? 'current-win' : ''} ${isSelectedSquare ? 'selected' : ''}`}
                                 onClick={hasActiveSelection ? () => void handleOpenSquareAssignment(square) : undefined}
                                 aria-label={squareTooltip}
                               >
@@ -1145,6 +1252,41 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
                         </div>
                       ))}
                     </div>
+
+                    {showQuarterSummaries ? (
+                      <aside className="board-quarter-summary-panel" aria-label="Quarter winners and leaders">
+                        {quarterSummaries.map((summary) => (
+                          <article key={summary.quarter} className={`board-quarter-card is-${summary.status}`}>
+                            <div className="board-quarter-card-header">
+                              <span>{`Q${summary.quarter}`}</span>
+                              <span className="board-quarter-card-square">{summary.squareNum != null ? `Sq ${summary.squareNum}` : '—'}</span>
+                            </div>
+
+                            <div className="board-quarter-scoreline">
+                              <div>
+                                {primaryTeamLogo ? (
+                                  <img src={primaryTeamLogo} alt={primaryTeamLabel} className="quarter-team-logo" />
+                                ) : null}
+                                <span>{summary.primaryScore ?? '—'}</span>
+                              </div>
+                              <div>
+                                {opponentTeamLogo ? (
+                                  <img src={opponentTeamLogo} alt={opponentTeamLabel} className="quarter-team-logo" />
+                                ) : null}
+                                <span>{summary.opponentScore ?? '—'}</span>
+                              </div>
+                            </div>
+
+                            <div className="board-quarter-winner">
+                              <span className="board-quarter-winner-label">
+                                {summary.status === 'completed' ? 'Winner' : summary.status === 'active' ? 'Leader' : 'Pending'}
+                              </span>
+                              <strong>{summary.ownerName}</strong>
+                            </div>
+                          </article>
+                        ))}
+                      </aside>
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -1301,7 +1443,7 @@ export function LandingPage({ onOpenAdmin }: { onOpenAdmin: () => void }) {
             <div>
               <p className="landing-eyebrow">Coming Soon</p>
               <h1>{activePage}</h1>
-              <p>This section is not wired up yet. Use `Squares`, `Players`, `Users`, or `Admin` for now.</p>
+              <p>This section is not wired up yet. Use `Squares`, `Notifications`, `Players`, `Pools`, or `Users` for now.</p>
             </div>
           </div>
         </section>
