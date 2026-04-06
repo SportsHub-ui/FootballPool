@@ -1626,6 +1626,113 @@ describe('Football Pool API', () => {
       expect(String(userMessageResult.rows[0]?.message_text ?? '')).toContain('Quarter Winner won')
       expect(String(userMessageResult.rows[0]?.message_text ?? '')).toContain('Packers 0 · Email Opponent 0')
     })
+
+    it('should still log quarter-win emails when the pool payout is zero', async () => {
+      const winnerEmail = `zero-payout-${Date.now()}@example.com`
+
+      const winnerResponse = await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Zero',
+          lastName: 'Payout',
+          email: winnerEmail,
+          phone: '5558889999',
+          notificationLevel: 'quarter_win'
+        })
+
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({
+          teamName: `Zero Payout Team ${Date.now()}`
+        })
+
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `Zero Payout Pool ${Date.now()}`,
+          teamId: Number(teamResponse.body.id),
+          season: 2026,
+          primaryTeam: 'Packers',
+          squareCost: 0,
+          q1Payout: 0,
+          q2Payout: 0,
+          q3Payout: 0,
+          q4Payout: 0
+        })
+
+      const poolId = Number(poolResponse.body.id)
+
+      await request(app)
+        .post(`/api/setup/pools/${poolId}/squares/init`)
+        .set(organizerHeaders)
+        .send({})
+
+      await request(app)
+        .patch(`/api/setup/pools/${poolId}/squares/1`)
+        .set(organizerHeaders)
+        .send({
+          participantId: Number(winnerResponse.body.id),
+          playerId: null,
+          paidFlg: true,
+          reassign: false
+        })
+
+      const gameResponse = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: 1,
+          opponent: 'Zero Opponent',
+          gameDate: '2026-10-02T18:00:00.000Z',
+          isSimulation: true
+        })
+
+      const gameId = Number(gameResponse.body.game.id)
+
+      await db.query(
+        `UPDATE football_pool.game
+         SET row_numbers = $2::jsonb,
+             col_numbers = $3::jsonb
+         WHERE id = $1`,
+        [gameId, JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]), JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])]
+      )
+
+      const scoreResponse = await request(app)
+        .patch(`/api/games/${gameId}/scores`)
+        .set(organizerHeaders)
+        .send({
+          q1PrimaryScore: 0,
+          q1OpponentScore: 0,
+          q2PrimaryScore: 10,
+          q2OpponentScore: 10,
+          q3PrimaryScore: 20,
+          q3OpponentScore: 20,
+          q4PrimaryScore: 30,
+          q4OpponentScore: 30
+        })
+
+      expect(scoreResponse.status).toBe(200)
+
+      const notificationResult = await db.query(
+        `SELECT recipient_email, notification_kind, recipient_scope, quarter
+         FROM football_pool.notification_log
+         WHERE game_id = $1
+           AND recipient_scope = 'user'
+         ORDER BY quarter NULLS LAST`,
+        [gameId]
+      )
+
+      expect(notificationResult.rows).toEqual([
+        { recipient_email: winnerEmail, notification_kind: 'quarter_win', recipient_scope: 'user', quarter: 1 },
+        { recipient_email: winnerEmail, notification_kind: 'quarter_win', recipient_scope: 'user', quarter: 2 },
+        { recipient_email: winnerEmail, notification_kind: 'quarter_win', recipient_scope: 'user', quarter: 3 },
+        { recipient_email: winnerEmail, notification_kind: 'quarter_win', recipient_scope: 'user', quarter: 4 }
+      ])
+    })
   })
 
   describe('Authentication', () => {
