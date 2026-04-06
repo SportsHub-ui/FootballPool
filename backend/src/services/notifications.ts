@@ -362,6 +362,7 @@ const deliverEmail = async ({ recipientEmail, subject, messageText, messageHtml 
       text: messageText,
       html: messageHtml
     });
+    console.info(`[email-notification] delivered to=${recipientEmail} subject=${subject}`);
   } catch (error) {
     console.error(`[notifications] Failed to send email to ${recipientEmail}`, error);
   }
@@ -586,7 +587,7 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
   const userRecords = await loadUsersById(client, quarterWinnerIds);
 
   for (const quarter of context.quarters) {
-    if (quarter.payout <= 0 || quarter.squareNum == null || quarter.winnerUserId == null) {
+    if (quarter.squareNum == null || quarter.winnerUserId == null) {
       continue;
     }
 
@@ -689,7 +690,7 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
     const totalsByUser = new Map<number, { totalWon: number; wins: QuarterNotificationResult[] }>();
 
     for (const quarter of context.quarters) {
-      if (quarter.payout <= 0 || quarter.winnerUserId == null || quarter.squareNum == null) {
+      if (quarter.winnerUserId == null || quarter.squareNum == null) {
         continue;
       }
 
