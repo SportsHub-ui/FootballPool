@@ -1219,6 +1219,7 @@ export function LandingPage() {
                             const hasSeasonWin = square.season_won_total > 0
                             const isCurrentLeader = Boolean(square.is_current_score_leader)
                             const winClass = hasWeekWin ? 'win-3' : hasSeasonWin ? 'win-1' : 'win-0'
+                            const winStateClass = hasWeekWin ? 'is-week-win' : hasSeasonWin ? 'is-season-win' : ''
                             const isSelectedSquare = selectedSquare === square.square_num
                             const hasTooltip = hasWeekWin || hasSeasonWin || isCurrentLeader
                             const squareTooltip = hasTooltip
@@ -1229,7 +1230,7 @@ export function LandingPage() {
                               <button
                                 key={square.square_num}
                                 type="button"
-                                className={`landing-square-card ${square.participant_id ? 'owned' : 'open'} ${square.paid_flg ? 'paid' : ''} ${winClass} ${isCurrentLeader ? 'current-win' : ''} ${isSelectedSquare ? 'selected' : ''}`}
+                                className={`landing-square-card ${square.participant_id ? 'owned' : 'open'} ${square.paid_flg ? 'paid' : ''} ${winClass} ${winStateClass} ${isCurrentLeader ? 'is-current-win' : ''} ${isSelectedSquare ? 'is-selected' : ''} ${hasActiveSelection ? 'is-manageable' : ''}`}
                                 onClick={hasActiveSelection ? () => void handleOpenSquareAssignment(square) : undefined}
                                 aria-label={squareTooltip}
                               >

@@ -618,6 +618,7 @@ export function ParticipantView() {
                                   : hasSeasonWin
                                     ? 'win-1'
                                     : 'win-0'
+                                const winStateClass = hasWeekWin ? 'is-week-win' : hasSeasonWin ? 'is-season-win' : ''
                                 const hasTooltip = hasWeekWin || hasSeasonWin || isCurrentLeader
                                 const squareTooltip = hasTooltip
                                   ? `${isCurrentLeader ? 'Currently leading • ' : ''}Week: ${formatBoardMoney(sq.current_game_won)} • YTD: ${formatBoardMoney(sq.season_won_total)}`
@@ -627,7 +628,7 @@ export function ParticipantView() {
                                   <button
                                     key={sq.id}
                                     type="button"
-                                    className={`board-square ${sq.participant_id ? 'owned' : 'open'} ${winClass} ${isCurrentLeader ? 'current-win' : ''}`}
+                                    className={`board-square ${sq.participant_id ? 'owned' : 'open'} ${winClass} ${winStateClass} ${isCurrentLeader ? 'current-win' : ''}`}
                                     aria-label={squareTooltip}
                                   >
                                     {sq.participant_id ? (

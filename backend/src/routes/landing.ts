@@ -63,6 +63,132 @@ const getQuarterScores = (
   return { primaryScore: game.q4_primary_score, opponentScore: game.q4_opponent_score };
 };
 
+type QuarterKey = '1' | '2' | '3' | '4';
+type QuarterScoreMap = Partial<Record<QuarterKey, { home?: number | null; away?: number | null }>>;
+
+const toQuarterScoreMap = (value: unknown): QuarterScoreMap => {
+  if (!value) {
+    return {};
+  }
+
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as QuarterScoreMap;
+    } catch {
+      return {};
+    }
+  }
+
+  if (typeof value === 'object') {
+    return value as QuarterScoreMap;
+  }
+
+  return {};
+};
+
+const toNullableNumber = (value: unknown): number | null => {
+  if (value == null || value === '') {
+    return null;
+  }
+
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const mapLandingGameRow = (row: Record<string, any>) => {
+  const scores = toQuarterScoreMap(row.scores_by_quarter);
+
+  return {
+    ...row,
+    id: Number(row.id ?? row.game_id ?? row.pool_game_id),
+    pool_game_id: toNullableNumber(row.pool_game_id),
+    game_id: toNullableNumber(row.game_id) ?? toNullableNumber(row.id),
+    pool_id: toNullableNumber(row.pool_id),
+    week_num: toNullableNumber(row.week_num),
+    opponent: (row.opponent ?? row.away_team_name ?? 'Opponent') as string,
+    game_dt: row.game_dt ?? row.game_date ?? null,
+    is_simulation: Boolean(row.is_simulation ?? false),
+    row_numbers: Array.isArray(row.row_numbers) ? row.row_numbers : null,
+    col_numbers: Array.isArray(row.col_numbers)
+      ? row.col_numbers
+      : Array.isArray(row.column_numbers)
+        ? row.column_numbers
+        : null,
+    q1_primary_score: toNullableNumber(row.q1_primary_score) ?? toNullableNumber(scores['1']?.home),
+    q1_opponent_score: toNullableNumber(row.q1_opponent_score) ?? toNullableNumber(scores['1']?.away),
+    q2_primary_score: toNullableNumber(row.q2_primary_score) ?? toNullableNumber(scores['2']?.home),
+    q2_opponent_score: toNullableNumber(row.q2_opponent_score) ?? toNullableNumber(scores['2']?.away),
+    q3_primary_score: toNullableNumber(row.q3_primary_score) ?? toNullableNumber(scores['3']?.home),
+    q3_opponent_score: toNullableNumber(row.q3_opponent_score) ?? toNullableNumber(scores['3']?.away),
+    q4_primary_score: toNullableNumber(row.q4_primary_score) ?? toNullableNumber(scores['4']?.home),
+    q4_opponent_score: toNullableNumber(row.q4_opponent_score) ?? toNullableNumber(scores['4']?.away)
+  };
+};
+
+const loadPoolGames = async (client: PoolClient, poolId: number) => {
+  const normalizedResult = await client.query(
+    `SELECT COALESCE(legacy.id, g.id) AS id,
+            pg.id AS pool_game_id,
+            g.id AS game_id,
+            pg.pool_id,
+            g.week_number AS week_num,
+            away_team.name AS opponent,
+            g.game_date AS game_dt,
+            COALESCE(legacy.is_simulation, FALSE) AS is_simulation,
+            COALESCE(pg.row_numbers, legacy.row_numbers) AS row_numbers,
+            COALESCE(pg.column_numbers, legacy.col_numbers) AS col_numbers,
+            g.scores_by_quarter,
+            legacy.q1_primary_score,
+            legacy.q1_opponent_score,
+            legacy.q2_primary_score,
+            legacy.q2_opponent_score,
+            legacy.q3_primary_score,
+            legacy.q3_opponent_score,
+            legacy.q4_primary_score,
+            legacy.q4_opponent_score
+     FROM football_pool.pool_game pg
+     JOIN football_pool.game_new g ON g.id = pg.game_id
+     LEFT JOIN football_pool.nfl_team away_team ON away_team.id = g.away_team_id
+     LEFT JOIN football_pool.game legacy
+       ON legacy.pool_id = pg.pool_id
+      AND legacy.opponent = away_team.name
+      AND legacy.game_dt::date = g.game_date
+      AND legacy.week_num IS NOT DISTINCT FROM g.week_number
+     WHERE pg.pool_id = $1
+     ORDER BY COALESCE(g.week_number, 999), g.game_date ASC, g.id ASC`,
+    [poolId]
+  );
+
+  if (normalizedResult.rows.length > 0) {
+    return normalizedResult.rows.map((row) => mapLandingGameRow(row));
+  }
+
+  const legacyResult = await client.query(
+    `SELECT g.id,
+            g.pool_id,
+            g.week_num,
+            g.opponent,
+            g.game_dt,
+            g.is_simulation,
+            g.row_numbers,
+            g.col_numbers,
+            g.q1_primary_score,
+            g.q1_opponent_score,
+            g.q2_primary_score,
+            g.q2_opponent_score,
+            g.q3_primary_score,
+            g.q3_opponent_score,
+            g.q4_primary_score,
+            g.q4_opponent_score
+     FROM football_pool.game g
+     WHERE g.pool_id = $1
+     ORDER BY COALESCE(g.week_num, 999), g.game_dt ASC, g.id ASC`,
+    [poolId]
+  );
+
+  return legacyResult.rows.map((row) => mapLandingGameRow(row));
+};
+
 const loadAccessiblePools = async (client: PoolClient, userId: number | null) => {
   await ensurePoolDisplayTokenSupport(client);
 
@@ -241,56 +367,28 @@ const pickDisplayGameId = (
 };
 
 const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, gameId?: number | null) => {
-  const selectedGameResult = gameId
-    ? await client.query(
-        `SELECT id,
-                pool_id,
-                week_num,
-                opponent,
-                game_dt,
-                row_numbers,
-                col_numbers,
-                q1_primary_score,
-                q1_opponent_score,
-                q2_primary_score,
-                q2_opponent_score,
-                q3_primary_score,
-                q3_opponent_score,
-                q4_primary_score,
-                q4_opponent_score
-         FROM football_pool.game
-         WHERE pool_id = $1
-           AND id = $2
-         LIMIT 1`,
-        [poolId, gameId]
-      )
-    : await client.query(
-        `SELECT id,
-                pool_id,
-                week_num,
-                opponent,
-                game_dt,
-                row_numbers,
-                col_numbers,
-                q1_primary_score,
-                q1_opponent_score,
-                q2_primary_score,
-                q2_opponent_score,
-                q3_primary_score,
-                q3_opponent_score,
-                q4_primary_score,
-                q4_opponent_score
-         FROM football_pool.game
-         WHERE pool_id = $1
-         ORDER BY CASE WHEN game_dt >= CURRENT_DATE THEN 0 ELSE 1 END,
-                  COALESCE(week_num, 999),
-                  game_dt ASC,
-                  id ASC
-         LIMIT 1`,
-        [poolId]
-      );
+  const games = await loadPoolGames(client, poolId);
 
-  const selectedGame = selectedGameResult.rows[0] ?? null;
+  const preferredGameId =
+    gameId ?? pickDisplayGameId(games as Array<{
+      id: number;
+      opponent?: string | null;
+      q1_primary_score?: number | null;
+      q1_opponent_score?: number | null;
+      q2_primary_score?: number | null;
+      q2_opponent_score?: number | null;
+      q3_primary_score?: number | null;
+      q3_opponent_score?: number | null;
+      q4_primary_score: number | null;
+      q4_opponent_score: number | null;
+    }>);
+
+  const selectedGame =
+    preferredGameId != null
+      ? games.find(
+          (game) => Number(game.id) === Number(preferredGameId) || Number(game.game_id ?? 0) === Number(preferredGameId)
+        ) ?? null
+      : null;
 
   const squareCountResult = await client.query<{ square_count: number }>(
     `SELECT COUNT(*)::int AS square_count
@@ -316,34 +414,6 @@ const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, g
      WHERE id = $1
      LIMIT 1`,
     [poolId]
-  );
-
-  const gamesUpToSelectionResult = await client.query(
-    `SELECT id,
-            week_num,
-            game_dt,
-            row_numbers,
-            col_numbers,
-            q1_primary_score,
-            q1_opponent_score,
-            q2_primary_score,
-            q2_opponent_score,
-            q3_primary_score,
-            q3_opponent_score,
-            q4_primary_score,
-            q4_opponent_score
-     FROM football_pool.game
-     WHERE pool_id = $1
-       AND (
-         $2::int IS NULL
-         OR COALESCE(week_num, 999) < COALESCE($2::int, 999)
-         OR (
-           COALESCE(week_num, 999) = COALESCE($2::int, 999)
-           AND ($3::timestamptz IS NULL OR game_dt <= $3::timestamptz)
-         )
-       )
-     ORDER BY COALESCE(week_num, 999), game_dt ASC, id ASC`,
-    [poolId, selectedGame?.week_num ?? null, selectedGame?.game_dt ?? null]
   );
 
   const squaresResult = await client.query(
@@ -391,7 +461,23 @@ const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, g
         )
       : null;
 
-  for (const game of gamesUpToSelectionResult.rows) {
+  const gamesUpToSelection = selectedGame
+    ? games.filter((game) => {
+        const gameWeek = game.week_num ?? Number.MAX_SAFE_INTEGER;
+        const selectedWeek = selectedGame.week_num ?? Number.MAX_SAFE_INTEGER;
+        const gameTime = game.game_dt ? new Date(game.game_dt).getTime() : Number.MAX_SAFE_INTEGER;
+        const selectedTime = selectedGame.game_dt ? new Date(selectedGame.game_dt).getTime() : Number.MAX_SAFE_INTEGER;
+
+        return (
+          gameWeek < selectedWeek ||
+          (gameWeek === selectedWeek &&
+            (gameTime < selectedTime ||
+              (gameTime === selectedTime && Number(game.id) <= Number(selectedGame.id))))
+        );
+      })
+    : games;
+
+  for (const game of gamesUpToSelection) {
     const liveQuarterToExclude =
       selectedGameIsLiveSimulationQuarter && selectedGame && Number(game.id) === Number(selectedGame.id)
         ? Number(simulationStatus?.nextQuarter ?? 0)
@@ -435,7 +521,6 @@ const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, g
         currentGameTotals.set(entry.squareNum, (currentGameTotals.get(entry.squareNum) ?? 0) + entry.amount);
       }
     }
-
   }
 
   const squares = squaresResult.rows.map((square) => ({
@@ -758,30 +843,9 @@ landingRouter.get('/pools/:poolId/games', async (req, res) => {
         return res.status(404).json({ error: 'Pool not found or unavailable' });
       }
 
-      const result = await client.query(
-        `SELECT g.id,
-                g.pool_id,
-                g.week_num,
-                g.opponent,
-                g.game_dt,
-                g.is_simulation,
-                g.row_numbers,
-                g.col_numbers,
-                g.q1_primary_score,
-                g.q1_opponent_score,
-                g.q2_primary_score,
-                g.q2_opponent_score,
-                g.q3_primary_score,
-                g.q3_opponent_score,
-                g.q4_primary_score,
-                g.q4_opponent_score
-         FROM football_pool.game g
-         WHERE g.pool_id = $1
-         ORDER BY COALESCE(g.week_num, 999), g.game_dt ASC, g.id ASC`,
-        [poolId]
-      );
+      const games = await loadPoolGames(client, poolId);
 
-      res.json({ pool, games: result.rows });
+      res.json({ pool, games });
     } finally {
       client.release();
     }
@@ -1043,30 +1107,7 @@ landingRouter.get('/display/:displayToken', async (req, res) => {
         return res.status(404).json({ error: 'Pool display link not found' });
       }
 
-      const gamesResult = await client.query(
-        `SELECT g.id,
-                g.pool_id,
-                g.week_num,
-                g.opponent,
-                g.game_dt,
-                g.is_simulation,
-                g.row_numbers,
-                g.col_numbers,
-                g.q1_primary_score,
-                g.q1_opponent_score,
-                g.q2_primary_score,
-                g.q2_opponent_score,
-                g.q3_primary_score,
-                g.q3_opponent_score,
-                g.q4_primary_score,
-                g.q4_opponent_score
-         FROM football_pool.game g
-         WHERE g.pool_id = $1
-         ORDER BY COALESCE(g.week_num, 999), g.game_dt ASC, g.id ASC`,
-        [pool.id]
-      );
-
-      const games = gamesResult.rows;
+      const games = await loadPoolGames(client, Number(pool.id));
       const simulationStatus = await getPoolSimulationStatus(client, Number(pool.id)).catch(() => null);
       const selectedGameId = pickDisplayGameId(
         games as Array<{

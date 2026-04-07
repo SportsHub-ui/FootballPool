@@ -1015,23 +1015,24 @@ button:disabled {
   background: #b7e1cd;
 }
 
-.board-square.win-1 {
-  background: rgba(31, 157, 85, 0.06);
+.board-square.win-1,
+.board-square.is-season-win,
+.landing-square-card.win-1,
+.landing-square-card.is-season-win {
+  background: linear-gradient(180deg, #e8f7ee 0%, #d6efdf 100%);
+  box-shadow: inset 0 0 0 2px rgba(39, 110, 66, 0.18);
 }
 
 .board-square.win-2 {
   background: rgba(31, 157, 85, 0.1);
 }
 
-.board-square.win-3 {
-  background: rgba(31, 157, 85, 0.12);
-}
-
-.landing-square-card.win-1 {
-  background: rgba(31, 157, 85, 0.06);
-}
-.landing-square-card.win-3 {
-  background: rgba(31, 157, 85, 0.12);
+.board-square.win-3,
+.board-square.is-week-win,
+.landing-square-card.win-3,
+.landing-square-card.is-week-win {
+  background: linear-gradient(180deg, #d2f4de 0%, #a9dfbf 100%);
+  box-shadow: inset 0 0 0 3px rgba(34, 110, 63, 0.42), 0 3px 10px rgba(31, 157, 85, 0.14);
 }
 
 @keyframes current-win-pulse {
@@ -1688,8 +1689,13 @@ button:disabled {
   align-items: center;
   justify-content: center;
   text-align: center;
-  overflow: hidden;
+  overflow: visible;
   box-sizing: border-box;
+}
+
+.landing-square-card:hover,
+.landing-square-card:focus-visible {
+  z-index: 30;
 }
 
 .landing-square-card.is-manageable {
@@ -1727,7 +1733,8 @@ button:disabled {
 }
 
 .landing-square-card.is-season-win {
-  background: #fc38b2;
+  background: linear-gradient(180deg, #e8f7ee 0%, #d6efdf 100%);
+  box-shadow: inset 0 0 0 2px rgba(39, 110, 66, 0.18);
 }
 
 .landing-square-num {
