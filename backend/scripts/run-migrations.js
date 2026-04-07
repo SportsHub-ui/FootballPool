@@ -3,14 +3,23 @@ const path = require('path');
 const { Client } = require('pg');
 const dotenv = require('dotenv');
 
+const isTestLike = process.env.NODE_ENV === 'test' || process.env.APP_ENV === 'test';
+
 const envPaths = [
+  ...(isTestLike
+    ? [
+        path.resolve(process.cwd(), '.env.test'),
+        path.resolve(process.cwd(), 'backend/.env.test'),
+        path.resolve(__dirname, '..', '.env.test')
+      ]
+    : []),
   path.resolve(process.cwd(), '.env'),
   path.resolve(process.cwd(), 'backend/.env'),
   path.resolve(__dirname, '..', '.env')
 ];
 
 for (const envPath of envPaths) {
-  const result = dotenv.config({ path: envPath, override: true });
+  const result = dotenv.config({ path: envPath, override: false });
   if (!result.error) {
     break;
   }

@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../config/db';
 import { requireRole } from '../middleware/auth';
@@ -12,9 +12,9 @@ dbSmokeRouter.get('/smoke', async (_req, res) => {
       `
         SELECT 'users' AS table_name, COUNT(*)::int AS row_count FROM football_pool.users
         UNION ALL
-        SELECT 'team' AS table_name, COUNT(*)::int AS row_count FROM football_pool.team
+        SELECT 'organization' AS table_name, COUNT(*)::int AS row_count FROM football_pool.organization
         UNION ALL
-        SELECT 'player_team' AS table_name, COUNT(*)::int AS row_count FROM football_pool.player_team
+        SELECT 'member_organization' AS table_name, COUNT(*)::int AS row_count FROM football_pool.member_organization
         UNION ALL
         SELECT 'pool' AS table_name, COUNT(*)::int AS row_count FROM football_pool.pool
         UNION ALL
@@ -82,7 +82,7 @@ dbSmokeRouter.get('/preview', async (_req, res) => {
           COUNT(s.id) FILTER (WHERE s.participant_id IS NOT NULL)::int AS sold_squares,
           MAX(COALESCE(g.kickoff_at, g.game_date::timestamp)) AS latest_game_dt
         FROM football_pool.pool p
-        JOIN football_pool.team t ON t.id = p.team_id
+        JOIN football_pool.organization t ON t.id = p.team_id
         LEFT JOIN football_pool.square s ON s.pool_id = p.id
         LEFT JOIN football_pool.pool_game pg ON pg.pool_id = p.id
         LEFT JOIN football_pool.game g ON g.id = pg.game_id
@@ -104,3 +104,4 @@ dbSmokeRouter.get('/preview', async (_req, res) => {
     });
   }
 });
+

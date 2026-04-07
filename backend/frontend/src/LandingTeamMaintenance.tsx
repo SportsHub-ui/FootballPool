@@ -12,6 +12,8 @@ type TeamRecord = {
   logo_file: string | null
   primary_contact_id: number | null
   secondary_contact_id: number | null
+  has_members_flg?: boolean | null
+  sport_team_id?: number | null
 }
 
 type DirectoryUser = {
@@ -100,7 +102,8 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
     secondaryColor: '',
     logoFile: '',
     primaryContactId: '',
-    secondaryContactId: ''
+    secondaryContactId: '',
+    hasMembers: true
   })
 
   const canManageTeams = Boolean(token)
@@ -129,7 +132,8 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
       secondaryColor: team?.secondary_color ?? '',
       logoFile: storedLogo,
       primaryContactId: team?.primary_contact_id != null ? String(team.primary_contact_id) : '',
-      secondaryContactId: team?.secondary_contact_id != null ? String(team.secondary_contact_id) : ''
+      secondaryContactId: team?.secondary_contact_id != null ? String(team.secondary_contact_id) : '',
+      hasMembers: team?.has_members_flg ?? true
     })
   }
 
@@ -219,7 +223,7 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
       return 'Sign in as an organizer to review and maintain teams.'
     }
 
-    return `${teams.length} team record${teams.length === 1 ? '' : 's'} ready for maintenance.`
+    return `${teams.length} organization record${teams.length === 1 ? '' : 's'} ready for maintenance.`
   }, [teams.length, token])
 
   const selectedTeam = useMemo(
@@ -326,12 +330,12 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
     const trimmedName = teamForm.teamName.trim()
 
     if (!trimmedName) {
-      setError('Team name is required.')
+      setError('Organization name is required.')
       return
     }
 
     if (!canManageTeams) {
-      setError('Sign in as an organizer to save teams.')
+      setError('Sign in as an organizer to save organizations.')
       onRequireSignIn()
       return
     }
@@ -346,7 +350,8 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
         secondaryColor: teamForm.secondaryColor.trim() || undefined,
         logoFile: teamForm.logoFile ? normalizeLogoFile(teamForm.logoFile.trim()) : undefined,
         primaryContactId: teamForm.primaryContactId ? Number(teamForm.primaryContactId) : undefined,
-        secondaryContactId: teamForm.secondaryContactId ? Number(teamForm.secondaryContactId) : undefined
+        secondaryContactId: teamForm.secondaryContactId ? Number(teamForm.secondaryContactId) : undefined,
+        hasMembers: teamForm.hasMembers
       }
 
       if (isCreatingNew) {
@@ -361,7 +366,7 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
       }
 
       if (!selectedTeamId) {
-        setError('Choose a team first.')
+        setError('Choose an organization first.')
         return
       }
 
@@ -373,7 +378,7 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
 
       await loadTeamData(selectedTeamId)
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : 'Failed to save team')
+      setError(saveError instanceof Error ? saveError.message : 'Failed to save organization')
     } finally {
       setSaving(false)
     }
@@ -381,17 +386,17 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
 
   const onDeleteTeam = async (): Promise<void> => {
     if (!selectedTeamId) {
-      setError('Select a team to delete.')
+      setError('Select an organization to delete.')
       return
     }
 
     if (!canManageTeams) {
-      setError('Sign in as an organizer to delete teams.')
+      setError('Sign in as an organizer to delete organizations.')
       onRequireSignIn()
       return
     }
 
-    const confirmed = window.confirm('Delete this team?')
+    const confirmed = window.confirm('Delete this organization?')
     if (!confirmed) {
       return
     }
@@ -407,7 +412,7 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
 
       await loadTeamData()
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : 'Failed to delete team')
+      setError(deleteError instanceof Error ? deleteError.message : 'Failed to delete organization')
     } finally {
       setSaving(false)
     }
@@ -417,7 +422,7 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
     <section className="player-maintenance-shell">
       <div className="landing-hero-bar landing-player-hero" style={heroStyle}>
         <div>
-          <h1>Team Maintenance</h1>
+          <h1>Organization Maintenance</h1>
           <p>{heroSubtitle}</p>
         </div>
       </div>
@@ -444,23 +449,23 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
             >
               {isTeamListExpanded ? '−' : '+'}
             </button>
-            <span>Teams</span>
+            <span>Organizations</span>
           </span>
           <span className="landing-collapsible-count">{teams.length}</span>
         </summary>
 
         <div className="landing-player-list-wrap is-scrollable" style={isTeamListExpanded ? { height: `${teamListHeight}px` } : undefined}>
           {loading ? (
-            <p className="small">Loading teams...</p>
+            <p className="small">Loading organizations...</p>
           ) : !token ? (
-            <p className="small">Sign in to load team maintenance records.</p>
+            <p className="small">Sign in to load organization maintenance records.</p>
           ) : teams.length === 0 ? (
-            <p className="small">No teams are available yet.</p>
+            <p className="small">No organizations are available yet.</p>
           ) : (
             <table className="landing-player-table">
               <thead>
                 <tr>
-                  <th>Team</th>
+                  <th>Organization</th>
                   <th>Primary</th>
                   <th>Secondary</th>
                   <th>Contact</th>
@@ -503,8 +508,8 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
         <article className="landing-maintenance-card">
           <div className="landing-maintenance-header">
             <div>
-              <h2>{isCreatingNew ? 'Add Team' : 'Maintain Team'}</h2>
-              <p className="small">Create a new team or update the selected one.</p>
+              <h2>{isCreatingNew ? 'Add Organization' : 'Maintain Organization'}</h2>
+              <p className="small">Create a new organization or update the selected one.</p>
             </div>
             <div className="landing-maintenance-actions">
               <button type="button" className="secondary compact" onClick={onAddTeam} disabled={saving}>
@@ -522,14 +527,14 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
           <div className="landing-selected-summary">
             <div className="landing-selected-summary-header">
               <div>
-                <strong>{selectedTeam ? formatTeamName(selectedTeam) : 'New team'}</strong>
+                <strong>{selectedTeam ? formatTeamName(selectedTeam) : 'New organization'}</strong>
               </div>
             </div>
           </div>
 
           <div className="landing-player-fields team-maintenance-fields">
             <label className="field-block landing-field-span">
-              <span>Team name</span>
+              <span>Organization name</span>
               <input
                 value={teamForm.teamName}
                 onChange={(event) => setTeamForm((current) => ({ ...current, teamName: event.target.value }))}
@@ -563,6 +568,16 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
               placeholder="#F7A33C"
               disabled={saving}
             />
+
+            <label className="checkbox-row landing-field-span">
+              <input
+                type="checkbox"
+                checked={teamForm.hasMembers}
+                onChange={(event) => setTeamForm((current) => ({ ...current, hasMembers: event.target.checked }))}
+                disabled={saving}
+              />
+              <span>Track members in this organization</span>
+            </label>
 
             <label className="field-block landing-field-span">
               <span>Upload new image</span>
@@ -671,16 +686,16 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
         <aside className="landing-maintenance-card">
           <div className="landing-maintenance-header">
             <div>
-              <h2>Assigned Players</h2>
-              <p className="small">Players currently linked to the selected team.</p>
+              <h2>Assigned Members</h2>
+              <p className="small">Members currently linked to the selected organization.</p>
             </div>
           </div>
 
           <div className="landing-readonly-panel">
             {!selectedTeamId ? (
-              <p className="small">Select a team to view its players.</p>
+              <p className="small">Select an organization to view its members.</p>
             ) : teamPlayers.length === 0 ? (
-              <p className="small">No players are assigned to this team yet.</p>
+              <p className="small">No members are assigned to this organization yet.</p>
             ) : (
               <ul className="landing-readonly-list">
                 {teamPlayers.map((player) => {

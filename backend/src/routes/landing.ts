@@ -1,4 +1,4 @@
-
+﻿
 import { Request, Router } from 'express';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
@@ -11,13 +11,8 @@ import { resolveWinningSquareNumber } from '../services/scoreProcessing';
 
 export const landingRouter = Router();
 
-const hasBearerToken = (req: Request): boolean => {
-  const authHeader = req.header('Authorization');
-  return Boolean(authHeader && authHeader.startsWith('Bearer '));
-};
-
 const getSignedInUserId = (req: Request): number | null => {
-  if (!hasBearerToken(req) || !req.auth?.userId) {
+  if (!req.auth?.userId) {
     return null;
   }
 
@@ -140,7 +135,7 @@ const loadPoolGames = async (client: PoolClient, poolId: number) => {
             g.scores_by_quarter
      FROM football_pool.pool_game pg
      JOIN football_pool.game g ON g.id = pg.game_id
-     LEFT JOIN football_pool.nfl_team away_team ON away_team.id = g.away_team_id
+     LEFT JOIN football_pool.sport_team away_team ON away_team.id = g.away_team_id
      WHERE pg.pool_id = $1
      ORDER BY COALESCE(g.week_number, 999), COALESCE(g.kickoff_at, g.game_date::timestamp) ASC, g.id ASC`,
     [poolId]
@@ -149,7 +144,7 @@ const loadPoolGames = async (client: PoolClient, poolId: number) => {
   return result.rows.map((row) => mapLandingGameRow(row));
 };
 
-const loadAccessiblePools = async (client: PoolClient, userId: number | null) => {
+const loadAccessiblePools = async (client: PoolClient, userId: number | null, canManage: boolean) => {
   await ensurePoolDisplayTokenSupport(client);
 
   const result = await client.query(
@@ -164,25 +159,27 @@ const loadAccessiblePools = async (client: PoolClient, userId: number | null) =>
             t.team_name,
             t.primary_color,
             t.secondary_color,
-            t.logo_file
+            t.logo_file,
+            COALESCE(t.has_members_flg, TRUE) AS has_members_flg
      FROM football_pool.pool p
-     LEFT JOIN football_pool.team t ON t.id = p.team_id
+     LEFT JOIN football_pool.organization t ON t.id = p.team_id
      LEFT JOIN football_pool.user_pool up
        ON up.pool_id = p.id
       AND up.user_id = $1
-     WHERE COALESCE(p.sign_in_req_flg, FALSE) = FALSE
+     WHERE $2::boolean = TRUE
+        OR COALESCE(p.sign_in_req_flg, FALSE) = FALSE
         OR ($1::int IS NOT NULL AND up.user_id IS NOT NULL)
      ORDER BY COALESCE(p.default_flg, FALSE) DESC,
               COALESCE(t.team_name, p.primary_team, p.pool_name),
               p.pool_name,
               p.id`,
-    [userId]
+    [userId, canManage]
   );
 
   return result.rows;
 };
 
-const loadAccessiblePool = async (client: PoolClient, poolId: number, userId: number | null) => {
+const loadAccessiblePool = async (client: PoolClient, poolId: number, userId: number | null, canManage: boolean) => {
   await ensurePoolDisplayTokenSupport(client);
 
   const result = await client.query(
@@ -197,19 +194,21 @@ const loadAccessiblePool = async (client: PoolClient, poolId: number, userId: nu
             t.team_name,
             t.primary_color,
             t.secondary_color,
-            t.logo_file
+            t.logo_file,
+            COALESCE(t.has_members_flg, TRUE) AS has_members_flg
      FROM football_pool.pool p
-     LEFT JOIN football_pool.team t ON t.id = p.team_id
+     LEFT JOIN football_pool.organization t ON t.id = p.team_id
      LEFT JOIN football_pool.user_pool up
        ON up.pool_id = p.id
       AND up.user_id = $2
      WHERE p.id = $1
        AND (
-         COALESCE(p.sign_in_req_flg, FALSE) = FALSE
+         $3::boolean = TRUE
+         OR COALESCE(p.sign_in_req_flg, FALSE) = FALSE
          OR ($2::int IS NOT NULL AND up.user_id IS NOT NULL)
        )
      LIMIT 1`,
-    [poolId, userId]
+    [poolId, userId, canManage]
   );
 
   return result.rows[0] ?? null;
@@ -225,7 +224,8 @@ const loadLandingTeams = async (client: PoolClient, userId: number | null, canMa
           secondary_color,
           logo_file,
           FALSE AS default_flg
-       FROM football_pool.team
+       FROM football_pool.organization
+       WHERE COALESCE(has_members_flg, TRUE) = TRUE
        ORDER BY team_name NULLS LAST, id`
     );
 
@@ -241,14 +241,18 @@ const loadLandingTeams = async (client: PoolClient, userId: number | null, canMa
               t.primary_color,
               t.secondary_color,
               t.logo_file,
+              COALESCE(t.has_members_flg, TRUE) AS has_members_flg,
               COALESCE(p.default_flg, FALSE) AS default_flg
        FROM football_pool.pool p
-       JOIN football_pool.team t ON t.id = p.team_id
+       JOIN football_pool.organization t ON t.id = p.team_id
        LEFT JOIN football_pool.user_pool up
          ON up.pool_id = p.id
         AND up.user_id = $1
-       WHERE COALESCE(p.sign_in_req_flg, FALSE) = FALSE
-          OR ($1::int IS NOT NULL AND up.user_id IS NOT NULL)
+       WHERE COALESCE(t.has_members_flg, TRUE) = TRUE
+         AND (
+              COALESCE(p.sign_in_req_flg, FALSE) = FALSE
+              OR ($1::int IS NOT NULL AND up.user_id IS NOT NULL)
+         )
      ) accessible_teams
      ORDER BY default_flg DESC,
               team_name NULLS LAST,
@@ -274,9 +278,10 @@ const loadPoolByDisplayToken = async (client: PoolClient, displayToken: string) 
             t.team_name,
             t.primary_color,
             t.secondary_color,
-            t.logo_file
+            t.logo_file,
+            COALESCE(t.has_members_flg, TRUE) AS has_members_flg
      FROM football_pool.pool p
-     LEFT JOIN football_pool.team t ON t.id = p.team_id
+     LEFT JOIN football_pool.organization t ON t.id = p.team_id
      WHERE p.display_token = $1
      LIMIT 1`,
     [displayToken]
@@ -387,7 +392,7 @@ const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, g
             pt.jersey_num AS player_jersey_num
      FROM football_pool.square s
      LEFT JOIN football_pool.users u ON u.id = s.participant_id
-     LEFT JOIN football_pool.player_team pt ON pt.id = s.player_id
+     LEFT JOIN football_pool.member_organization pt ON pt.id = s.player_id
      WHERE s.pool_id = $1
      ORDER BY s.square_num`,
     [poolId]
@@ -513,11 +518,11 @@ const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, g
 landingRouter.get('/pools', async (req, res) => {
   try {
     const userId = getSignedInUserId(req);
+    const canManage = canManageLandingMaintenance(req);
     const client = await db.connect();
 
     try {
-      const pools = await loadAccessiblePools(client, userId);
-
+      const pools = await loadAccessiblePools(client, userId, canManage);
       res.json({
         signedIn: userId !== null,
         pools
@@ -563,10 +568,10 @@ landingRouter.get('/players', async (req, res) => {
             t.team_name,
             pt.jersey_num
          FROM football_pool.users u
-         LEFT JOIN football_pool.player_team pt
+         LEFT JOIN football_pool.member_organization pt
            ON pt.user_id = u.id
           AND ($2::boolean = TRUE OR pt.team_id = ANY($1::int[]))
-         LEFT JOIN football_pool.team t
+         LEFT JOIN football_pool.organization t
            ON t.id = pt.team_id
          WHERE pt.user_id IS NOT NULL
             OR (
@@ -575,7 +580,7 @@ landingRouter.get('/players', async (req, res) => {
                 $2::boolean = TRUE
                 OR NOT EXISTS (
                   SELECT 1
-                  FROM football_pool.player_team other_pt
+                  FROM football_pool.member_organization other_pt
                   WHERE other_pt.user_id = u.id
                 )
               )
@@ -648,7 +653,7 @@ landingRouter.get('/users', async (req, res) => {
     try {
       await ensureNotificationSupport(client);
 
-      const pools = await loadAccessiblePools(client, userId);
+      const pools = await loadAccessiblePools(client, userId, canManage);
       const teams = await loadLandingTeams(client, userId, canManage);
       const poolIds = pools.map((pool) => Number(pool.id)).filter((poolId) => Number.isFinite(poolId));
       const teamIds = teams.map((team) => Number(team.id)).filter((teamId) => Number.isFinite(teamId));
@@ -682,16 +687,16 @@ landingRouter.get('/users', async (req, res) => {
           )
          LEFT JOIN football_pool.pool p
            ON p.id = up.pool_id
-         LEFT JOIN football_pool.team pool_team
+         LEFT JOIN football_pool.organization pool_team
            ON pool_team.id = p.team_id
-         LEFT JOIN football_pool.player_team pt
+         LEFT JOIN football_pool.member_organization pt
            ON pt.user_id = u.id
           AND (
             $3::boolean = TRUE
             OR cardinality($2::int[]) = 0
             OR pt.team_id = ANY($2::int[])
           )
-         LEFT JOIN football_pool.team t
+         LEFT JOIN football_pool.organization t
            ON t.id = pt.team_id
          WHERE $3::boolean = TRUE
             OR up.user_id IS NOT NULL
@@ -794,10 +799,11 @@ landingRouter.get('/pools/:poolId/games', async (req, res) => {
   try {
     const { poolId } = z.object({ poolId: z.coerce.number().int().positive() }).parse(req.params);
     const userId = getSignedInUserId(req);
+    const canManage = canManageLandingMaintenance(req);
     const client = await db.connect();
 
     try {
-      const pool = await loadAccessiblePool(client, poolId, userId);
+      const pool = await loadAccessiblePool(client, poolId, userId, canManage);
 
       if (!pool) {
         return res.status(404).json({ error: 'Pool not found or unavailable' });
@@ -819,10 +825,11 @@ landingRouter.get('/pools/:poolId/metrics', async (req, res) => {
   try {
     const { poolId } = z.object({ poolId: z.coerce.number().int().positive() }).parse(req.params);
     const userId = getSignedInUserId(req);
+    const canManage = canManageLandingMaintenance(req);
 
     const client = await db.connect();
     try {
-      const pool = await loadAccessiblePool(client, poolId, userId);
+      const pool = await loadAccessiblePool(client, poolId, userId, canManage);
 
       if (!pool) {
         return res.status(404).json({ error: 'Pool not found or unavailable' });
@@ -933,7 +940,7 @@ landingRouter.get('/pools/:poolId/metrics', async (req, res) => {
              COUNT(sw.square_num)::int AS wins_count,
              COALESCE(SUM(sw.amount), 0)::int AS total_won
            FROM football_pool.square s
-           JOIN football_pool.player_team pt ON pt.id = s.player_id
+           JOIN football_pool.member_organization pt ON pt.id = s.player_id
            LEFT JOIN football_pool.users u ON u.id = pt.user_id
            LEFT JOIN season_winners sw ON sw.square_num = s.square_num
            WHERE s.pool_id = $1
@@ -1042,10 +1049,11 @@ landingRouter.get('/pools/:poolId/board', async (req, res) => {
       .safeParse(req.query);
     const gameId = parsedQuery.success ? parsedQuery.data.gameId : undefined;
     const userId = getSignedInUserId(req);
+    const canManage = canManageLandingMaintenance(req);
 
     const client = await db.connect();
     try {
-      const pool = await loadAccessiblePool(client, poolId, userId);
+      const pool = await loadAccessiblePool(client, poolId, userId, canManage);
 
       if (!pool) {
         return res.status(404).json({ error: 'Pool not found or unavailable' });
@@ -1108,3 +1116,4 @@ landingRouter.get('/display/:displayToken', async (req, res) => {
     return res.status(500).json({ error: 'Failed to load display board' });
   }
 });
+

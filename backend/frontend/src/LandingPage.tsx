@@ -13,7 +13,7 @@ type LandingPool = {
   id: number
   pool_name: string | null
   season: number | null
-  primary_team_id: number | null // references nfl_team.id
+  primary_team_id: number | null // references sport_team.id
   default_flg: boolean
   sign_in_req_flg: boolean
   display_token: string | null
@@ -21,6 +21,7 @@ type LandingPool = {
   primary_color: string | null
   secondary_color: string | null
   logo_file: string | null
+  has_members_flg?: boolean
 }
 
 type LandingGame = {
@@ -950,9 +951,8 @@ export function LandingPage() {
   }
 
   const formatPlayerName = (player: LandingPlayerOption): string => {
-    const fullName = `${player.first_name ?? ''} ${player.last_name ?? ''}`.trim()
-    const jersey = player.jersey_num != null ? `#${player.jersey_num}` : '#-'
-    return `${jersey} ${fullName || 'Unnamed player'}`
+    const fullName = `${player.first_name ?? ''} ${player.last_name ?? ''}`.trim() || 'Unnamed member'
+    return player.jersey_num != null ? `#${player.jersey_num} ${fullName}` : fullName
   }
 
   const selectedPool = useMemo(
@@ -1067,6 +1067,8 @@ export function LandingPage() {
   const nextGameId = currentGameIndex >= 0 && currentGameIndex < games.length - 1 ? games[currentGameIndex + 1]?.id ?? null : null
 
   const canManageSquares = Boolean(!displayOnlyMode && token && selectedPoolId && board)
+  const poolTracksMembers = Boolean(selectedPool?.has_members_flg ?? true)
+  const showMemberSelector = poolTracksMembers && playerOptions.length > 0
   const showSimulationAdvance = !displayOnlyMode && SHOW_SIMULATION_CONTROLS && Boolean(simulationStatus?.progressAction)
   const canRefreshLiveQuarter = simulationStatus?.progressAction === 'complete_quarter'
   const simulationAdvanceLabel = simulationStatus?.progressAction === 'complete_game' ? 'Complete Game' : 'Complete Quarter'
@@ -1098,7 +1100,7 @@ export function LandingPage() {
                   className={`landing-nav-link ${activePage === item ? 'is-active' : ''}`}
                   onClick={() => setActivePage(item)}
                 >
-                  {item}
+                  {item === 'Players' ? 'Members' : item === 'Teams' ? 'Organizations' : item}
                 </button>
               ))}
               <button
@@ -1429,18 +1431,26 @@ export function LandingPage() {
                     ))}
                   </select>
 
-                  <select
-                    value={assignForm.playerId}
-                    onChange={(event) => setAssignForm((current) => ({ ...current, playerId: event.target.value }))}
-                    disabled={busy !== null}
-                  >
-                    <option value="">No player</option>
-                    {playerOptions.map((player) => (
-                      <option key={player.id} value={player.id}>
-                        {formatPlayerName(player)}
-                      </option>
-                    ))}
-                  </select>
+                  {showMemberSelector ? (
+                    <select
+                      value={assignForm.playerId}
+                      onChange={(event) => setAssignForm((current) => ({ ...current, playerId: event.target.value }))}
+                      disabled={busy !== null}
+                    >
+                      <option value="">No member</option>
+                      {playerOptions.map((player) => (
+                        <option key={player.id} value={player.id}>
+                          {formatPlayerName(player)}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <p className="small">
+                      {poolTracksMembers
+                        ? 'No members are available for this organization yet.'
+                        : 'This organization is configured without tracked members.'}
+                    </p>
+                  )}
 
                   <label className="checkbox-row">
                     <input

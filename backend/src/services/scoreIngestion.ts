@@ -1,4 +1,4 @@
-import type { PoolClient } from 'pg';
+﻿import type { PoolClient } from 'pg';
 import { db } from '../config/db';
 import { env } from '../config/env';
 import {
@@ -345,8 +345,8 @@ const loadGameTargetWithClient = async (client: PoolClient, gameId: number): Pro
             g.current_quarter,
             g.time_remaining_in_quarter
      FROM football_pool.game g
-     LEFT JOIN football_pool.nfl_team primary_team ON primary_team.id = g.home_team_id
-     LEFT JOIN football_pool.nfl_team opponent_team ON opponent_team.id = g.away_team_id
+     LEFT JOIN football_pool.sport_team primary_team ON primary_team.id = g.home_team_id
+     LEFT JOIN football_pool.sport_team opponent_team ON opponent_team.id = g.away_team_id
      WHERE g.id = $1
      LIMIT 1`,
     [gameId]
@@ -370,8 +370,8 @@ export const listTodayGameTargetsForIngestion = async (at: Date = new Date()): P
               g.current_quarter,
               g.time_remaining_in_quarter
        FROM football_pool.game g
-       LEFT JOIN football_pool.nfl_team primary_team ON primary_team.id = g.home_team_id
-       LEFT JOIN football_pool.nfl_team opponent_team ON opponent_team.id = g.away_team_id
+       LEFT JOIN football_pool.sport_team primary_team ON primary_team.id = g.home_team_id
+       LEFT JOIN football_pool.sport_team opponent_team ON opponent_team.id = g.away_team_id
        WHERE g.game_date = $1::date
          AND UPPER(COALESCE(opponent_team.name, '')) <> 'BYE'
        ORDER BY g.game_date ASC, g.id ASC`,
@@ -741,3 +741,4 @@ export const listEligibleGamesForIngestion = async (at: Date = new Date()): Prom
     .filter((target) => normalizeGameState(target.state) !== 'completed')
     .map((target) => target.gameId);
 };
+

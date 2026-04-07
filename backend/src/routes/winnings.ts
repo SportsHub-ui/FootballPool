@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../config/db';
 import { requireRole } from '../middleware/auth';
@@ -28,7 +28,7 @@ winningsRouter.get('/pool/:poolId', requireRole('organizer'), async (req, res) =
          FROM football_pool.winnings_ledger wl
          LEFT JOIN football_pool.users u ON wl.winner_user_id = u.id
          LEFT JOIN football_pool.game g ON wl.game_id = g.id
-         LEFT JOIN football_pool.nfl_team away ON away.id = g.away_team_id
+         LEFT JOIN football_pool.sport_team away ON away.id = g.away_team_id
          WHERE wl.pool_id = $1
          ORDER BY COALESCE(g.kickoff_at, g.game_date::timestamp) DESC, wl.quarter ASC`,
         [poolId]
@@ -68,7 +68,7 @@ winningsRouter.get('/user/:userId', async (req, res) => {
          FROM football_pool.winnings_ledger wl
          LEFT JOIN football_pool.pool p ON wl.pool_id = p.id
          LEFT JOIN football_pool.game g ON wl.game_id = g.id
-         LEFT JOIN football_pool.nfl_team away ON away.id = g.away_team_id
+         LEFT JOIN football_pool.sport_team away ON away.id = g.away_team_id
          WHERE wl.winner_user_id = $1
          ORDER BY COALESCE(g.kickoff_at, g.game_date::timestamp) DESC, wl.quarter ASC`,
         [userId]
@@ -158,3 +158,4 @@ winningsRouter.patch('/:winningId/payout', requireRole('organizer'), async (req,
     }
   }
 });
+

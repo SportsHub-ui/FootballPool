@@ -1,4 +1,4 @@
-import type { PoolClient } from 'pg';
+﻿import type { PoolClient } from 'pg';
 import { env } from '../config/env';
 import { ensurePoolSquaresInitialized, TOTAL_POOL_SQUARES } from './poolSquares';
 import { importPoolScheduleFromEspn } from './scheduleImport';
@@ -214,7 +214,7 @@ const loadPoolContext = async (client: PoolClient, poolId: number): Promise<Pool
         p.primary_team,
         t.team_name
      FROM football_pool.pool p
-     LEFT JOIN football_pool.team t ON t.id = p.team_id
+     LEFT JOIN football_pool.organization t ON t.id = p.team_id
      WHERE p.id = $1
      LIMIT 1`,
     [poolId]
@@ -301,7 +301,7 @@ const loadPoolGames = async (client: PoolClient, poolId: number): Promise<PoolGa
         COALESCE(g.kickoff_at, g.game_date::timestamp) AS game_dt
      FROM football_pool.pool_game pg
      JOIN football_pool.game g ON g.id = pg.game_id
-     LEFT JOIN football_pool.nfl_team away ON away.id = g.away_team_id
+     LEFT JOIN football_pool.sport_team away ON away.id = g.away_team_id
      WHERE pg.pool_id = $1
      ORDER BY COALESCE(g.week_number, 999), COALESCE(g.kickoff_at, g.game_date::timestamp) ASC, g.id ASC`,
     [poolId]
@@ -511,6 +511,8 @@ const buildAdvancedMidQuarterSnapshot = (
 
 const writeGameScoreSnapshot = async (client: PoolClient, gameId: number, scores: QuarterScoresInput): Promise<void> => {
   const state = inferGameStateFromScores(scores);
+  const currentQuarter = inferCurrentQuarter(scores);
+  const timeRemainingInQuarter = state === 'completed' ? '0:00' : null;
 
   await client.query(
     `UPDATE football_pool.game
@@ -519,7 +521,7 @@ const writeGameScoreSnapshot = async (client: PoolClient, gameId: number, scores
          final_score_away = $4,
          state = $5,
          current_quarter = $6,
-         time_remaining_in_quarter = CASE WHEN $5 = 'completed' THEN '0:00' ELSE NULL END,
+         time_remaining_in_quarter = $7,
          updated_at = NOW()
      WHERE id = $1`,
     [
@@ -528,7 +530,8 @@ const writeGameScoreSnapshot = async (client: PoolClient, gameId: number, scores
       scores.q4PrimaryScore,
       scores.q4OpponentScore,
       state,
-      inferCurrentQuarter(scores)
+      currentQuarter,
+      timeRemainingInQuarter
     ]
   );
 };
@@ -656,7 +659,7 @@ const assignSimulationSquares = async (client: PoolClient, poolId: number, teamI
 
   const playerResult = await client.query<{ id: number }>(
     `SELECT pt.id
-     FROM football_pool.player_team pt
+     FROM football_pool.member_organization pt
      WHERE pt.team_id = $1
      ORDER BY pt.id`,
     [teamId]
@@ -728,7 +731,7 @@ export const getPoolSimulationStatus = async (
   );
   const playerResult = await client.query<{ player_count: number }>(
     `SELECT COUNT(*)::int AS player_count
-     FROM football_pool.player_team
+     FROM football_pool.member_organization
      WHERE team_id = $1`,
     [pool.team_id]
   );
@@ -951,6 +954,7 @@ export const advancePoolSeasonSimulation = async (
       ensureFullGameAvailable
     );
 
+    await writeGameScoreSnapshot(client, currentGame.id, fetchedScores);
     await processGameScoresWithClient(client, currentGame.id, fetchedScores);
 
     const nextGame = findNextPlayableGame(games, currentGame.id);
@@ -981,6 +985,7 @@ export const advancePoolSeasonSimulation = async (
   );
   const partialScores = buildPartialQuarterSnapshot(fetchedScores, quarterToComplete);
 
+  await writeGameScoreSnapshot(client, currentGame.id, partialScores);
   await processGameScoresWithClient(client, currentGame.id, partialScores);
 
   let nextGameId: number | null = currentGame.id;
@@ -1098,3 +1103,4 @@ export const cleanupPoolSeasonSimulation = async (
     deletedWinnings
   };
 };
+

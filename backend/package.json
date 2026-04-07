@@ -8,9 +8,9 @@
     "build": "tsc -p tsconfig.json",
     "start": "node ./scripts/run-migrations.js && node dist/server.js",
     "start:server": "node dist/server.js",
-    "test": "vitest",
-    "test:ui": "vitest --ui",
-    "test:run": "vitest run",
+    "test": "node ./scripts/run-vitest.js",
+    "test:ui": "node ./scripts/run-vitest.js --ui",
+    "test:run": "node ./scripts/run-vitest.js run",
     "lint": "eslint .",
     "db:migrate": "node ./scripts/run-migrations.js"
   },

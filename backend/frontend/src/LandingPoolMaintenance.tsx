@@ -6,6 +6,7 @@ import type { LandingPool } from './LandingMetrics'
 type TeamRecord = {
   id: number
   team_name: string | null
+  has_members_flg?: boolean
 }
 
 type GameRecord = {
@@ -31,6 +32,7 @@ type PoolRecord = {
   pool_name: string | null
   team_id: number | null
   season: number | null
+  primary_team: string | null
   square_cost: number | null
   q1_payout: number | null
   q2_payout: number | null
@@ -38,6 +40,7 @@ type PoolRecord = {
   q4_payout: number | null
   display_token: string | null
   team_name: string | null
+  has_members_flg?: boolean
   contact_notification_level: NotificationLevel
   contact_notify_on_square_lead_flg: boolean
 }
@@ -154,6 +157,7 @@ const buildReadonlyPoolRecords = (pools: LandingPool[]): PoolRecord[] =>
     pool_name: pool.pool_name,
     team_id: null,
     season: pool.season,
+    primary_team: pool.team_name ?? null,
     square_cost: null,
     q1_payout: null,
     q2_payout: null,
@@ -229,7 +233,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
       poolName: pool?.pool_name ?? '',
       teamId: pool?.team_id != null ? String(pool.team_id) : '',
       season: pool?.season ?? new Date().getFullYear(),
-      primaryTeam: pool?.team_name ?? 'Green Bay Packers',
+      primaryTeam: pool?.primary_team?.trim() || pool?.team_name?.trim() || 'Green Bay Packers',
       squareCost: pool?.square_cost ?? 0,
       q1Payout: pool?.q1_payout ?? 0,
       q2Payout: pool?.q2_payout ?? 0,
@@ -509,8 +513,8 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   }
 
   const onSavePool = async (): Promise<void> => {
-    if (!poolForm.poolName.trim() || !poolForm.teamId || !poolForm.primaryTeam.trim()) {
-      setError('Pool name, team, and primary team are required.')
+    if (!poolForm.poolName.trim() || !poolForm.teamId) {
+      setError('Pool name and organization are required.')
       return
     }
 
@@ -528,7 +532,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
         poolName: poolForm.poolName.trim(),
         teamId: Number(poolForm.teamId),
         season: Number(poolForm.season),
-        primaryTeam: poolForm.primaryTeam.trim(),
+        primaryTeam: poolForm.primaryTeam.trim() || undefined,
         squareCost: Number(poolForm.squareCost),
         q1Payout: Number(poolForm.q1Payout),
         q2Payout: Number(poolForm.q2Payout),
@@ -820,7 +824,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
               <thead>
                 <tr>
                   <th>Pool</th>
-                  <th>Team</th>
+                  <th>Organization</th>
                   <th>Season</th>
                   <th>Notifications</th>
                   <th>Cost</th>
@@ -950,7 +954,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                     ? 'Update the pool details below or use Fill Schedule to add only the missing weeks.'
                     : 'Enter the pool details below. Save the pool before using Fill Schedule.'}
                 </p>
-                <p className="small landing-readonly-note">Pool notification emails go to the primary and secondary contacts for the selected team.</p>
+                <p className="small landing-readonly-note">Pool notification emails go to the primary and secondary contacts for the selected organization.</p>
                 {simulationProgressNote ? <p className="small landing-readonly-note">{simulationProgressNote}</p> : null}
                 {selectedPool ? (
                   displayUrl ? (
@@ -981,13 +985,13 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
             </label>
 
             <label className="field-block">
-              <span>Team</span>
+              <span>Organization</span>
               <select
                 value={poolForm.teamId}
                 onChange={(event) => setPoolForm((current) => ({ ...current, teamId: event.target.value }))}
                 disabled={saving}
               >
-                <option value="">Select team</option>
+                <option value="">Select organization</option>
                 {teamOptions.map((team) => (
                   <option key={team.id} value={team.id}>
                     {team.team_name ?? `Team ${team.id}`}
@@ -1007,7 +1011,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
             </label>
 
             <label className="field-block">
-              <span>Primary Team</span>
+              <span>Preferred sport team</span>
               <select
                 value={poolForm.primaryTeam}
                 onChange={(event) => setPoolForm((current) => ({ ...current, primaryTeam: event.target.value }))}

@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../config/db';
 import { getPoolSimulationStatus } from '../services/poolSimulation';
@@ -81,7 +81,7 @@ participantRouter.get('/pools', async (req, res) => {
                 t.team_name, COUNT(DISTINCT s.id) as total_squares,
                 COUNT(CASE WHEN s.participant_id = $1 THEN 1 END) as user_squares
          FROM football_pool.pool p
-         LEFT JOIN football_pool.team t ON p.team_id = t.id
+         LEFT JOIN football_pool.organization t ON p.team_id = t.id
          LEFT JOIN football_pool.square s ON p.id = s.pool_id
          WHERE s.participant_id = $1
          GROUP BY p.id, t.team_name
@@ -117,7 +117,7 @@ participantRouter.get('/pools/:poolId/squares', async (req, res) => {
                 p.first_name as player_first_name, p.last_name as player_last_name
          FROM football_pool.square s
          LEFT JOIN football_pool.users u ON s.participant_id = u.id
-         LEFT JOIN football_pool.player_team pt ON s.player_id = pt.id
+         LEFT JOIN football_pool.member_organization pt ON s.player_id = pt.id
          LEFT JOIN football_pool.users p ON pt.user_id = p.id
          WHERE s.pool_id = $1 AND s.participant_id = $2
          ORDER BY s.square_num`,
@@ -158,7 +158,7 @@ participantRouter.get('/winnings', async (req, res) => {
          FROM football_pool.winnings_ledger wl
          LEFT JOIN football_pool.pool p ON wl.pool_id = p.id
          LEFT JOIN football_pool.game g ON wl.game_id = g.id
-         LEFT JOIN football_pool.nfl_team away ON away.id = g.away_team_id
+         LEFT JOIN football_pool.sport_team away ON away.id = g.away_team_id
          WHERE wl.winner_user_id = $1
          ORDER BY COALESCE(g.kickoff_at, g.game_date::timestamp) DESC, wl.quarter ASC`,
         [userId]
@@ -206,8 +206,8 @@ participantRouter.get('/pools/:poolId/games', async (req, res) => {
                 nta.name AS away_team_name
          FROM football_pool.pool_game pg
          JOIN football_pool.game g ON g.id = pg.game_id
-         LEFT JOIN football_pool.nfl_team nth ON nth.id = g.home_team_id
-         LEFT JOIN football_pool.nfl_team nta ON nta.id = g.away_team_id
+         LEFT JOIN football_pool.sport_team nth ON nth.id = g.home_team_id
+         LEFT JOIN football_pool.sport_team nta ON nta.id = g.away_team_id
          WHERE pg.pool_id = $1
          ORDER BY g.week_number ASC, COALESCE(g.kickoff_at, g.game_date::timestamp) ASC, g.id ASC`,
         [poolId]
@@ -283,7 +283,7 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
         `SELECT p.id, p.pool_name, p.primary_team,
                 t.team_name, t.primary_color, t.secondary_color, t.logo_file
          FROM football_pool.pool p
-         LEFT JOIN football_pool.team t ON t.id = p.team_id
+         LEFT JOIN football_pool.organization t ON t.id = p.team_id
          WHERE p.id = $1`,
         [poolId]
       );
@@ -303,8 +303,8 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
                   pg.column_numbers AS col_numbers
            FROM football_pool.pool_game pg
            JOIN football_pool.game g ON g.id = pg.game_id
-           LEFT JOIN football_pool.nfl_team nth ON nth.id = g.home_team_id
-           LEFT JOIN football_pool.nfl_team nta ON nta.id = g.away_team_id
+           LEFT JOIN football_pool.sport_team nth ON nth.id = g.home_team_id
+           LEFT JOIN football_pool.sport_team nta ON nta.id = g.away_team_id
            WHERE pg.pool_id = $1 AND g.id = $2
            LIMIT 1`,
           [poolId, gameId]
@@ -320,8 +320,8 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
                   pg.column_numbers AS col_numbers
            FROM football_pool.pool_game pg
            JOIN football_pool.game g ON g.id = pg.game_id
-           LEFT JOIN football_pool.nfl_team nth ON nth.id = g.home_team_id
-           LEFT JOIN football_pool.nfl_team nta ON nta.id = g.away_team_id
+           LEFT JOIN football_pool.sport_team nth ON nth.id = g.home_team_id
+           LEFT JOIN football_pool.sport_team nta ON nta.id = g.away_team_id
            WHERE pg.pool_id = $1
            ORDER BY CASE WHEN g.game_date >= CURRENT_DATE THEN 0 ELSE 1 END,
                     g.week_number ASC,
@@ -366,7 +366,7 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
                 pt.jersey_num AS player_jersey_num
          FROM football_pool.square s
          LEFT JOIN football_pool.users u ON u.id = s.participant_id
-         LEFT JOIN football_pool.player_team pt ON pt.id = s.player_id
+         LEFT JOIN football_pool.member_organization pt ON pt.id = s.player_id
          WHERE s.pool_id = $1
          ORDER BY s.square_num`,
         [poolId]
@@ -494,3 +494,4 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
     return res.status(500).json({ error: 'Failed to fetch pool board' });
   }
 });
+

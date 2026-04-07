@@ -1,4 +1,4 @@
-import { createHash } from 'crypto';
+﻿import { createHash } from 'crypto';
 import type { PoolClient } from 'pg';
 import { env } from '../config/env';
 import {
@@ -446,7 +446,7 @@ const loadPoolNotificationRecord = async (client: PoolClient, poolId: number): P
             secondary_user.first_name AS secondary_contact_first_name,
             secondary_user.last_name AS secondary_contact_last_name
      FROM football_pool.pool p
-     LEFT JOIN football_pool.team t ON t.id = p.team_id
+     LEFT JOIN football_pool.organization t ON t.id = p.team_id
      LEFT JOIN football_pool.users primary_user ON primary_user.id = t.primary_contact_id
      LEFT JOIN football_pool.users secondary_user ON secondary_user.id = t.secondary_contact_id
      WHERE p.id = $1
@@ -526,7 +526,7 @@ const loadGameLabel = async (client: PoolClient, gameId: number): Promise<GameLa
   const result = await client.query<{ away_team_name: string | null }>(
     `SELECT away_team.name AS away_team_name
      FROM football_pool.game g
-     LEFT JOIN football_pool.nfl_team away_team ON away_team.id = g.away_team_id
+     LEFT JOIN football_pool.sport_team away_team ON away_team.id = g.away_team_id
      WHERE g.id = $1
      LIMIT 1`,
     [gameId]
@@ -906,3 +906,4 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
     }
   }
 };
+

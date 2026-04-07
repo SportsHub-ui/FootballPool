@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { db } from '../config/db';
@@ -17,16 +17,20 @@ const createGameSchema = z.object({
   homeTeamId: z.number().int().positive().optional(),
   awayTeamId: z.number().int().positive().optional(),
   opponent: z.string().trim().min(1).optional(),
+  opponentSportTeamAbbr: z.string().trim().min(1).max(16).optional(),
+  opponentNflTeamAbbr: z.string().trim().min(1).max(16).optional(),
   gameDate: z.string().refine((d) => !Number.isNaN(Date.parse(d)), 'Invalid date format'),
   isSimulation: z.boolean().optional().default(false),
   rowNumbers: z.any().optional(),
   columnNumbers: z.any().optional()
 }).superRefine((value, ctx) => {
-  if (value.awayTeamId == null && !value.opponent?.trim()) {
+  const opponentAbbr = value.opponentSportTeamAbbr?.trim() || value.opponentNflTeamAbbr?.trim()
+
+  if (value.awayTeamId == null && !value.opponent?.trim() && !opponentAbbr) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['opponent'],
-      message: 'Opponent or awayTeamId is required'
+      message: 'Opponent, opponent abbreviation, or awayTeamId is required'
     })
   }
 })
@@ -122,8 +126,8 @@ const loadPoolGameRecord = async (client: PoolClient, gameId: number, poolId?: n
             away.name AS away_team
      FROM football_pool.pool_game pg
      JOIN football_pool.game g ON g.id = pg.game_id
-     JOIN football_pool.nfl_team home ON g.home_team_id = home.id
-     JOIN football_pool.nfl_team away ON g.away_team_id = away.id
+     JOIN football_pool.sport_team home ON g.home_team_id = home.id
+     JOIN football_pool.sport_team away ON g.away_team_id = away.id
      WHERE g.id = $1
        AND ($2::int IS NULL OR pg.pool_id = $2)
      ORDER BY pg.pool_id ASC
@@ -155,7 +159,7 @@ const resolveGameTeams = async (
   if (resolvedHomeTeamId == null && pool.primary_team) {
     const homeResult = await client.query<{ id: number }>(
       `SELECT id
-       FROM football_pool.nfl_team
+       FROM football_pool.sport_team
        WHERE LOWER(name) = LOWER($1)
           OR LOWER(name) LIKE '%' || LOWER($1) || '%'
        LIMIT 1`,
@@ -165,7 +169,7 @@ const resolveGameTeams = async (
 
     if (resolvedHomeTeamId == null) {
       const createdHomeResult = await client.query<{ id: number }>(
-        `INSERT INTO football_pool.nfl_team (name)
+        `INSERT INTO football_pool.sport_team (name)
          VALUES ($1)
          ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
          RETURNING id`,
@@ -176,10 +180,23 @@ const resolveGameTeams = async (
   }
 
   let resolvedAwayTeamId = input.awayTeamId ?? null
+  const opponentAbbreviation = input.opponentSportTeamAbbr?.trim() || input.opponentNflTeamAbbr?.trim() || ''
+
+  if (resolvedAwayTeamId == null && opponentAbbreviation) {
+    const awayByAbbrResult = await client.query<{ id: number }>(
+      `SELECT id
+       FROM football_pool.sport_team
+       WHERE UPPER(COALESCE(abbreviation, '')) = UPPER($1)
+       LIMIT 1`,
+      [opponentAbbreviation]
+    )
+    resolvedAwayTeamId = awayByAbbrResult.rows[0]?.id ?? null
+  }
+
   if (resolvedAwayTeamId == null && input.opponent) {
     const awayResult = await client.query<{ id: number }>(
       `SELECT id
-       FROM football_pool.nfl_team
+       FROM football_pool.sport_team
        WHERE LOWER(name) = LOWER($1)
           OR LOWER(name) LIKE '%' || LOWER($1) || '%'
        LIMIT 1`,
@@ -189,7 +206,7 @@ const resolveGameTeams = async (
 
     if (resolvedAwayTeamId == null) {
       const createdAwayResult = await client.query<{ id: number }>(
-        `INSERT INTO football_pool.nfl_team (name)
+        `INSERT INTO football_pool.sport_team (name)
          VALUES ($1)
          ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
          RETURNING id`,
@@ -204,11 +221,11 @@ const resolveGameTeams = async (
   }
 
   if (resolvedHomeTeamId == null) {
-    throw new Error('Pool primary team could not be resolved in nfl_team')
+    throw new Error('Pool primary team could not be resolved in sport_team')
   }
 
   if (resolvedAwayTeamId == null) {
-    throw new Error('Opponent could not be resolved in nfl_team')
+    throw new Error('Opponent could not be resolved in sport_team')
   }
 
   return {
@@ -530,8 +547,8 @@ gamesRouter.get('/', async (req, res) => {
                 away.name AS away_team
          FROM football_pool.pool_game pg
          JOIN football_pool.game g ON g.id = pg.game_id
-         JOIN football_pool.nfl_team home ON g.home_team_id = home.id
-         JOIN football_pool.nfl_team away ON g.away_team_id = away.id
+         JOIN football_pool.sport_team home ON g.home_team_id = home.id
+         JOIN football_pool.sport_team away ON g.away_team_id = away.id
          WHERE pg.pool_id = $1
          ORDER BY g.week_number, COALESCE(g.kickoff_at, g.game_date::timestamp), g.id`,
         [poolId]
@@ -577,8 +594,8 @@ gamesRouter.get('/:gameId', async (req, res) => {
                 away.name AS away_team
          FROM football_pool.pool_game pg
          JOIN football_pool.game g ON g.id = pg.game_id
-         JOIN football_pool.nfl_team home ON g.home_team_id = home.id
-         JOIN football_pool.nfl_team away ON g.away_team_id = away.id
+         JOIN football_pool.sport_team home ON g.home_team_id = home.id
+         JOIN football_pool.sport_team away ON g.away_team_id = away.id
          WHERE pg.game_id = $1
          LIMIT 1`,
         [gameId]
@@ -599,3 +616,4 @@ gamesRouter.get('/:gameId', async (req, res) => {
     }
   }
 });
+

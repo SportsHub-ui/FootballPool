@@ -1,8 +1,30 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+﻿import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import request from 'supertest'
 import { app } from '../src/app'
 import { db } from '../src/config/db'
+import { env } from '../src/config/env'
 import { flushApiUsageMetricsNow } from '../src/services/apiUsage'
+
+const canSafelyResetTestDatabase = async (): Promise<boolean> => {
+  if (env.APP_ENV !== 'test' && process.env.NODE_ENV !== 'test') {
+    return false
+  }
+
+  const result = await db.query<{ database_name: string }>('SELECT current_database() AS database_name')
+  const databaseName = String(result.rows[0]?.database_name ?? '')
+
+  if (/test/i.test(databaseName)) {
+    return true
+  }
+
+  if (process.env.FOOTBALL_POOL_DISABLE_TEST_RESET === 'true') {
+    return false
+  }
+
+  throw new Error(
+    `Refusing to reset non-test database "${databaseName}". Set TEST_DATABASE_URL or create backend/.env.test so automated tests use a dedicated *_test database.`
+  )
+}
 
 const resetTestDatabase = async (): Promise<void> => {
   const client = await db.connect()
@@ -24,21 +46,21 @@ const resetTestDatabase = async (): Promise<void> => {
         football_pool.winnings_ledger,
         football_pool.game,
         football_pool.pool,
-        football_pool.player_team,
-        football_pool.team,
+        football_pool.member_organization,
+        football_pool.organization,
         football_pool.users
       RESTART IDENTITY CASCADE
     `)
 
     await client.query(`
-      DELETE FROM football_pool.nfl_team
+      DELETE FROM football_pool.sport_team
       WHERE id > 32
     `)
 
     await client.query(`
       SELECT setval(
-        pg_get_serial_sequence('football_pool.nfl_team', 'id'),
-        COALESCE((SELECT MAX(id) FROM football_pool.nfl_team), 1),
+        pg_get_serial_sequence('football_pool.sport_team', 'id'),
+        COALESCE((SELECT MAX(id) FROM football_pool.sport_team), 1),
         true
       )
     `)
@@ -64,16 +86,29 @@ describe('Football Pool API', () => {
   }
 
   beforeAll(async () => {
+    const canResetTestDatabase = await canSafelyResetTestDatabase()
+
     const client = await db.connect()
     client.release()
 
     await flushApiUsageMetricsNow().catch(() => undefined)
-    await resetTestDatabase()
+
+    if (canResetTestDatabase) {
+      await resetTestDatabase()
+    }
   })
 
   afterAll(async () => {
     await flushApiUsageMetricsNow().catch(() => undefined)
-    await resetTestDatabase().catch(() => undefined)
+
+    try {
+      if (await canSafelyResetTestDatabase()) {
+        await resetTestDatabase()
+      }
+    } catch {
+      // Ignore cleanup safety failures on shutdown.
+    }
+
     await db.end()
   })
 
@@ -359,6 +394,40 @@ describe('Football Pool API', () => {
       displayToken = response.body.displayToken
     })
 
+    it('should show sign-in-required pools to organizer landing sessions', async () => {
+      const createResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `Organizer Landing ${Date.now()}`,
+          teamId,
+          season: 2026,
+          squareCost: 25,
+          q1Payout: 250,
+          q2Payout: 250,
+          q3Payout: 250,
+          q4Payout: 500
+        })
+
+      expect(createResponse.status).toBe(201)
+      const poolId = Number(createResponse.body.id)
+
+      await db.query(
+        `UPDATE football_pool.pool
+         SET sign_in_req_flg = TRUE
+         WHERE id = $1`,
+        [poolId]
+      )
+
+      const landingResponse = await request(app)
+        .get('/api/landing/pools')
+        .set(organizerHeaders)
+
+      expect(landingResponse.status).toBe(200)
+      expect(landingResponse.body.signedIn).toBe(true)
+      expect(landingResponse.body.pools.some((pool: { id: number }) => pool.id === poolId)).toBe(true)
+    })
+
     it('should persist pool contact notification settings', async () => {
       const createResponse = await request(app)
         .post('/api/setup/pools')
@@ -422,6 +491,69 @@ describe('Football Pool API', () => {
       expect(response.status).toBe(200)
       expect(Array.isArray(response.body.squares)).toBe(true)
       expect(response.body.squares.length).toBe(100)
+    })
+
+    it('should delete a pool even when games and squares already exist', async () => {
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({
+          teamName: `Delete Pool Team ${Date.now()}`,
+          nflTeamAbbr: 'ARI'
+        })
+
+      expect(teamResponse.status).toBe(201)
+      const deleteTeamId = Number(teamResponse.body.id)
+
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `Delete Pool ${Date.now()}`,
+          teamId: deleteTeamId,
+          season: 2026,
+          primaryTeam: 'Arizona Cardinals',
+          squareCost: 25,
+          q1Payout: 250,
+          q2Payout: 250,
+          q3Payout: 250,
+          q4Payout: 500
+        })
+
+      expect(poolResponse.status).toBe(201)
+      const deletePoolId = Number(poolResponse.body.id)
+
+      const initSquaresResponse = await request(app)
+        .post(`/api/setup/pools/${deletePoolId}/squares/init`)
+        .set(organizerHeaders)
+        .send({})
+
+      expect(initSquaresResponse.status).toBe(200)
+
+      const createGameResponse = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId: deletePoolId,
+          weekNum: 1,
+          opponentNflTeamAbbr: 'SEA',
+          gameDate: '2026-09-10T18:00:00.000Z'
+        })
+
+      expect(createGameResponse.status).toBe(200)
+
+      const deleteResponse = await request(app)
+        .delete(`/api/setup/pools/${deletePoolId}`)
+        .set(organizerHeaders)
+
+      expect(deleteResponse.status).toBe(200)
+
+      const listResponse = await request(app)
+        .get('/api/setup/pools')
+        .set(organizerHeaders)
+
+      expect(listResponse.status).toBe(200)
+      expect(listResponse.body.pools.some((pool: { id: number }) => pool.id === deletePoolId)).toBe(false)
     })
 
     it('should open a display link on the current active game for the pool', async () => {
@@ -1981,3 +2113,4 @@ async function createTestUser(): Promise<number> {
 
   return response.body.id
 }
+

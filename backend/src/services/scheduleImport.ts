@@ -1,4 +1,4 @@
-import type { PoolClient } from 'pg';
+﻿import type { PoolClient } from 'pg';
 
 type PoolScheduleContext = {
   id: number;
@@ -221,7 +221,7 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
   const poolResult = await client.query<PoolScheduleContext>(
     `SELECT p.id, p.season, p.primary_team, t.team_name, t.id as team_id
      FROM football_pool.pool p
-     LEFT JOIN football_pool.team t ON t.id = p.team_id
+     LEFT JOIN football_pool.organization t ON t.id = p.team_id
      WHERE p.id = $1
      LIMIT 1`,
     [poolId]
@@ -242,7 +242,7 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
   // Get NFL team id from nfl_team table
   const nflTeamResult = await client.query<{ id: number }>(
     `SELECT id
-     FROM football_pool.nfl_team
+     FROM football_pool.sport_team
      WHERE LOWER(name) = $1
         OR LOWER(name) LIKE '%' || $1 || '%'
      LIMIT 1`,
@@ -277,7 +277,7 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
       if (entry.opponent && entry.opponent !== 'BYE') {
         const oppResult = await client.query<{ id: number }>(
           `SELECT id
-           FROM football_pool.nfl_team
+           FROM football_pool.sport_team
            WHERE LOWER(name) = $1
               OR LOWER(name) LIKE '%' || $1 || '%'
            LIMIT 1`,
@@ -350,3 +350,4 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
 }
 
 export const importPoolScheduleFromEspn = importSchedule;
+

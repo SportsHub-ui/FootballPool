@@ -4,7 +4,7 @@ export type LandingPool = {
   id: number
   pool_name: string | null
   season: number | null
-  primary_team_id: number | null // references nfl_team.id
+  primary_team_id: number | null // references sport_team.id
   square_cost?: number | null
   default_flg: boolean
   sign_in_req_flg: boolean
@@ -12,6 +12,7 @@ export type LandingPool = {
   primary_color: string | null
   secondary_color: string | null
   logo_file: string | null
+  has_members_flg?: boolean
   display_token?: string | null
 }
 
@@ -593,13 +594,13 @@ export function LandingMetrics({
             <div className="summary-card">
               <div className="summary-label">Unique participants</div>
               <div className="summary-value">{summary.uniqueParticipants}</div>
-              <div className="summary-label">{summary.uniquePlayers} players assigned</div>
+              <div className="summary-label">{summary.uniquePlayers} members assigned</div>
             </div>
           </div>
 
           <div className="panel-grid metrics-panel-grid">
             <article className="panel">
-              <h2>Total sold by player</h2>
+              <h2>Total sold by member</h2>
               <p className="small">Sales totals plus return metrics based on sold-square revenue.</p>
               <div className="table-wrap">
                 <table>
@@ -631,7 +632,7 @@ export function LandingMetrics({
                       })
                     ) : (
                       <tr>
-                        <td colSpan={5}>No player sales recorded yet.</td>
+                        <td colSpan={5}>No member sales recorded yet.</td>
                       </tr>
                     )}
                   </tbody>
@@ -640,8 +641,8 @@ export function LandingMetrics({
             </article>
 
             <article className="panel">
-              <h2>Total winnings by player</h2>
-              <p className="small">Season winnings traced back through the player assigned to the winning square.</p>
+              <h2>Total winnings by member</h2>
+              <p className="small">Season winnings traced back through the member assigned to the winning square.</p>
               <div className="table-wrap">
                 <table>
                   <thead>
@@ -729,7 +730,7 @@ export function LandingMetrics({
           <div className="panel-grid metrics-chart-grid">
             <PieChartCard title="Ownership mix" subtitle="Sold versus open squares" slices={ownershipSlices} />
             <PieChartCard title="Payout status" subtitle="Paid out versus still pending" slices={payoutSlices} />
-            <PieChartCard title="Top players by sold squares" subtitle="Largest share of sold squares" slices={topPlayerSlices.length > 0 ? topPlayerSlices : [{ label: 'No data yet', value: 1, color: '#d9e1ea' }]} />
+            <PieChartCard title="Top members by sold squares" subtitle="Largest share of sold squares" slices={topPlayerSlices.length > 0 ? topPlayerSlices : [{ label: 'No data yet', value: 1, color: '#d9e1ea' }]} />
             <PieChartCard title="Top participants by winnings" subtitle="Biggest share of total amount won" slices={topParticipantSlices.length > 0 ? topParticipantSlices : [{ label: 'No data yet', value: 1, color: '#d9e1ea' }]} />
           </div>
 
