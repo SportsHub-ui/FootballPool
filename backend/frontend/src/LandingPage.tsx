@@ -13,7 +13,7 @@ type LandingPool = {
   id: number
   pool_name: string | null
   season: number | null
-  primary_team: string | null
+  primary_team_id: number | null // references nfl_team.id
   default_flg: boolean
   sign_in_req_flg: boolean
   display_token: string | null
@@ -25,6 +25,8 @@ type LandingPool = {
 
 type LandingGame = {
   id: number
+  pool_game_id: number // new: pool_game PK
+  game_id: number // new: game_new PK
   pool_id: number
   week_num: number | null
   opponent: string
@@ -59,6 +61,7 @@ type LandingBoardSquare = {
 type LandingBoard = {
   poolId: number
   poolName: string
+  primaryTeamId: number | null // references nfl_team.id
   primaryTeam: string
   opponent: string
   gameId: number | null
@@ -875,7 +878,7 @@ export function LandingPage() {
   )
 
   const primaryBrand = useMemo(() => {
-    const teamName = board?.primaryTeam ?? selectedPool?.primary_team ?? selectedPool?.team_name ?? 'Preferred Team'
+    const teamName = board?.primaryTeam ?? selectedPool?.team_name ?? 'Preferred Team'
     const fallbackLogo = selectedPool?.logo_file ? resolveImageUrl(selectedPool.logo_file) : null
 
     return resolveTeamBrand(
@@ -979,17 +982,17 @@ export function LandingPage() {
   const showSimulationAdvance = !displayOnlyMode && SHOW_SIMULATION_CONTROLS && Boolean(simulationStatus?.progressAction)
   const canRefreshLiveQuarter = simulationStatus?.progressAction === 'complete_quarter'
   const simulationAdvanceLabel = simulationStatus?.progressAction === 'complete_game' ? 'Complete Game' : 'Complete Quarter'
-  const primaryTeamLabel = board?.primaryTeam ?? selectedPool?.primary_team ?? selectedPool?.team_name ?? 'Preferred Team'
+  const primaryTeamLabel = board?.primaryTeam ?? selectedPool?.team_name ?? 'Preferred Team'
   const opponentTeamLabel = selectedGame?.opponent ?? board?.opponent ?? 'Opponent'
   const primaryTeamLogo = primaryBrand.logo
   const opponentTeamLogo = opponentBrand.logo
 
   const heroTitle = selectedPool
-    ? `${selectedPool.team_name ?? selectedPool.primary_team ?? 'Team'} • ${selectedPool.pool_name ?? 'Pool'}`
+    ? `${selectedPool.team_name ?? 'Team'} • ${selectedPool.pool_name ?? 'Pool'}`
     : pools.length > 1
       ? 'Select Pool'
       : pools.length === 1
-        ? `${pools[0].team_name ?? pools[0].primary_team ?? 'Team'} • ${pools[0].pool_name ?? 'Pool'}`
+        ? `${pools[0].team_name ?? 'Team'} • ${pools[0].pool_name ?? 'Pool'}`
         : 'Football Pool'
 
   const heroDate = selectedPool ? formatDate(selectedGame?.game_dt ?? board?.gameDate) : new Date().toLocaleDateString()
@@ -1087,7 +1090,7 @@ export function LandingPage() {
                   <option value="">{pools.length > 0 ? 'Select Pool' : 'No Pools Available'}</option>
                   {pools.map((pool) => (
                     <option key={pool.id} value={pool.id}>
-                      {pool.team_name ?? pool.primary_team ?? 'Team'} • {pool.pool_name}
+                      {pool.team_name ?? 'Team'} • {pool.pool_name}
                     </option>
                   ))}
                 </select>
@@ -1108,7 +1111,7 @@ export function LandingPage() {
                   {selectedPool
                     ? games.map((game) => (
                         <option key={game.id} value={game.id}>
-                          {formatGameOption(game, board?.primaryTeam ?? selectedPool.primary_team ?? selectedPool.team_name ?? 'Team')}
+                          {formatGameOption(game, board?.primaryTeam ?? selectedPool.team_name ?? 'Team')}
                         </option>
                       ))
                     : null}

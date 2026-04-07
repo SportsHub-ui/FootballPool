@@ -8,6 +8,17 @@ CREATE TABLE IF NOT EXISTS football_pool.notification_template (
   PRIMARY KEY (recipient_scope, notification_kind)
 );
 
+-- Older databases may already have this table without the original PK/unique constraint.
+-- Deduplicate any existing rows and recreate a compatible unique index so ON CONFLICT works.
+DELETE FROM football_pool.notification_template a
+USING football_pool.notification_template b
+WHERE a.ctid < b.ctid
+  AND a.recipient_scope = b.recipient_scope
+  AND a.notification_kind = b.notification_kind;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_template_recipient_kind
+  ON football_pool.notification_template (recipient_scope, notification_kind);
+
 INSERT INTO football_pool.notification_template (
   recipient_scope,
   notification_kind,

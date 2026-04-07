@@ -2,18 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import { ColorPickerField } from './ColorPickerField'
 
-type LandingPool = {
-  id: number
-  pool_name: string | null
-  season: number | null
-  primary_team: string | null
-  default_flg: boolean
-  sign_in_req_flg: boolean
-  team_name: string | null
-  primary_color: string | null
-  secondary_color: string | null
-  logo_file: string | null
-}
+import type { LandingPool } from './LandingMetrics'
 
 type TeamRecord = {
   id: number

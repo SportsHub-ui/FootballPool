@@ -32,7 +32,7 @@ export const getScoresForGame = async (
   }
 
   if (source === 'espn') {
-    return getScoresFromEspn(gameId);
+    return getScoresFromEspn(gameId); // Refactored for normalized schema
   }
 
   return buildDeterministicMockScores(gameId);

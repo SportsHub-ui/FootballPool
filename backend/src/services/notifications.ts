@@ -247,6 +247,19 @@ export const ensureNotificationSupport = async (client: PoolClient): Promise<voi
       `);
 
       await client.query(`
+        DROP INDEX IF EXISTS football_pool.idx_notification_template_recipient_kind
+      `);
+
+      await client.query(`
+        DELETE FROM football_pool.notification_template a
+        USING football_pool.notification_template b
+        WHERE a.ctid < b.ctid
+          AND COALESCE(a.pool_id, -1) = COALESCE(b.pool_id, -1)
+          AND a.recipient_scope = b.recipient_scope
+          AND a.notification_kind = b.notification_kind
+      `);
+
+      await client.query(`
         CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_template_global_unique
           ON football_pool.notification_template (recipient_scope, notification_kind)
           WHERE pool_id IS NULL
@@ -510,15 +523,16 @@ const loadUsersById = async (client: PoolClient, userIds: number[]): Promise<Map
 };
 
 const loadGameLabel = async (client: PoolClient, gameId: number): Promise<GameLabelRecord | null> => {
-  const result = await client.query<GameLabelRecord>(
-    `SELECT opponent
-     FROM football_pool.game
-     WHERE id = $1
+  // Get away team name from game_new and nfl_team
+  const result = await client.query<{ away_team_name: string | null }>(
+    `SELECT nta.team_name as away_team_name
+     FROM football_pool.game_new g
+     LEFT JOIN football_pool.nfl_team nta ON nta.id = g.away_team_id
+     WHERE g.id = $1
      LIMIT 1`,
     [gameId]
   );
-
-  return result.rows[0] ?? null;
+  return { opponent: result.rows[0]?.away_team_name ?? null };
 };
 
 const loadLeaderSquareRecord = async (client: PoolClient, poolId: number, squareNum: number): Promise<LeaderSquareRecord | null> => {

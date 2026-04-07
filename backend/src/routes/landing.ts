@@ -1,3 +1,4 @@
+
 import { Request, Router } from 'express';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
@@ -239,19 +240,7 @@ const pickDisplayGameId = (
   return selectedId != null ? Number(selectedId) : null;
 };
 
-const loadBoardPayload = async (
-  client: PoolClient,
-  poolId: number,
-  pool: {
-    pool_name: string | null;
-    primary_team: string | null;
-    team_name: string | null;
-    primary_color: string | null;
-    secondary_color: string | null;
-    logo_file: string | null;
-  },
-  gameId?: number | null
-) => {
+const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, gameId?: number) => {
   const selectedGameResult = gameId
     ? await client.query(
         `SELECT id,
@@ -446,6 +435,7 @@ const loadBoardPayload = async (
         currentGameTotals.set(entry.squareNum, (currentGameTotals.get(entry.squareNum) ?? 0) + entry.amount);
       }
     }
+
   }
 
   const squares = squaresResult.rows.map((square) => ({
@@ -473,7 +463,7 @@ const loadBoardPayload = async (
       squares
     }
   };
-};
+}
 
 landingRouter.get('/pools', async (req, res) => {
   try {
@@ -492,6 +482,7 @@ landingRouter.get('/pools', async (req, res) => {
     }
   } catch (error) {
     console.error('Landing pools error:', error);
+
     res.status(500).json({ error: 'Failed to fetch landing pools' });
   }
 });
