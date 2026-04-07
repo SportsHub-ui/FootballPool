@@ -110,6 +110,7 @@ const createTeamSchema = z.object({
   secondaryContactId: z.number().int().positive().optional(),
   hasMembers: z.boolean().optional(),
   sportTeamId: z.number().int().positive().optional(),
+  espnTeamUid: z.string().trim().min(1).max(64).optional(),
   sportTeamAbbr: z.string().trim().min(1).max(16).optional(),
   nflTeamAbbr: z.string().trim().min(1).max(16).optional()
 });
@@ -385,6 +386,21 @@ const resolveSportTeamId = async (
     return Number(existing.rows[0].id);
   }
 
+  const espnTeamUid = payload.espnTeamUid?.trim() || '';
+  if (espnTeamUid) {
+    const result = await client.query<{ id: number }>(
+      `SELECT id
+       FROM football_pool.sport_team
+       WHERE espn_team_uid = $1
+       LIMIT 1`,
+      [espnTeamUid]
+    );
+
+    if ((result.rowCount ?? 0) > 0) {
+      return Number(result.rows[0].id);
+    }
+  }
+
   const abbreviation = payload.sportTeamAbbr?.trim() || payload.nflTeamAbbr?.trim() || '';
   if (!abbreviation) {
     return null;
@@ -393,7 +409,9 @@ const resolveSportTeamId = async (
   const result = await client.query<{ id: number }>(
     `SELECT id
      FROM football_pool.sport_team
-     WHERE UPPER(COALESCE(abbreviation, '')) = UPPER($1)
+     WHERE sport_code = 'FOOTBALL'
+       AND league_code = 'NFL'
+       AND UPPER(COALESCE(abbreviation, '')) = UPPER($1)
      LIMIT 1`,
     [abbreviation]
   );

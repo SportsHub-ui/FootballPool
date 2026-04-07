@@ -17,6 +17,12 @@ export interface IngestionGameTarget {
   kickoffAt: string | null;
   homeTeam: string;
   awayTeam: string;
+  homeAbbreviation: string | null;
+  awayAbbreviation: string | null;
+  homeEspnTeamId: string | null;
+  awayEspnTeamId: string | null;
+  homeEspnTeamUid: string | null;
+  awayEspnTeamUid: string | null;
   state: string;
   currentQuarter: number | null;
   timeRemainingInQuarter: string | null;
@@ -50,6 +56,12 @@ interface GameLookupRow {
   kickoff_at: string | null;
   home_team: string | null;
   away_team: string | null;
+  home_abbreviation: string | null;
+  away_abbreviation: string | null;
+  home_espn_team_id: string | null;
+  away_espn_team_id: string | null;
+  home_espn_team_uid: string | null;
+  away_espn_team_uid: string | null;
   state: string | null;
   current_quarter: number | null;
   time_remaining_in_quarter: string | null;
@@ -63,8 +75,12 @@ type EspnCompetitor = {
   score?: string;
   linescores?: Array<{ value?: number | string; displayValue?: string }>;
   team?: {
+    id?: string;
+    uid?: string;
     displayName?: string;
     shortDisplayName?: string;
+    abbreviation?: string;
+    slug?: string;
   };
 };
 
@@ -329,6 +345,12 @@ const mapLookupRow = (row: GameLookupRow): IngestionGameTarget => ({
   kickoffAt: row.kickoff_at ?? null,
   homeTeam: row.home_team ?? '',
   awayTeam: row.away_team ?? '',
+  homeAbbreviation: row.home_abbreviation ?? null,
+  awayAbbreviation: row.away_abbreviation ?? null,
+  homeEspnTeamId: row.home_espn_team_id ?? null,
+  awayEspnTeamId: row.away_espn_team_id ?? null,
+  homeEspnTeamUid: row.home_espn_team_uid ?? null,
+  awayEspnTeamUid: row.away_espn_team_uid ?? null,
   state: normalizeGameState(row.state),
   currentQuarter: row.current_quarter != null ? Number(row.current_quarter) : null,
   timeRemainingInQuarter: row.time_remaining_in_quarter ?? null
@@ -341,6 +363,12 @@ const loadGameTargetWithClient = async (client: PoolClient, gameId: number): Pro
             COALESCE(g.kickoff_at::text, g.game_date::timestamp::text) AS kickoff_at,
             COALESCE(primary_team.name, '') AS home_team,
             COALESCE(opponent_team.name, '') AS away_team,
+            primary_team.abbreviation AS home_abbreviation,
+            opponent_team.abbreviation AS away_abbreviation,
+            primary_team.espn_team_id AS home_espn_team_id,
+            opponent_team.espn_team_id AS away_espn_team_id,
+            primary_team.espn_team_uid AS home_espn_team_uid,
+            opponent_team.espn_team_uid AS away_espn_team_uid,
             COALESCE(g.state, 'scheduled') AS state,
             g.current_quarter,
             g.time_remaining_in_quarter
@@ -366,6 +394,12 @@ export const listTodayGameTargetsForIngestion = async (at: Date = new Date()): P
               COALESCE(g.kickoff_at::text, g.game_date::timestamp::text) AS kickoff_at,
               COALESCE(primary_team.name, '') AS home_team,
               COALESCE(opponent_team.name, '') AS away_team,
+              primary_team.abbreviation AS home_abbreviation,
+              opponent_team.abbreviation AS away_abbreviation,
+              primary_team.espn_team_id AS home_espn_team_id,
+              opponent_team.espn_team_id AS away_espn_team_id,
+              primary_team.espn_team_uid AS home_espn_team_uid,
+              opponent_team.espn_team_uid AS away_espn_team_uid,
               COALESCE(g.state, 'scheduled') AS state,
               g.current_quarter,
               g.time_remaining_in_quarter
@@ -433,8 +467,30 @@ const fetchScoreboardForDate = async (dateParam: string): Promise<EspnScoreboard
 };
 
 const getDisplayNames = (competitor: EspnCompetitor | null | undefined): string[] => (
-  [competitor?.team?.displayName, competitor?.team?.shortDisplayName].filter((value): value is string => Boolean(value))
+  [competitor?.team?.displayName, competitor?.team?.shortDisplayName, competitor?.team?.abbreviation].filter(
+    (value): value is string => Boolean(value)
+  )
 );
+
+const matchesEspnTeamIdentity = (
+  competitor: EspnCompetitor | null | undefined,
+  expected: { id?: string | null; uid?: string | null; name?: string; abbreviation?: string | null }
+): boolean => {
+  const competitorUid = competitor?.team?.uid?.trim() ?? '';
+  const competitorId = competitor?.team?.id?.trim() ?? '';
+
+  if (expected.uid && competitorUid && competitorUid === expected.uid) {
+    return true;
+  }
+
+  if (expected.id && competitorId && competitorId === expected.id) {
+    return true;
+  }
+
+  return getDisplayNames(competitor).some(
+    (value) => matchesTeamName(value, expected.name ?? '') || matchesTeamName(value, expected.abbreviation ?? '')
+  );
+};
 
 const findMatchingCompetition = (
   target: IngestionGameTarget,
@@ -446,18 +502,36 @@ const findMatchingCompetition = (
       continue;
     }
 
-    const firstNames = getDisplayNames(competition.competitors[0]);
-    const secondNames = getDisplayNames(competition.competitors[1]);
-
     const expectedPrimary = target.homeTeam || env.SCORE_INGEST_PRIMARY_TEAM || '';
     const expectedOpponent = target.awayTeam;
 
     const directMatch =
-      firstNames.some((name) => matchesTeamName(name, expectedPrimary)) &&
-      secondNames.some((name) => matchesTeamName(name, expectedOpponent));
+      matchesEspnTeamIdentity(competition.competitors[0], {
+        id: target.homeEspnTeamId,
+        uid: target.homeEspnTeamUid,
+        name: expectedPrimary,
+        abbreviation: target.homeAbbreviation
+      }) &&
+      matchesEspnTeamIdentity(competition.competitors[1], {
+        id: target.awayEspnTeamId,
+        uid: target.awayEspnTeamUid,
+        name: expectedOpponent,
+        abbreviation: target.awayAbbreviation
+      });
+
     const swappedMatch =
-      firstNames.some((name) => matchesTeamName(name, expectedOpponent)) &&
-      secondNames.some((name) => matchesTeamName(name, expectedPrimary));
+      matchesEspnTeamIdentity(competition.competitors[0], {
+        id: target.awayEspnTeamId,
+        uid: target.awayEspnTeamUid,
+        name: expectedOpponent,
+        abbreviation: target.awayAbbreviation
+      }) &&
+      matchesEspnTeamIdentity(competition.competitors[1], {
+        id: target.homeEspnTeamId,
+        uid: target.homeEspnTeamUid,
+        name: expectedPrimary,
+        abbreviation: target.homeAbbreviation
+      });
 
     if (directMatch || swappedMatch) {
       return competition;

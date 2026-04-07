@@ -12,7 +12,8 @@
     "test:ui": "node ./scripts/run-vitest.js --ui",
     "test:run": "node ./scripts/run-vitest.js run",
     "lint": "eslint .",
-    "db:migrate": "node ./scripts/run-migrations.js"
+    "db:migrate": "node ./scripts/run-migrations.js",
+    "db:sync-sport-teams": "node ./scripts/sync-sport-teams.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
