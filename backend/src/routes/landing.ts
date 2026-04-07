@@ -240,7 +240,7 @@ const pickDisplayGameId = (
   return selectedId != null ? Number(selectedId) : null;
 };
 
-const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, gameId?: number) => {
+const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, gameId?: number | null) => {
   const selectedGameResult = gameId
     ? await client.query(
         `SELECT id,
