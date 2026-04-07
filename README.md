@@ -11,7 +11,9 @@ A complete system for managing season-long football pools with real-time square 
 - Automatic winner calculation based on last-digit matching
 - Winnings ledger generation and tracking
 - Automated score ingestion (mock and ESPN sources)
+- Adaptive daily score scheduler with 6:00 AM CT wake-up and faster live-game polling
 - Ingestion run history logging and review endpoint
+- Server-sent event (SSE) stream for live board refreshes
 - Unique pool display links for read-only Squares board viewing
 - JWT authentication with fallback mock auth for development
 - Request/response logging with assignment-specific debug logs
@@ -112,6 +114,7 @@ npm run test:ui
 - `GET /api/health` - Service status with database time
 - `GET /api/db/smoke` - Table row counts
 - `GET /api/db/preview` - Pool summaries with statistics
+- `GET /api/db/api-usage?hours=24&limit=15` - Organizer dashboard for recent API usage, top routes, hourly traffic, and external API counts
 
 ### Authentication
 - `POST /api/auth/login` - JWT token generation (email-based)
@@ -140,10 +143,11 @@ npm run test:ui
 - `GET /api/games/:gameId` - Get game details
 - `PATCH /api/games/:gameId/scores` - Update Q1-Q4 scores (triggers winner calculation)
 
-### Score Ingestion (Organizer)
-- `POST /api/ingestion/games/:gameId/scores` - Ingest scores for one game (source: mock/payload/espn)
-- `POST /api/ingestion/run` - Run ingestion for eligible games
-- `GET /api/ingestion/history` - Fetch last 25 ingestion runs
+### Score Ingestion
+- `GET /api/ingestion/events` - SSE stream for live score-update notifications used by the frontend boards
+- `POST /api/ingestion/games/:gameId/scores` - Ingest scores for one game (source: mock/payload/espn, organizer)
+- `POST /api/ingestion/run` - Run ingestion for eligible games (organizer)
+- `GET /api/ingestion/history` - Fetch last 25 ingestion runs (organizer)
 
 ### Winnings Management
 - `GET /api/winnings/pool/:poolId` - All winnings for pool (organizer)
@@ -235,14 +239,43 @@ Score: 24-28
 
 ### Ingestion Configuration
 Optional backend `.env` settings:
-- `SCORE_INGEST_ENABLED=false` - Start scheduler on boot when true
+- `SCORE_INGEST_ENABLED=false` - Starts the automatic scheduler on boot when `true`
 - `SCORE_INGEST_SOURCE=mock` - `mock`, `payload`, or `espn`
-- `SCORE_INGEST_INTERVAL_MINUTES=30` - Scheduler cadence
-- `SCORE_INGEST_PRIMARY_TEAM=` - Team hint used for ESPN game matching
+- `SCORE_INGEST_DAILY_START_HOUR_CT=6` - Daily wake-up hour in Central Time
+- `SCORE_INGEST_INTERVAL_MINUTES=30` - Low-frequency polling cadence before games go live
+- `SCORE_INGEST_ACTIVE_INTERVAL_SECONDS=60` - Faster cadence while games are close to kickoff or live
+- `SCORE_INGEST_REQUEST_TIMEOUT_MS=8000` - Timeout per ESPN request
+- `SCORE_INGEST_PRIMARY_TEAM=` - Optional team hint used for ESPN game matching
 - `SIMULATION_ENABLED=true` - Enables organizer simulation tools on the backend
 - `VITE_ENABLE_SIMULATION_CONTROLS=true` - Shows simulation controls in the frontend
 - `EMAIL_NOTIFICATIONS_ENABLED=true` - Turns notification delivery on/off globally
 - `EMAIL_FROM`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS` - SMTP settings used for winner and live-leader emails; if `SMTP_HOST` is blank, the app logs the email payload instead
+
+### Live Score Update Process
+The live score flow is designed to scale across many pools while keeping ESPN/API usage low.
+
+1. **Daily wake-up at 6:00 AM CT**
+   - The scheduler starts each day at `SCORE_INGEST_DAILY_START_HOUR_CT`.
+   - If no pool-linked games are scheduled for that day, it goes back to sleep until the next morning.
+
+2. **Only today’s games are monitored**
+   - The scheduler looks at the shared game schedule for the current day rather than polling every pool separately.
+   - This keeps work proportional to actual NFL activity.
+
+3. **Adaptive polling**
+   - Before kickoff, polling stays relatively slow (`SCORE_INGEST_INTERVAL_MINUTES`).
+   - Once a game is near kickoff or in progress, polling increases to the faster live interval (`SCORE_INGEST_ACTIVE_INTERVAL_SECONDS`).
+   - After the last game completes, the scheduler sleeps until the next day.
+
+4. **Shared central game updates**
+   - Scores are applied to the shared game record that all pools reference.
+   - Winner and payout processing only re-runs when the score/state actually changed, which reduces unnecessary database work.
+
+5. **Push-style frontend refreshes via SSE**
+   - The backend publishes `game-updated` and scheduler status events on `GET /api/ingestion/events`.
+   - Open organizer, display-only, and participant boards listen to that stream and automatically refresh when their selected game changes.
+
+This approach avoids constant browser polling, reduces repeated ESPN requests, and scales better as more pools are added.
 
 ### Simulation Modes
 Use **Pool Maintenance** to start the simulation, then use the **Score Ingestion** page to advance it when applicable.

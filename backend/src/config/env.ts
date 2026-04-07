@@ -31,6 +31,9 @@ const envSchema = z.object({
     .transform((value) => value === 'true'),
   SCORE_INGEST_SOURCE: z.enum(['mock', 'payload', 'espn']).default('mock'),
   SCORE_INGEST_INTERVAL_MINUTES: z.coerce.number().int().positive().default(30),
+  SCORE_INGEST_ACTIVE_INTERVAL_SECONDS: z.coerce.number().int().positive().default(60),
+  SCORE_INGEST_DAILY_START_HOUR_CT: z.coerce.number().int().min(0).max(23).default(6),
+  SCORE_INGEST_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(8000),
   SCORE_INGEST_PRIMARY_TEAM: z.string().optional().default(''),
   SIMULATION_ENABLED: z
     .enum(['true', 'false'])

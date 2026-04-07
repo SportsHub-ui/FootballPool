@@ -60,6 +60,38 @@ type PoolMetricsResponse = {
   }>
 }
 
+type ApiUsageDashboardResponse = {
+  generatedAt: string
+  windowHours: number
+  summary: {
+    totalRequests: number
+    appRequests: number
+    externalRequests: number
+    errorRequests: number
+    averageDurationMs: number
+    lastSeenAt: string | null
+  }
+  topRoutes: Array<{
+    routeKey: string
+    method: string
+    requestCount: number
+    averageDurationMs: number
+    maxDurationMs: number
+    errorCount: number
+  }>
+  hourlyTraffic: Array<{
+    bucketStart: string
+    requestCount: number
+    externalRequestCount: number
+  }>
+  externalApis: Array<{
+    provider: string
+    routeKey: string
+    requestCount: number
+    lastStatusCode: number
+  }>
+}
+
 type ChartSlice = {
   label: string
   value: number
@@ -83,6 +115,7 @@ const CHART_COLORS = ['#1f9d55', '#c85b2a', '#4f46e5', '#f59e0b', '#d946ef', '#0
 const formatCurrency = (value: number): string => `$${value.toLocaleString()}`
 const formatPercent = (value: number): string => `${Math.round(value)}%`
 const formatMetricPercent = (value: number | null): string => (value == null ? '—' : `${Math.round(value)}%`)
+const formatDuration = (value: number): string => `${Math.round(value)} ms`
 
 const calculateReturnPercent = (winnings: number, baseAmount: number): number | null => {
   if (baseAmount <= 0) return null
@@ -186,6 +219,13 @@ export function LandingMetrics({
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [metrics, setMetrics] = useState<PoolMetricsResponse | null>(null)
+  const [usageLoading, setUsageLoading] = useState(false)
+  const [usageError, setUsageError] = useState<string | null>(null)
+  const [usageDashboard, setUsageDashboard] = useState<ApiUsageDashboardResponse | null>(null)
+  const [ingestionRunning, setIngestionRunning] = useState(false)
+  const [ingestionFeedback, setIngestionFeedback] = useState<string | null>(null)
+  const [ingestionError, setIngestionError] = useState<string | null>(null)
+  const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
     if (!selectedPoolId) {
@@ -282,7 +322,111 @@ export function LandingMetrics({
     return () => {
       isActive = false
     }
-  }, [apiBase, authHeaders, onRequireSignIn, pools, selectedPoolId, token])
+  }, [apiBase, authHeaders, onRequireSignIn, pools, refreshKey, selectedPoolId, token])
+
+  useEffect(() => {
+    if (!token) {
+      setUsageDashboard(null)
+      setUsageError(null)
+      setUsageLoading(false)
+      return
+    }
+
+    let isActive = true
+
+    const loadUsageDashboard = async (): Promise<void> => {
+      setUsageLoading(true)
+      setUsageError(null)
+
+      try {
+        const response = await fetch(`${apiBase}/api/db/api-usage?hours=24&limit=10`, {
+          headers: authHeaders
+        })
+
+        const data = await response.json().catch(() => null)
+
+        if (!response.ok) {
+          throw new Error(
+            (data && typeof data === 'object' && ('detail' in data || 'message' in data)
+              ? String((data as { detail?: string; message?: string }).detail ?? (data as { message?: string }).message)
+              : 'Failed to load API usage dashboard')
+          )
+        }
+
+        if (isActive) {
+          setUsageDashboard(data as ApiUsageDashboardResponse)
+        }
+      } catch (loadError) {
+        if (isActive) {
+          const message = loadError instanceof Error ? loadError.message : 'Failed to load API usage dashboard'
+          setUsageDashboard(null)
+          setUsageError(message)
+        }
+      } finally {
+        if (isActive) {
+          setUsageLoading(false)
+        }
+      }
+    }
+
+    void loadUsageDashboard()
+
+    return () => {
+      isActive = false
+    }
+  }, [apiBase, authHeaders, refreshKey, token])
+
+  const runInitialIngestionCheck = async (): Promise<void> => {
+    if (!token) {
+      setIngestionError('Sign in as an organizer to run the ESPN ingestion check.')
+      onRequireSignIn()
+      return
+    }
+
+    setIngestionRunning(true)
+    setIngestionError(null)
+    setIngestionFeedback(null)
+
+    try {
+      const response = await fetch(`${apiBase}/api/ingestion/run`, {
+        method: 'POST',
+        headers: {
+          ...authHeaders,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ source: 'espn' })
+      })
+
+      const data = await response.json().catch(() => null)
+
+      if (!response.ok) {
+        throw new Error(
+          data && typeof data === 'object' && ('error' in data || 'detail' in data || 'message' in data)
+            ? String(
+                (data as { error?: string; detail?: string; message?: string }).error ??
+                  (data as { detail?: string }).detail ??
+                  (data as { message?: string }).message
+              )
+            : 'Failed to run the ingestion check'
+        )
+      }
+
+      const total = Number((data as { total?: number } | null)?.total ?? 0)
+      const success = Number((data as { success?: number } | null)?.success ?? 0)
+      const failed = Number((data as { failed?: number } | null)?.failed ?? 0)
+
+      setIngestionFeedback(
+        total > 0
+          ? `ESPN ingestion check finished: ${success} of ${total} game${total === 1 ? '' : 's'} checked${failed > 0 ? `, ${failed} failed` : ''}.`
+          : 'No eligible games are waiting for an ESPN ingestion check right now.'
+      )
+      setRefreshKey((value) => value + 1)
+    } catch (runError) {
+      setIngestionError(runError instanceof Error ? runError.message : 'Failed to run the ingestion check')
+    } finally {
+      setIngestionRunning(false)
+    }
+  }
 
   const selectedPool = useMemo(
     () => pools.find((pool) => pool.id === selectedPoolId) ?? null,
@@ -596,6 +740,146 @@ export function LandingMetrics({
                 <li key={idea}>{idea}</li>
               ))}
             </ul>
+          </article>
+
+          <article className="panel wide">
+            <div className="metrics-usage-header">
+              <div>
+                <h2>API usage dashboard</h2>
+                <p className="small">
+                  Recent application and external API traffic for the last {usageDashboard?.windowHours ?? 24} hours.
+                </p>
+                <p className="small landing-readonly-note">
+                  Use the button below to run the same ESPN check immediately instead of waiting for the scheduler.
+                </p>
+              </div>
+              <div className="metrics-usage-actions">
+                <button
+                  type="button"
+                  className="secondary compact"
+                  onClick={() => {
+                    void runInitialIngestionCheck()
+                  }}
+                  disabled={ingestionRunning || !token}
+                >
+                  {ingestionRunning ? 'Checking ESPN now…' : 'Run ingestion check now'}
+                </button>
+                {usageDashboard?.generatedAt ? (
+                  <span className="metrics-inline-badge">Updated {new Date(usageDashboard.generatedAt).toLocaleString()}</span>
+                ) : null}
+              </div>
+            </div>
+
+            {ingestionError ? <div className="error-banner">{ingestionError}</div> : null}
+            {ingestionFeedback ? <p className="small metrics-ingestion-feedback">{ingestionFeedback}</p> : null}
+
+            {!token ? (
+              <p className="small">Sign in as an organizer to view request and ESPN call counts.</p>
+            ) : usageLoading ? (
+              <p className="small">Loading API usage metrics…</p>
+            ) : usageError ? (
+              <p className="small">{usageError}</p>
+            ) : usageDashboard ? (
+              <>
+                <div className="stat-grid metrics-summary-grid metrics-usage-grid">
+                  <div className="summary-card">
+                    <div className="summary-label">Total requests</div>
+                    <div className="summary-value">{usageDashboard.summary.totalRequests.toLocaleString()}</div>
+                    <div className="summary-label">App requests: {usageDashboard.summary.appRequests.toLocaleString()}</div>
+                  </div>
+                  <div className="summary-card">
+                    <div className="summary-label">External calls</div>
+                    <div className="summary-value">{usageDashboard.summary.externalRequests.toLocaleString()}</div>
+                    <div className="summary-label">ESPN and other outbound calls</div>
+                  </div>
+                  <div className="summary-card">
+                    <div className="summary-label">Errors</div>
+                    <div className="summary-value pending">{usageDashboard.summary.errorRequests.toLocaleString()}</div>
+                    <div className="summary-label">Average latency: {formatDuration(usageDashboard.summary.averageDurationMs)}</div>
+                  </div>
+                </div>
+
+                <div className="panel-grid metrics-panel-grid">
+                  <article className="panel">
+                    <h2>Top routes</h2>
+                    <div className="table-wrap">
+                      <table className="landing-player-table">
+                        <thead>
+                          <tr>
+                            <th>Route</th>
+                            <th>Method</th>
+                            <th>Calls</th>
+                            <th>Avg ms</th>
+                            <th>Errors</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {usageDashboard.topRoutes.length > 0 ? (
+                            usageDashboard.topRoutes.map((route) => (
+                              <tr key={`${route.method}-${route.routeKey}`}>
+                                <td>{route.routeKey}</td>
+                                <td>{route.method || '—'}</td>
+                                <td>{route.requestCount.toLocaleString()}</td>
+                                <td>{Math.round(route.averageDurationMs)}</td>
+                                <td>{route.errorCount.toLocaleString()}</td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={5}>No route traffic recorded yet.</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </article>
+
+                  <article className="panel">
+                    <h2>External APIs</h2>
+                    <div className="table-wrap">
+                      <table className="landing-player-table">
+                        <thead>
+                          <tr>
+                            <th>Provider</th>
+                            <th>Route</th>
+                            <th>Calls</th>
+                            <th>Last status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {usageDashboard.externalApis.length > 0 ? (
+                            usageDashboard.externalApis.map((entry) => (
+                              <tr key={`${entry.provider}-${entry.routeKey}`}>
+                                <td>{entry.provider}</td>
+                                <td>{entry.routeKey}</td>
+                                <td>{entry.requestCount.toLocaleString()}</td>
+                                <td>{entry.lastStatusCode || '—'}</td>
+                              </tr>
+                            ))
+                          ) : (
+                            <tr>
+                              <td colSpan={4}>No outbound API calls recorded yet.</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </article>
+                </div>
+
+                <div className="metrics-hourly-list">
+                  {usageDashboard.hourlyTraffic.map((bucket) => (
+                    <div key={bucket.bucketStart} className="metrics-hourly-item">
+                      <span>{new Date(bucket.bucketStart).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric' })}</span>
+                      <strong>{bucket.requestCount.toLocaleString()} req</strong>
+                      <span>{bucket.externalRequestCount.toLocaleString()} external</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <p className="small">No API usage data has been recorded yet.</p>
+            )}
           </article>
         </>
       )}

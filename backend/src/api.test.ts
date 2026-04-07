@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import request from 'supertest'
 import { app } from '../src/app'
 import { db } from '../src/config/db'
+import { flushApiUsageMetricsNow } from '../src/services/apiUsage'
 
 describe('Football Pool API', () => {
   const organizerHeaders = {
@@ -49,6 +50,21 @@ describe('Football Pool API', () => {
 
       expect(response.status).toBe(200)
       expect(Array.isArray(response.body.pools)).toBe(true)
+    })
+
+    it('should return an API usage dashboard summary for organizers', async () => {
+      await request(app).get('/api/health')
+      await request(app).get('/api/db/smoke')
+      await flushApiUsageMetricsNow()
+
+      const response = await request(app)
+        .get('/api/db/api-usage?hours=24&limit=10')
+        .set(organizerHeaders)
+
+      expect(response.status).toBe(200)
+      expect(response.body.status).toBe('ok')
+      expect(Number(response.body.summary?.totalRequests ?? 0)).toBeGreaterThan(0)
+      expect(Array.isArray(response.body.topRoutes)).toBe(true)
     })
   })
 

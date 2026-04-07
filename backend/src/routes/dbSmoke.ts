@@ -1,5 +1,8 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { db } from '../config/db';
+import { requireRole } from '../middleware/auth';
+import { getApiUsageDashboard } from '../services/apiUsage';
 
 export const dbSmokeRouter = Router();
 
@@ -35,6 +38,33 @@ dbSmokeRouter.get('/smoke', async (_req, res) => {
       status: 'error',
       message: 'Database query failed',
       detail: error instanceof Error ? error.message : 'Unknown database error'
+    });
+  }
+});
+
+dbSmokeRouter.get('/api-usage', requireRole('organizer'), async (req, res) => {
+  try {
+    const query = z
+      .object({
+        hours: z.coerce.number().int().positive().max(24 * 30).optional(),
+        limit: z.coerce.number().int().positive().max(100).optional()
+      })
+      .safeParse(req.query);
+
+    const dashboard = await getApiUsageDashboard({
+      hours: query.success ? query.data.hours : undefined,
+      limit: query.success ? query.data.limit : undefined
+    });
+
+    res.json({
+      status: 'ok',
+      ...dashboard
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: 'error',
+      message: 'Failed to load API usage dashboard',
+      detail: error instanceof Error ? error.message : 'Unknown dashboard error'
     });
   }
 });

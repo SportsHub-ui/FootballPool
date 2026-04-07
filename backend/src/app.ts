@@ -13,6 +13,7 @@ import { poolsRouter } from './routes/pools';
 import { setupRouter } from './routes/setup';
 import { winningsRouter } from './routes/winnings';
 import { mockAuth } from './middleware/auth';
+import { getRequestRouteKey, recordApiUsage } from './services/apiUsage';
 
 export const app = express();
 
@@ -32,6 +33,18 @@ app.use((req, res, next) => {
     console.log(
       `[${new Date().toISOString()}] ${req.method} ${req.originalUrl} -> ${res.statusCode} (${durationMs}ms)`
     );
+
+    if (req.originalUrl.startsWith('/api/')) {
+      recordApiUsage({
+        metricType: 'http_request',
+        provider: 'app',
+        routeKey: getRequestRouteKey(req),
+        method: req.method,
+        statusCode: res.statusCode,
+        durationMs,
+        occurredAt: new Date()
+      });
+    }
   });
 
   next();

@@ -2156,6 +2156,58 @@ button:disabled {
   align-items: start;
 }
 
+.metrics-usage-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.metrics-usage-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.metrics-ingestion-feedback {
+  margin-top: 0.75rem;
+}
+
+.metrics-inline-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: #eef6ff;
+  color: #1d4ed8;
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 0.3rem 0.55rem;
+}
+
+.metrics-usage-grid {
+  margin-bottom: 1rem;
+}
+
+.metrics-hourly-list {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 1rem;
+}
+
+.metrics-hourly-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.75rem;
+  align-items: center;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #e5edf5;
+  border-radius: 10px;
+  background: #fbfdff;
+  font-size: 0.88rem;
+}
+
 .metrics-pie-layout {
   display: grid;
   grid-template-columns: 180px minmax(0, 1fr);
@@ -2272,6 +2324,11 @@ button:disabled {
 
   .metrics-pie-layout {
     grid-template-columns: 1fr;
+  }
+
+  .metrics-hourly-item {
+    grid-template-columns: 1fr;
+    justify-items: start;
   }
 }
 

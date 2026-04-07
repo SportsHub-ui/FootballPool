@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
 import { LandingMetrics } from './LandingMetrics'
@@ -420,6 +420,7 @@ export function LandingPage() {
   })
   const [participantOptions, setParticipantOptions] = useState<LandingUserOption[]>([])
   const [playerOptions, setPlayerOptions] = useState<LandingPlayerOption[]>([])
+  const liveRefreshTimerRef = useRef<number | null>(null)
 
   const authHeaders = useMemo(() => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -511,6 +512,29 @@ export function LandingPage() {
     }
   }
 
+  const refreshLivePoolContext = async (poolId: number, preferredGameId?: number | null): Promise<void> => {
+    try {
+      const response = await fetch(`${API_BASE}/api/landing/pools/${poolId}/games`, {
+        headers: authHeaders
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to refresh pool games')
+      }
+
+      const data = await response.json()
+      const nextGames: LandingGame[] = data.games ?? []
+      const nextGameId = pickInitialGameId(nextGames, preferredGameId ?? selectedGameId)
+
+      setGames(nextGames)
+      setSelectedGameId(nextGameId)
+
+      await Promise.all([loadBoard(poolId, nextGameId), loadSimulationStatus(poolId)])
+    } catch (error) {
+      console.error('Failed to refresh live landing board:', error)
+    }
+  }
+
   const loadDisplayBoard = async (displayCode: string): Promise<void> => {
     setBusy('loading')
     setPageError(null)
@@ -597,6 +621,70 @@ export function LandingPage() {
     void loadPools(selectedPoolId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [displayOnlyMode, displayToken, token])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || activePage !== 'Squares') {
+      return
+    }
+
+    if (displayOnlyMode ? !displayToken : !selectedPoolId) {
+      return
+    }
+
+    const eventSource = new EventSource(`${API_BASE}/api/ingestion/events`)
+
+    const scheduleRefresh = () => {
+      if (liveRefreshTimerRef.current != null) {
+        window.clearTimeout(liveRefreshTimerRef.current)
+      }
+
+      liveRefreshTimerRef.current = window.setTimeout(() => {
+        liveRefreshTimerRef.current = null
+
+        if (displayOnlyMode && displayToken) {
+          void loadDisplayBoard(displayToken)
+          return
+        }
+
+        if (selectedPoolId) {
+          void refreshLivePoolContext(selectedPoolId, selectedGameId)
+        }
+      }, 750)
+    }
+
+    const handleGameUpdated = (event: MessageEvent) => {
+      try {
+        const payload = JSON.parse(event.data) as { payload?: { gameId?: unknown } }
+        const gameId = Number(payload?.payload?.gameId)
+
+        if (!Number.isFinite(gameId)) {
+          return
+        }
+
+        const isRelevant =
+          games.some((game) => Number(game.id) === gameId || Number(game.game_id) === gameId) ||
+          Number(selectedGameId ?? board?.gameId ?? 0) === gameId
+
+        if (isRelevant) {
+          scheduleRefresh()
+        }
+      } catch (error) {
+        console.warn('Ignoring malformed live score event', error)
+      }
+    }
+
+    eventSource.addEventListener('game-updated', handleGameUpdated as EventListener)
+
+    return () => {
+      if (liveRefreshTimerRef.current != null) {
+        window.clearTimeout(liveRefreshTimerRef.current)
+        liveRefreshTimerRef.current = null
+      }
+
+      eventSource.removeEventListener('game-updated', handleGameUpdated as EventListener)
+      eventSource.close()
+    }
+  }, [activePage, board?.gameId, displayOnlyMode, displayToken, games, selectedGameId, selectedPoolId, token])
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()

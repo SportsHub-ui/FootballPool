@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { db } from '../config/db';
 import { requireRole } from '../middleware/auth';
 import { importPoolScheduleFromEspn } from '../services/scheduleImport';
-import { processGameScores } from '../services/scoreProcessing';
+import { ingestGameScores } from '../services/scoreIngestion';
 
 export const gamesRouter = Router();
 
@@ -164,43 +164,9 @@ gamesRouter.patch('/:gameId/scores', async (req, res) => {
   try {
     const { gameId } = z.object({ gameId: z.coerce.number().int().positive() }).parse(req.params);
     const scores = scoreUpdateSchema.parse(req.body);
-    const client = await db.connect();
-    try {
-      await client.query('BEGIN');
-      // Update scores_by_quarter in game_new
-      const scoresByQuarter = {
-        '1': { home: scores.q1PrimaryScore, away: scores.q1OpponentScore },
-        '2': { home: scores.q2PrimaryScore, away: scores.q2OpponentScore },
-        '3': { home: scores.q3PrimaryScore, away: scores.q3OpponentScore },
-        '4': { home: scores.q4PrimaryScore, away: scores.q4OpponentScore }
-      };
-      await client.query(
-        `UPDATE football_pool.game_new
-         SET scores_by_quarter = $1, final_score_home = $2, final_score_away = $3, updated_at = NOW()
-         WHERE id = $4`,
-        [JSON.stringify(scoresByQuarter), scores.q4PrimaryScore, scores.q4OpponentScore, gameId]
-      );
-      // Find all pool_game entries for this game
-      const poolGames = await client.query(
-        `SELECT pool_id, row_numbers, column_numbers FROM football_pool.pool_game WHERE game_id = $1`,
-        [gameId]
-      );
-      // For each pool, call processGameScores (legacy logic, may need refactor)
-      const results = [];
-      for (const pg of poolGames.rows) {
-        // processGameScores expects gameId and scores, but also needs pool context
-        // You may need to refactor processGameScores to accept poolId and row/col numbers
-        // For now, just call as before (may need further backend refactor)
-        results.push(await processGameScores(gameId, scores));
-      }
-      await client.query('COMMIT');
-      res.json({ message: 'Scores updated and winners calculated', results });
-    } catch (err) {
-      await client.query('ROLLBACK');
-      throw err;
-    } finally {
-      client.release();
-    }
+    const result = await ingestGameScores(gameId, 'payload', scores, { forceProcess: true });
+
+    res.json({ message: 'Scores updated and winners calculated', ...result });
   } catch (error) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: error.errors });

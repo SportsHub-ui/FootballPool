@@ -874,139 +874,138 @@ landingRouter.get('/pools/:poolId/metrics', async (req, res) => {
         console.warn(`[landing-metrics] continuing without auto-initialized squares for pool=${poolId}`, squareInitError);
       }
 
-      const [summaryResult, gameResult, payoutResult] = await Promise.all([
-        client.query(
-          `SELECT
-              COUNT(*)::int AS total_squares,
-              COUNT(*) FILTER (WHERE s.participant_id IS NOT NULL)::int AS sold_squares,
-              COUNT(*) FILTER (WHERE s.participant_id IS NULL)::int AS open_squares,
-              COUNT(*) FILTER (WHERE COALESCE(s.paid_flg, FALSE) = TRUE)::int AS paid_squares,
-              COUNT(*) FILTER (WHERE s.participant_id IS NOT NULL AND COALESCE(s.paid_flg, FALSE) = FALSE)::int AS unpaid_squares,
-              COUNT(DISTINCT s.participant_id)::int AS unique_participants,
-              COUNT(DISTINCT s.player_id)::int AS unique_players
-           FROM football_pool.square s
-           WHERE s.pool_id = $1`,
-          [poolId]
-        ),
-        client.query(
-          `SELECT
-              COUNT(*)::int AS total_games,
-              COUNT(*) FILTER (
-                WHERE g.q4_primary_score IS NOT NULL
-                  AND g.q4_opponent_score IS NOT NULL
-              )::int AS completed_games
-           FROM football_pool.game g
-           WHERE g.pool_id = $1`,
-          [poolId]
-        ),
-        client.query(
-          `SELECT
-              COALESCE(SUM(wl.amount_won), 0)::int AS total_awarded,
-              COALESCE(SUM(wl.amount_won) FILTER (WHERE lower(COALESCE(wl.payout_status, 'pending')) = 'paid'), 0)::int AS total_paid_out,
-              COALESCE(SUM(wl.amount_won) FILTER (WHERE lower(COALESCE(wl.payout_status, 'pending')) <> 'paid'), 0)::int AS total_pending
-           FROM football_pool.winnings_ledger wl
-           WHERE wl.pool_id = $1`,
-          [poolId]
-        )
-      ]);
+      const summaryResult = await client.query(
+        `SELECT
+            COUNT(*)::int AS total_squares,
+            COUNT(*) FILTER (WHERE s.participant_id IS NOT NULL)::int AS sold_squares,
+            COUNT(*) FILTER (WHERE s.participant_id IS NULL)::int AS open_squares,
+            COUNT(*) FILTER (WHERE COALESCE(s.paid_flg, FALSE) = TRUE)::int AS paid_squares,
+            COUNT(*) FILTER (WHERE s.participant_id IS NOT NULL AND COALESCE(s.paid_flg, FALSE) = FALSE)::int AS unpaid_squares,
+            COUNT(DISTINCT s.participant_id)::int AS unique_participants,
+            COUNT(DISTINCT s.player_id)::int AS unique_players
+         FROM football_pool.square s
+         WHERE s.pool_id = $1`,
+        [poolId]
+      );
+
+      const gameResult = await client.query(
+        `SELECT
+            COUNT(*)::int AS total_games,
+            COUNT(*) FILTER (
+              WHERE g.q4_primary_score IS NOT NULL
+                AND g.q4_opponent_score IS NOT NULL
+            )::int AS completed_games
+         FROM football_pool.game g
+         WHERE g.pool_id = $1`,
+        [poolId]
+      );
+
+      const payoutResult = await client.query(
+        `SELECT
+            COALESCE(SUM(wl.amount_won), 0)::int AS total_awarded,
+            COALESCE(SUM(wl.amount_won) FILTER (WHERE lower(COALESCE(wl.payout_status, 'pending')) = 'paid'), 0)::int AS total_paid_out,
+            COALESCE(SUM(wl.amount_won) FILTER (WHERE lower(COALESCE(wl.payout_status, 'pending')) <> 'paid'), 0)::int AS total_pending
+         FROM football_pool.winnings_ledger wl
+         WHERE wl.pool_id = $1`,
+        [poolId]
+      );
 
       let playerRows: Array<Record<string, unknown>> = [];
       let participantRows: Array<Record<string, unknown>> = [];
 
       try {
-        const [playerResult, participantResult] = await Promise.all([
-          client.query(
-            `WITH season_winners AS (
-               SELECT ((g.q1_opponent_score % 10) * 10 + (g.q1_primary_score % 10) + 1) AS square_num,
-                      p.q1_payout AS amount
-               FROM football_pool.game g
-               JOIN football_pool.pool p ON p.id = g.pool_id
-               WHERE g.pool_id = $1
-                 AND g.q1_primary_score IS NOT NULL
-                 AND g.q1_opponent_score IS NOT NULL
+        const playerResult = await client.query(
+          `WITH season_winners AS (
+             SELECT ((g.q1_opponent_score % 10) * 10 + (g.q1_primary_score % 10) + 1) AS square_num,
+                    p.q1_payout AS amount
+             FROM football_pool.game g
+             JOIN football_pool.pool p ON p.id = g.pool_id
+             WHERE g.pool_id = $1
+               AND g.q1_primary_score IS NOT NULL
+               AND g.q1_opponent_score IS NOT NULL
 
-               UNION ALL
+             UNION ALL
 
-               SELECT ((g.q2_opponent_score % 10) * 10 + (g.q2_primary_score % 10) + 1) AS square_num,
-                      p.q2_payout AS amount
-               FROM football_pool.game g
-               JOIN football_pool.pool p ON p.id = g.pool_id
-               WHERE g.pool_id = $1
-                 AND g.q2_primary_score IS NOT NULL
-                 AND g.q2_opponent_score IS NOT NULL
+             SELECT ((g.q2_opponent_score % 10) * 10 + (g.q2_primary_score % 10) + 1) AS square_num,
+                    p.q2_payout AS amount
+             FROM football_pool.game g
+             JOIN football_pool.pool p ON p.id = g.pool_id
+             WHERE g.pool_id = $1
+               AND g.q2_primary_score IS NOT NULL
+               AND g.q2_opponent_score IS NOT NULL
 
-               UNION ALL
+             UNION ALL
 
-               SELECT ((g.q3_opponent_score % 10) * 10 + (g.q3_primary_score % 10) + 1) AS square_num,
-                      p.q3_payout AS amount
-               FROM football_pool.game g
-               JOIN football_pool.pool p ON p.id = g.pool_id
-               WHERE g.pool_id = $1
-                 AND g.q3_primary_score IS NOT NULL
-                 AND g.q3_opponent_score IS NOT NULL
+             SELECT ((g.q3_opponent_score % 10) * 10 + (g.q3_primary_score % 10) + 1) AS square_num,
+                    p.q3_payout AS amount
+             FROM football_pool.game g
+             JOIN football_pool.pool p ON p.id = g.pool_id
+             WHERE g.pool_id = $1
+               AND g.q3_primary_score IS NOT NULL
+               AND g.q3_opponent_score IS NOT NULL
 
-               UNION ALL
+             UNION ALL
 
-               SELECT ((g.q4_opponent_score % 10) * 10 + (g.q4_primary_score % 10) + 1) AS square_num,
-                      p.q4_payout AS amount
-               FROM football_pool.game g
-               JOIN football_pool.pool p ON p.id = g.pool_id
-               WHERE g.pool_id = $1
-                 AND g.q4_primary_score IS NOT NULL
-                 AND g.q4_opponent_score IS NOT NULL
-             )
+             SELECT ((g.q4_opponent_score % 10) * 10 + (g.q4_primary_score % 10) + 1) AS square_num,
+                    p.q4_payout AS amount
+             FROM football_pool.game g
+             JOIN football_pool.pool p ON p.id = g.pool_id
+             WHERE g.pool_id = $1
+               AND g.q4_primary_score IS NOT NULL
+               AND g.q4_opponent_score IS NOT NULL
+           )
+           SELECT
+             pt.id AS player_id,
+             COALESCE(
+               NULLIF(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), ''),
+               CONCAT('Player #', pt.id::text)
+             ) AS player_name,
+             pt.jersey_num,
+             COUNT(DISTINCT s.id) FILTER (WHERE s.participant_id IS NOT NULL)::int AS squares_sold,
+             COUNT(sw.square_num)::int AS wins_count,
+             COALESCE(SUM(sw.amount), 0)::int AS total_won
+           FROM football_pool.square s
+           JOIN football_pool.player_team pt ON pt.id = s.player_id
+           LEFT JOIN football_pool.users u ON u.id = pt.user_id
+           LEFT JOIN season_winners sw ON sw.square_num = s.square_num
+           WHERE s.pool_id = $1
+           GROUP BY pt.id, u.first_name, u.last_name, pt.jersey_num
+           ORDER BY squares_sold DESC, total_won DESC, wins_count DESC, pt.jersey_num NULLS LAST`,
+          [poolId]
+        );
+
+        const participantResult = await client.query(
+          `WITH square_ownership AS (
              SELECT
-               pt.id AS player_id,
-               COALESCE(
-                 NULLIF(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), ''),
-                 CONCAT('Player #', pt.id::text)
-               ) AS player_name,
-               pt.jersey_num,
-               COUNT(DISTINCT s.id) FILTER (WHERE s.participant_id IS NOT NULL)::int AS squares_sold,
-               COUNT(sw.square_num)::int AS wins_count,
-               COALESCE(SUM(sw.amount), 0)::int AS total_won
+               s.participant_id,
+               COUNT(*)::int AS squares_owned,
+               COUNT(*) FILTER (WHERE COALESCE(s.paid_flg, FALSE) = TRUE)::int AS squares_paid
              FROM football_pool.square s
-             JOIN football_pool.player_team pt ON pt.id = s.player_id
-             LEFT JOIN football_pool.users u ON u.id = pt.user_id
-             LEFT JOIN season_winners sw ON sw.square_num = s.square_num
              WHERE s.pool_id = $1
-             GROUP BY pt.id, u.first_name, u.last_name, pt.jersey_num
-             ORDER BY squares_sold DESC, total_won DESC, wins_count DESC, pt.jersey_num NULLS LAST`,
-            [poolId]
-          ),
-          client.query(
-            `WITH square_ownership AS (
-               SELECT
-                 s.participant_id,
-                 COUNT(*)::int AS squares_owned,
-                 COUNT(*) FILTER (WHERE COALESCE(s.paid_flg, FALSE) = TRUE)::int AS squares_paid
-               FROM football_pool.square s
-               WHERE s.pool_id = $1
-                 AND s.participant_id IS NOT NULL
-               GROUP BY s.participant_id
-             )
-             SELECT
-               u.id AS participant_id,
-               COALESCE(
-                 NULLIF(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), ''),
-                 COALESCE(u.email, CONCAT('Participant #', u.id::text))
-               ) AS participant_name,
-               COALESCE(so.squares_owned, 0)::int AS squares_owned,
-               COALESCE(so.squares_paid, 0)::int AS squares_paid,
-               COUNT(wl.id)::int AS wins_count,
-               COALESCE(SUM(wl.amount_won), 0)::int AS amount_won
-             FROM football_pool.users u
-             LEFT JOIN square_ownership so ON so.participant_id = u.id
-             LEFT JOIN football_pool.winnings_ledger wl
-               ON wl.pool_id = $1
-              AND wl.winner_user_id = u.id
-             WHERE so.participant_id IS NOT NULL
-                OR wl.winner_user_id IS NOT NULL
-             GROUP BY u.id, u.first_name, u.last_name, u.email, so.squares_owned, so.squares_paid
-             ORDER BY amount_won DESC, wins_count DESC, participant_name`,
-            [poolId]
-          )
-        ]);
+               AND s.participant_id IS NOT NULL
+             GROUP BY s.participant_id
+           )
+           SELECT
+             u.id AS participant_id,
+             COALESCE(
+               NULLIF(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), ''),
+               COALESCE(u.email, CONCAT('Participant #', u.id::text))
+             ) AS participant_name,
+             COALESCE(so.squares_owned, 0)::int AS squares_owned,
+             COALESCE(so.squares_paid, 0)::int AS squares_paid,
+             COUNT(wl.id)::int AS wins_count,
+             COALESCE(SUM(wl.amount_won), 0)::int AS amount_won
+           FROM football_pool.users u
+           LEFT JOIN square_ownership so ON so.participant_id = u.id
+           LEFT JOIN football_pool.winnings_ledger wl
+             ON wl.pool_id = $1
+            AND wl.winner_user_id = u.id
+           WHERE so.participant_id IS NOT NULL
+              OR wl.winner_user_id IS NOT NULL
+           GROUP BY u.id, u.first_name, u.last_name, u.email, so.squares_owned, so.squares_paid
+           ORDER BY amount_won DESC, wins_count DESC, participant_name`,
+          [poolId]
+        );
 
         playerRows = playerResult.rows;
         participantRows = participantResult.rows;

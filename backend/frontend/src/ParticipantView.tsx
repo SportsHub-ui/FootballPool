@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
 
@@ -211,6 +211,7 @@ export function ParticipantView() {
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null)
   const [poolBoard, setPoolBoard] = useState<PoolBoard | null>(null)
   const [winnings, setWinnings] = useState<WinningsResponse | null>(null)
+  const liveRefreshTimerRef = useRef<number | null>(null)
 
   const headers = useMemo(() => {
     const h: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -268,6 +269,35 @@ export function ParticipantView() {
     }
   }
 
+  const refreshSelectedPoolBoard = async (poolId: number, preferredGameId?: number | null) => {
+    try {
+      const gamesRes = await fetch(`${API_BASE}/api/participant/pools/${poolId}/games`, { headers })
+
+      if (!gamesRes.ok) {
+        throw new Error('Failed to load pool games')
+      }
+
+      const games: Game[] = await gamesRes.json()
+      setPoolGames(games)
+
+      const nextGameId = preferredGameId != null && games.some((game) => Number(game.id) === Number(preferredGameId) || Number(game.game_id) === Number(preferredGameId))
+        ? preferredGameId
+        : null
+
+      setSelectedGameId(nextGameId)
+
+      const query = nextGameId != null ? `?gameId=${nextGameId}` : ''
+      const boardRes = await fetch(`${API_BASE}/api/participant/pools/${poolId}/board${query}`, { headers })
+
+      if (boardRes.ok) {
+        const boardData = await boardRes.json()
+        setPoolBoard(boardData.board)
+      }
+    } catch (err) {
+      console.error('Failed to refresh live participant board:', err)
+    }
+  }
+
   const handleSelectPool = async (poolId: number) => {
     setSelectedPool(poolId)
     
@@ -316,6 +346,58 @@ export function ParticipantView() {
       console.error('Failed to load board data:', err)
     }
   }
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || view !== 'dashboard' || !selectedPool) {
+      return
+    }
+
+    const eventSource = new EventSource(`${API_BASE}/api/ingestion/events`)
+
+    const scheduleRefresh = () => {
+      if (liveRefreshTimerRef.current != null) {
+        window.clearTimeout(liveRefreshTimerRef.current)
+      }
+
+      liveRefreshTimerRef.current = window.setTimeout(() => {
+        liveRefreshTimerRef.current = null
+        void refreshSelectedPoolBoard(selectedPool, selectedGameId)
+      }, 750)
+    }
+
+    const handleGameUpdated = (event: MessageEvent) => {
+      try {
+        const payload = JSON.parse(event.data) as { payload?: { gameId?: unknown } }
+        const gameId = Number(payload?.payload?.gameId)
+
+        if (!Number.isFinite(gameId)) {
+          return
+        }
+
+        const isRelevant =
+          poolGames.some((game) => Number(game.id) === gameId || Number(game.game_id) === gameId) ||
+          Number(selectedGameId ?? poolBoard?.gameId ?? 0) === gameId
+
+        if (isRelevant) {
+          scheduleRefresh()
+        }
+      } catch (error) {
+        console.warn('Ignoring malformed live score event', error)
+      }
+    }
+
+    eventSource.addEventListener('game-updated', handleGameUpdated as EventListener)
+
+    return () => {
+      if (liveRefreshTimerRef.current != null) {
+        window.clearTimeout(liveRefreshTimerRef.current)
+        liveRefreshTimerRef.current = null
+      }
+
+      eventSource.removeEventListener('game-updated', handleGameUpdated as EventListener)
+      eventSource.close()
+    }
+  }, [poolBoard?.gameId, poolGames, selectedGameId, selectedPool, view])
 
   const handleLogout = () => {
     localStorage.removeItem('auth-token')
