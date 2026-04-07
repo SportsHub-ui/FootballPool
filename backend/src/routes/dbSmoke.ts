@@ -80,11 +80,12 @@ dbSmokeRouter.get('/preview', async (_req, res) => {
           t.team_name,
           COUNT(s.id)::int AS total_squares,
           COUNT(s.id) FILTER (WHERE s.participant_id IS NOT NULL)::int AS sold_squares,
-          MAX(g.game_dt) AS latest_game_dt
+          MAX(COALESCE(g.kickoff_at, g.game_date::timestamp)) AS latest_game_dt
         FROM football_pool.pool p
         JOIN football_pool.team t ON t.id = p.team_id
         LEFT JOIN football_pool.square s ON s.pool_id = p.id
-        LEFT JOIN football_pool.game g ON g.pool_id = p.id
+        LEFT JOIN football_pool.pool_game pg ON pg.pool_id = p.id
+        LEFT JOIN football_pool.game g ON g.id = pg.game_id
         GROUP BY p.id, p.pool_name, p.season, t.team_name
         ORDER BY p.created_at DESC, p.id DESC
         LIMIT 25

@@ -241,22 +241,31 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
 
   // Get NFL team id from nfl_team table
   const nflTeamResult = await client.query<{ id: number }>(
-    `SELECT id FROM football_pool.nfl_team WHERE LOWER(abbreviation) = $1 OR LOWER(team_name) = $2 LIMIT 1`,
-    [team.abbreviation.toLowerCase(), team.displayName.toLowerCase()]
+    `SELECT id
+     FROM football_pool.nfl_team
+     WHERE LOWER(name) = $1
+        OR LOWER(name) LIKE '%' || $1 || '%'
+     LIMIT 1`,
+    [team.displayName.toLowerCase()]
   );
   const nflTeamId = nflTeamResult.rows[0]?.id;
   if (!nflTeamId) {
     throw new Error(`NFL team not found in nfl_team table for ${team.displayName}`);
   }
 
-  // Map of weekNum to game_new id
-  const gameNewByWeek = new Map<number, number>();
-  // Insert or find all games for this team in game_new
+  // Map of weekNum to normalized game id
+  const gameByWeek = new Map<number, number>();
+  // Insert or find all normalized shared games for this team
   for (const entry of importedSchedule) {
     if (entry.isBye) continue;
-    // Try to find existing game_new row
+    // Try to find an existing normalized game row
     const existingGame = await client.query<{ id: number }>(
-      `SELECT id FROM football_pool.game_new WHERE season_year = $1 AND week_number = $2 AND (home_team_id = $3 OR away_team_id = $3) LIMIT 1`,
+      `SELECT id
+       FROM football_pool.game
+       WHERE season_year = $1
+         AND week_number = $2
+         AND (home_team_id = $3 OR away_team_id = $3)
+       LIMIT 1`,
       [pool.season, entry.weekNum, nflTeamId]
     );
     let gameId: number;
@@ -267,20 +276,37 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
       let opponentTeamId: number | null = null;
       if (entry.opponent && entry.opponent !== 'BYE') {
         const oppResult = await client.query<{ id: number }>(
-          `SELECT id FROM football_pool.nfl_team WHERE LOWER(team_name) = $1 OR LOWER(abbreviation) = $2 LIMIT 1`,
-          [entry.opponent.toLowerCase(), entry.opponent.toLowerCase()]
+          `SELECT id
+           FROM football_pool.nfl_team
+           WHERE LOWER(name) = $1
+              OR LOWER(name) LIKE '%' || $1 || '%'
+           LIMIT 1`,
+          [entry.opponent.toLowerCase()]
         );
         opponentTeamId = oppResult.rows[0]?.id ?? null;
       }
-      // Insert new game_new row
+      // Insert a new normalized game row
       const insertResult = await client.query<{ id: number }>(
-        `INSERT INTO football_pool.game_new (season_year, week_number, home_team_id, away_team_id, game_date, state, scores_by_quarter, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, 'scheduled', '{}', NOW(), NOW()) RETURNING id`,
+        `INSERT INTO football_pool.game (
+           season_year,
+           week_number,
+           home_team_id,
+           away_team_id,
+           game_date,
+           kickoff_at,
+           state,
+           is_simulation,
+           scores_by_quarter,
+           created_at,
+           updated_at
+         )
+         VALUES ($1, $2, $3, $4, $5::date, $5::timestamp, 'scheduled', FALSE, '{}'::jsonb, NOW(), NOW())
+         RETURNING id`,
         [pool.season, entry.weekNum, nflTeamId, opponentTeamId, entry.gameDate]
       );
       gameId = insertResult.rows[0].id;
     }
-    gameNewByWeek.set(entry.weekNum, gameId);
+    gameByWeek.set(entry.weekNum, gameId);
   }
 
   // Link games to this pool in pool_game
@@ -293,7 +319,7 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
       byeWeeks.push(entry.weekNum);
       continue;
     }
-    const gameId = gameNewByWeek.get(entry.weekNum);
+    const gameId = gameByWeek.get(entry.weekNum);
     if (!gameId) continue;
     // Check if pool_game already exists
     const exists = await client.query<{ id: number }>(

@@ -4,6 +4,54 @@ import { app } from '../src/app'
 import { db } from '../src/config/db'
 import { flushApiUsageMetricsNow } from '../src/services/apiUsage'
 
+const resetTestDatabase = async (): Promise<void> => {
+  const client = await db.connect()
+
+  try {
+    await client.query('BEGIN')
+    await client.query(`
+      TRUNCATE TABLE
+        football_pool.api_usage_metric,
+        football_pool.game_square_numbers,
+        football_pool.ingestion_run_log,
+        football_pool.notification_log,
+        football_pool.notification_template,
+        football_pool.pool_game,
+        football_pool.pool_simulation_state,
+        football_pool.square,
+        football_pool.uploaded_image,
+        football_pool.user_pool,
+        football_pool.winnings_ledger,
+        football_pool.game,
+        football_pool.pool,
+        football_pool.player_team,
+        football_pool.team,
+        football_pool.users
+      RESTART IDENTITY CASCADE
+    `)
+
+    await client.query(`
+      DELETE FROM football_pool.nfl_team
+      WHERE id > 32
+    `)
+
+    await client.query(`
+      SELECT setval(
+        pg_get_serial_sequence('football_pool.nfl_team', 'id'),
+        COALESCE((SELECT MAX(id) FROM football_pool.nfl_team), 1),
+        true
+      )
+    `)
+
+    await client.query('COMMIT')
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
 describe('Football Pool API', () => {
   const organizerHeaders = {
     'x-user-id': '999',
@@ -16,13 +64,16 @@ describe('Football Pool API', () => {
   }
 
   beforeAll(async () => {
-    // Ensure database is available
     const client = await db.connect()
     client.release()
+
+    await flushApiUsageMetricsNow().catch(() => undefined)
+    await resetTestDatabase()
   })
 
   afterAll(async () => {
-    // Cleanup if needed
+    await flushApiUsageMetricsNow().catch(() => undefined)
+    await resetTestDatabase().catch(() => undefined)
     await db.end()
   })
 
@@ -433,7 +484,7 @@ describe('Football Pool API', () => {
           q4OpponentScore: 17
         })
 
-      // No direct update to old game table; update pool_game or game_new as needed for test setup if required
+      // No direct update to any legacy game table; use pool_game / normalized game setup as needed.
 
       expect(completedScoreResponse.status).toBe(200)
 
@@ -1231,10 +1282,10 @@ describe('Football Pool API', () => {
       const shuffledCols = [4, 5, 6, 7, 8, 9, 0, 1, 2, 3]
 
       await db.query(
-        `UPDATE football_pool.game
+        `UPDATE football_pool.pool_game
          SET row_numbers = $2::jsonb,
-             col_numbers = $3::jsonb
-         WHERE id IN ($1, $4)`,
+             column_numbers = $3::jsonb
+         WHERE game_id IN ($1, $4)`,
         [weekOneGameId, JSON.stringify(shuffledRows), JSON.stringify(shuffledCols), weekTwoGameId]
       )
 
@@ -1556,10 +1607,10 @@ describe('Football Pool API', () => {
       const gameId = Number(gameResponse.body.game.id)
 
       await db.query(
-        `UPDATE football_pool.game
+        `UPDATE football_pool.pool_game
          SET row_numbers = $2::jsonb,
-             col_numbers = $3::jsonb
-         WHERE id = $1`,
+             column_numbers = $3::jsonb
+         WHERE game_id = $1`,
         [gameId, JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]), JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])]
       )
 
@@ -1699,10 +1750,10 @@ describe('Football Pool API', () => {
       const gameId = Number(gameResponse.body.game.id)
 
       await db.query(
-        `UPDATE football_pool.game
+        `UPDATE football_pool.pool_game
          SET row_numbers = $2::jsonb,
-             col_numbers = $3::jsonb
-         WHERE id = $1`,
+             column_numbers = $3::jsonb
+         WHERE game_id = $1`,
         [gameId, JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]), JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])]
       )
 

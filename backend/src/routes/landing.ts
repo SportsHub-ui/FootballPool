@@ -126,67 +126,27 @@ const mapLandingGameRow = (row: Record<string, any>) => {
 };
 
 const loadPoolGames = async (client: PoolClient, poolId: number) => {
-  const normalizedResult = await client.query(
-    `SELECT COALESCE(legacy.id, g.id) AS id,
+  const result = await client.query(
+    `SELECT g.id,
             pg.id AS pool_game_id,
             g.id AS game_id,
             pg.pool_id,
             g.week_number AS week_num,
             away_team.name AS opponent,
-            g.game_date AS game_dt,
-            COALESCE(legacy.is_simulation, FALSE) AS is_simulation,
-            COALESCE(pg.row_numbers, legacy.row_numbers) AS row_numbers,
-            COALESCE(pg.column_numbers, legacy.col_numbers) AS col_numbers,
-            g.scores_by_quarter,
-            legacy.q1_primary_score,
-            legacy.q1_opponent_score,
-            legacy.q2_primary_score,
-            legacy.q2_opponent_score,
-            legacy.q3_primary_score,
-            legacy.q3_opponent_score,
-            legacy.q4_primary_score,
-            legacy.q4_opponent_score
+            COALESCE(g.kickoff_at, g.game_date::timestamp) AS game_dt,
+            COALESCE(g.is_simulation, FALSE) AS is_simulation,
+            pg.row_numbers,
+            pg.column_numbers,
+            g.scores_by_quarter
      FROM football_pool.pool_game pg
-     JOIN football_pool.game_new g ON g.id = pg.game_id
+     JOIN football_pool.game g ON g.id = pg.game_id
      LEFT JOIN football_pool.nfl_team away_team ON away_team.id = g.away_team_id
-     LEFT JOIN football_pool.game legacy
-       ON legacy.pool_id = pg.pool_id
-      AND legacy.opponent = away_team.name
-      AND legacy.game_dt::date = g.game_date
-      AND legacy.week_num IS NOT DISTINCT FROM g.week_number
      WHERE pg.pool_id = $1
-     ORDER BY COALESCE(g.week_number, 999), g.game_date ASC, g.id ASC`,
+     ORDER BY COALESCE(g.week_number, 999), COALESCE(g.kickoff_at, g.game_date::timestamp) ASC, g.id ASC`,
     [poolId]
   );
 
-  if (normalizedResult.rows.length > 0) {
-    return normalizedResult.rows.map((row) => mapLandingGameRow(row));
-  }
-
-  const legacyResult = await client.query(
-    `SELECT g.id,
-            g.pool_id,
-            g.week_num,
-            g.opponent,
-            g.game_dt,
-            g.is_simulation,
-            g.row_numbers,
-            g.col_numbers,
-            g.q1_primary_score,
-            g.q1_opponent_score,
-            g.q2_primary_score,
-            g.q2_opponent_score,
-            g.q3_primary_score,
-            g.q3_opponent_score,
-            g.q4_primary_score,
-            g.q4_opponent_score
-     FROM football_pool.game g
-     WHERE g.pool_id = $1
-     ORDER BY COALESCE(g.week_num, 999), g.game_dt ASC, g.id ASC`,
-    [poolId]
-  );
-
-  return legacyResult.rows.map((row) => mapLandingGameRow(row));
+  return result.rows.map((row) => mapLandingGameRow(row));
 };
 
 const loadAccessiblePools = async (client: PoolClient, userId: number | null) => {
@@ -892,11 +852,11 @@ landingRouter.get('/pools/:poolId/metrics', async (req, res) => {
         `SELECT
             COUNT(*)::int AS total_games,
             COUNT(*) FILTER (
-              WHERE g.q4_primary_score IS NOT NULL
-                AND g.q4_opponent_score IS NOT NULL
+              WHERE LOWER(COALESCE(g.state, 'scheduled')) IN ('completed', 'complete', 'closed', 'finished', 'final', 'post')
             )::int AS completed_games
-         FROM football_pool.game g
-         WHERE g.pool_id = $1`,
+         FROM football_pool.pool_game pg
+         JOIN football_pool.game g ON g.id = pg.game_id
+         WHERE pg.pool_id = $1`,
         [poolId]
       );
 
@@ -916,43 +876,51 @@ landingRouter.get('/pools/:poolId/metrics', async (req, res) => {
       try {
         const playerResult = await client.query(
           `WITH season_winners AS (
-             SELECT ((g.q1_opponent_score % 10) * 10 + (g.q1_primary_score % 10) + 1) AS square_num,
+             SELECT ((NULLIF(g.scores_by_quarter -> '1' ->> 'away', '')::int % 10) * 10
+                     + (NULLIF(g.scores_by_quarter -> '1' ->> 'home', '')::int % 10) + 1) AS square_num,
                     p.q1_payout AS amount
-             FROM football_pool.game g
-             JOIN football_pool.pool p ON p.id = g.pool_id
-             WHERE g.pool_id = $1
-               AND g.q1_primary_score IS NOT NULL
-               AND g.q1_opponent_score IS NOT NULL
+             FROM football_pool.pool_game pg
+             JOIN football_pool.game g ON g.id = pg.game_id
+             JOIN football_pool.pool p ON p.id = pg.pool_id
+             WHERE pg.pool_id = $1
+               AND g.scores_by_quarter -> '1' ->> 'home' IS NOT NULL
+               AND g.scores_by_quarter -> '1' ->> 'away' IS NOT NULL
 
              UNION ALL
 
-             SELECT ((g.q2_opponent_score % 10) * 10 + (g.q2_primary_score % 10) + 1) AS square_num,
+             SELECT ((NULLIF(g.scores_by_quarter -> '2' ->> 'away', '')::int % 10) * 10
+                     + (NULLIF(g.scores_by_quarter -> '2' ->> 'home', '')::int % 10) + 1) AS square_num,
                     p.q2_payout AS amount
-             FROM football_pool.game g
-             JOIN football_pool.pool p ON p.id = g.pool_id
-             WHERE g.pool_id = $1
-               AND g.q2_primary_score IS NOT NULL
-               AND g.q2_opponent_score IS NOT NULL
+             FROM football_pool.pool_game pg
+             JOIN football_pool.game g ON g.id = pg.game_id
+             JOIN football_pool.pool p ON p.id = pg.pool_id
+             WHERE pg.pool_id = $1
+               AND g.scores_by_quarter -> '2' ->> 'home' IS NOT NULL
+               AND g.scores_by_quarter -> '2' ->> 'away' IS NOT NULL
 
              UNION ALL
 
-             SELECT ((g.q3_opponent_score % 10) * 10 + (g.q3_primary_score % 10) + 1) AS square_num,
+             SELECT ((NULLIF(g.scores_by_quarter -> '3' ->> 'away', '')::int % 10) * 10
+                     + (NULLIF(g.scores_by_quarter -> '3' ->> 'home', '')::int % 10) + 1) AS square_num,
                     p.q3_payout AS amount
-             FROM football_pool.game g
-             JOIN football_pool.pool p ON p.id = g.pool_id
-             WHERE g.pool_id = $1
-               AND g.q3_primary_score IS NOT NULL
-               AND g.q3_opponent_score IS NOT NULL
+             FROM football_pool.pool_game pg
+             JOIN football_pool.game g ON g.id = pg.game_id
+             JOIN football_pool.pool p ON p.id = pg.pool_id
+             WHERE pg.pool_id = $1
+               AND g.scores_by_quarter -> '3' ->> 'home' IS NOT NULL
+               AND g.scores_by_quarter -> '3' ->> 'away' IS NOT NULL
 
              UNION ALL
 
-             SELECT ((g.q4_opponent_score % 10) * 10 + (g.q4_primary_score % 10) + 1) AS square_num,
+             SELECT ((NULLIF(g.scores_by_quarter -> '4' ->> 'away', '')::int % 10) * 10
+                     + (NULLIF(g.scores_by_quarter -> '4' ->> 'home', '')::int % 10) + 1) AS square_num,
                     p.q4_payout AS amount
-             FROM football_pool.game g
-             JOIN football_pool.pool p ON p.id = g.pool_id
-             WHERE g.pool_id = $1
-               AND g.q4_primary_score IS NOT NULL
-               AND g.q4_opponent_score IS NOT NULL
+             FROM football_pool.pool_game pg
+             JOIN football_pool.game g ON g.id = pg.game_id
+             JOIN football_pool.pool p ON p.id = pg.pool_id
+             WHERE pg.pool_id = $1
+               AND g.scores_by_quarter -> '4' ->> 'home' IS NOT NULL
+               AND g.scores_by_quarter -> '4' ->> 'away' IS NOT NULL
            )
            SELECT
              pt.id AS player_id,

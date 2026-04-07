@@ -42,6 +42,24 @@ const getQuarterScores = (
   return { primaryScore: game.q4_primary_score, opponentScore: game.q4_opponent_score };
 };
 
+type QuarterKey = '1' | '2' | '3' | '4';
+type QuarterScoreMap = Partial<Record<QuarterKey, { home?: number | null; away?: number | null }>>;
+
+const toQuarterScoreMap = (value: unknown): QuarterScoreMap => {
+  if (!value) return {};
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as QuarterScoreMap;
+    } catch {
+      return {};
+    }
+  }
+  if (typeof value === 'object') {
+    return value as QuarterScoreMap;
+  }
+  return {};
+};
+
 // Any authenticated user can access these endpoints
 // They can only see pools they're participants in
 
@@ -128,13 +146,21 @@ participantRouter.get('/winnings', async (req, res) => {
     const client = await db.connect();
     try {
       const result = await client.query(
-        `SELECT wl.id, wl.game_id, wl.pool_id, wl.quarter, wl.amount_won, wl.payout_status,
-                p.pool_name, g.opponent, g.game_dt
+        `SELECT wl.id,
+                wl.game_id,
+                wl.pool_id,
+                wl.quarter,
+                wl.amount_won,
+                wl.payout_status,
+                p.pool_name,
+                away.name AS opponent,
+                COALESCE(g.kickoff_at, g.game_date::timestamp) AS game_dt
          FROM football_pool.winnings_ledger wl
          LEFT JOIN football_pool.pool p ON wl.pool_id = p.id
          LEFT JOIN football_pool.game g ON wl.game_id = g.id
+         LEFT JOIN football_pool.nfl_team away ON away.id = g.away_team_id
          WHERE wl.winner_user_id = $1
-         ORDER BY g.game_dt DESC, wl.quarter ASC`,
+         ORDER BY COALESCE(g.kickoff_at, g.game_date::timestamp) DESC, wl.quarter ASC`,
         [userId]
       );
 
@@ -165,17 +191,25 @@ participantRouter.get('/pools/:poolId/games', async (req, res) => {
 
     const client = await db.connect();
     try {
-      // Join pool_game to game_new and nfl_team for normalized structure
       const result = await client.query(
-        `SELECT pg.id as pool_game_id, pg.pool_id, g.id as game_id, g.season_year, g.week_number, g.game_date,
-                g.home_team_id, g.away_team_id, g.state, g.scores_by_quarter,
-                nth.name as home_team_name, nta.name as away_team_name
+        `SELECT pg.id AS pool_game_id,
+                pg.pool_id,
+                g.id AS game_id,
+                g.season_year,
+                g.week_number,
+                g.game_date,
+                g.home_team_id,
+                g.away_team_id,
+                g.state,
+                g.scores_by_quarter,
+                nth.name AS home_team_name,
+                nta.name AS away_team_name
          FROM football_pool.pool_game pg
-         JOIN football_pool.game_new g ON g.id = pg.game_id
+         JOIN football_pool.game g ON g.id = pg.game_id
          LEFT JOIN football_pool.nfl_team nth ON nth.id = g.home_team_id
          LEFT JOIN football_pool.nfl_team nta ON nta.id = g.away_team_id
          WHERE pg.pool_id = $1
-         ORDER BY g.week_number ASC, g.game_date ASC, g.id ASC`,
+         ORDER BY g.week_number ASC, COALESCE(g.kickoff_at, g.game_date::timestamp) ASC, g.id ASC`,
         [poolId]
       );
 
@@ -258,13 +292,17 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
         return res.status(404).json({ error: 'Pool not found' });
       }
 
-      // Find the selected pool_game and game_new
       let selectedGameRow = null;
       if (gameId) {
         const result = await client.query(
-          `SELECT pg.id as pool_game_id, g.*, nth.team_name as home_team_name, nta.team_name as away_team_name, pg.row_numbers, pg.column_numbers
+          `SELECT pg.id AS pool_game_id,
+                  g.*,
+                  nth.name AS home_team_name,
+                  nta.name AS away_team_name,
+                  pg.row_numbers,
+                  pg.column_numbers AS col_numbers
            FROM football_pool.pool_game pg
-           JOIN football_pool.game_new g ON g.id = pg.game_id
+           JOIN football_pool.game g ON g.id = pg.game_id
            LEFT JOIN football_pool.nfl_team nth ON nth.id = g.home_team_id
            LEFT JOIN football_pool.nfl_team nta ON nta.id = g.away_team_id
            WHERE pg.pool_id = $1 AND g.id = $2
@@ -274,31 +312,38 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
         selectedGameRow = result.rows[0] ?? null;
       } else {
         const result = await client.query(
-          `SELECT pg.id as pool_game_id, g.*, nth.team_name as home_team_name, nta.team_name as away_team_name, pg.row_numbers, pg.column_numbers
+          `SELECT pg.id AS pool_game_id,
+                  g.*,
+                  nth.name AS home_team_name,
+                  nta.name AS away_team_name,
+                  pg.row_numbers,
+                  pg.column_numbers AS col_numbers
            FROM football_pool.pool_game pg
-           JOIN football_pool.game_new g ON g.id = pg.game_id
+           JOIN football_pool.game g ON g.id = pg.game_id
            LEFT JOIN football_pool.nfl_team nth ON nth.id = g.home_team_id
            LEFT JOIN football_pool.nfl_team nta ON nta.id = g.away_team_id
            WHERE pg.pool_id = $1
-           ORDER BY CASE WHEN g.game_date >= CURRENT_DATE THEN 0 ELSE 1 END, g.week_number ASC, g.game_date ASC, g.id ASC
+           ORDER BY CASE WHEN g.game_date >= CURRENT_DATE THEN 0 ELSE 1 END,
+                    g.week_number ASC,
+                    COALESCE(g.kickoff_at, g.game_date::timestamp) ASC,
+                    g.id ASC
            LIMIT 1`,
           [poolId]
         );
         selectedGameRow = result.rows[0] ?? null;
       }
 
-      // Get all pool_game/game_new up to the selected game
       const gamesUpToSelectionResult = await client.query(
-        `SELECT pg.id as pool_game_id, g.*, pg.row_numbers, pg.column_numbers
+        `SELECT pg.id AS pool_game_id, g.*, pg.row_numbers, pg.column_numbers AS col_numbers
          FROM football_pool.pool_game pg
-         JOIN football_pool.game_new g ON g.id = pg.game_id
+         JOIN football_pool.game g ON g.id = pg.game_id
          WHERE pg.pool_id = $1
            AND (
              $2::int IS NULL
              OR g.week_number < $2::int
              OR (g.week_number = $2::int AND ($3::date IS NULL OR g.game_date <= $3::date))
            )
-         ORDER BY g.week_number ASC, g.game_date ASC, g.id ASC`,
+         ORDER BY g.week_number ASC, COALESCE(g.kickoff_at, g.game_date::timestamp) ASC, g.id ASC`,
         [poolId, selectedGameRow?.week_number ?? null, selectedGameRow?.game_date ?? null]
       );
 
@@ -337,17 +382,8 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
       const simulationStatus = await getPoolSimulationStatus(client, poolId).catch(() => null);
       const currentGameTotals = new Map<number, number>();
       const seasonTotals = new Map<number, number>();
-      // Parse scores_by_quarter for each game
-      const parseScores = (row: any) => {
-        let scores = {};
-        try {
-          scores = row.scores_by_quarter ? JSON.parse(row.scores_by_quarter) : {};
-        } catch {
-          scores = {};
-        }
-        return scores;
-      };
-      const getQuarterScore = (scores: any, quarter: string, which: 'home' | 'away') =>
+      const parseScores = (row: any): QuarterScoreMap => toQuarterScoreMap(row.scores_by_quarter);
+      const getQuarterScore = (scores: QuarterScoreMap, quarter: QuarterKey, which: 'home' | 'away') =>
         scores[quarter]?.[which] ?? null;
 
       const selectedGame = selectedGameRow

@@ -81,6 +81,66 @@ type PoolSimulationState = {
   next_quarter: number | null;
 };
 
+type QuarterKey = '1' | '2' | '3' | '4';
+type QuarterScoreMap = Partial<Record<QuarterKey, { home?: number | null; away?: number | null }>>;
+
+const toQuarterScoreMap = (value: unknown): QuarterScoreMap => {
+  if (!value) return {};
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as QuarterScoreMap;
+    } catch {
+      return {};
+    }
+  }
+  if (typeof value === 'object') {
+    return value as QuarterScoreMap;
+  }
+  return {};
+};
+
+const toNullableNumber = (value: unknown): number | null => {
+  if (value == null || value === '') return null;
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const buildScoresByQuarterJson = (scores: QuarterScoresInput): QuarterScoreMap => ({
+  '1': { home: scores.q1PrimaryScore, away: scores.q1OpponentScore },
+  '2': { home: scores.q2PrimaryScore, away: scores.q2OpponentScore },
+  '3': { home: scores.q3PrimaryScore, away: scores.q3OpponentScore },
+  '4': { home: scores.q4PrimaryScore, away: scores.q4OpponentScore }
+});
+
+const inferGameStateFromScores = (scores: QuarterScoresInput): 'scheduled' | 'in_progress' | 'completed' => {
+  if (scores.q4PrimaryScore != null && scores.q4OpponentScore != null) {
+    return 'completed';
+  }
+
+  if (
+    scores.q1PrimaryScore != null ||
+    scores.q1OpponentScore != null ||
+    scores.q2PrimaryScore != null ||
+    scores.q2OpponentScore != null ||
+    scores.q3PrimaryScore != null ||
+    scores.q3OpponentScore != null ||
+    scores.q4PrimaryScore != null ||
+    scores.q4OpponentScore != null
+  ) {
+    return 'in_progress';
+  }
+
+  return 'scheduled';
+};
+
+const inferCurrentQuarter = (scores: QuarterScoresInput): number | null => {
+  if (scores.q4PrimaryScore != null || scores.q4OpponentScore != null) return 4;
+  if (scores.q3PrimaryScore != null || scores.q3OpponentScore != null) return 3;
+  if (scores.q2PrimaryScore != null || scores.q2OpponentScore != null) return 2;
+  if (scores.q1PrimaryScore != null || scores.q1OpponentScore != null) return 1;
+  return null;
+};
+
 const randomInt = (maxExclusive: number): number => Math.floor(Math.random() * maxExclusive);
 
 const shuffle = <T,>(values: T[]): T[] => {
@@ -229,28 +289,43 @@ const clearSimulationState = async (client: PoolClient, poolId: number): Promise
 };
 
 const loadPoolGames = async (client: PoolClient, poolId: number): Promise<PoolGame[]> => {
-  const result = await client.query<PoolGame>(
+  const result = await client.query(
     `SELECT
-        id,
-        opponent,
-        week_num,
-        row_numbers,
-        col_numbers,
-        q1_primary_score,
-        q1_opponent_score,
-        q2_primary_score,
-        q2_opponent_score,
-        q3_primary_score,
-        q3_opponent_score,
-        q4_primary_score,
-        q4_opponent_score
-     FROM football_pool.game
-     WHERE pool_id = $1
-     ORDER BY COALESCE(week_num, 999), game_dt ASC, id ASC`,
+        g.id,
+        away.name AS opponent,
+        g.week_number AS week_num,
+        pg.row_numbers,
+        pg.column_numbers AS col_numbers,
+        g.is_simulation,
+        g.scores_by_quarter,
+        COALESCE(g.kickoff_at, g.game_date::timestamp) AS game_dt
+     FROM football_pool.pool_game pg
+     JOIN football_pool.game g ON g.id = pg.game_id
+     LEFT JOIN football_pool.nfl_team away ON away.id = g.away_team_id
+     WHERE pg.pool_id = $1
+     ORDER BY COALESCE(g.week_number, 999), COALESCE(g.kickoff_at, g.game_date::timestamp) ASC, g.id ASC`,
     [poolId]
   );
 
-  return result.rows;
+  return result.rows.map((row) => {
+    const scores = toQuarterScoreMap((row as { scores_by_quarter?: unknown }).scores_by_quarter);
+
+    return {
+      id: Number((row as { id: number }).id),
+      opponent: ((row as { opponent?: string | null }).opponent ?? null),
+      week_num: toNullableNumber((row as { week_num?: unknown }).week_num),
+      row_numbers: (row as { row_numbers?: unknown }).row_numbers,
+      col_numbers: (row as { col_numbers?: unknown }).col_numbers,
+      q1_primary_score: toNullableNumber(scores['1']?.home),
+      q1_opponent_score: toNullableNumber(scores['1']?.away),
+      q2_primary_score: toNullableNumber(scores['2']?.home),
+      q2_opponent_score: toNullableNumber(scores['2']?.away),
+      q3_primary_score: toNullableNumber(scores['3']?.home),
+      q3_opponent_score: toNullableNumber(scores['3']?.away),
+      q4_primary_score: toNullableNumber(scores['4']?.home),
+      q4_opponent_score: toNullableNumber(scores['4']?.away)
+    };
+  });
 };
 
 const findNextPlayableGame = (games: PoolGame[], currentGameId?: number | null): PoolGame | null => {
@@ -435,27 +510,25 @@ const buildAdvancedMidQuarterSnapshot = (
 });
 
 const writeGameScoreSnapshot = async (client: PoolClient, gameId: number, scores: QuarterScoresInput): Promise<void> => {
+  const state = inferGameStateFromScores(scores);
+
   await client.query(
     `UPDATE football_pool.game
-     SET q1_primary_score = $2,
-         q1_opponent_score = $3,
-         q2_primary_score = $4,
-         q2_opponent_score = $5,
-         q3_primary_score = $6,
-         q3_opponent_score = $7,
-         q4_primary_score = $8,
-         q4_opponent_score = $9
+     SET scores_by_quarter = $2::jsonb,
+         final_score_home = $3,
+         final_score_away = $4,
+         state = $5,
+         current_quarter = $6,
+         time_remaining_in_quarter = CASE WHEN $5 = 'completed' THEN '0:00' ELSE NULL END,
+         updated_at = NOW()
      WHERE id = $1`,
     [
       gameId,
-      scores.q1PrimaryScore,
-      scores.q1OpponentScore,
-      scores.q2PrimaryScore,
-      scores.q2OpponentScore,
-      scores.q3PrimaryScore,
-      scores.q3OpponentScore,
+      JSON.stringify(buildScoresByQuarterJson(scores)),
       scores.q4PrimaryScore,
-      scores.q4OpponentScore
+      scores.q4OpponentScore,
+      state,
+      inferCurrentQuarter(scores)
     ]
   );
 };
@@ -524,14 +597,23 @@ const loadSimulationAdvanceScores = async (
   }
 };
 
-const prepareGameForSimulation = async (client: PoolClient, gameId: number): Promise<void> => {
+const prepareGameForSimulation = async (client: PoolClient, poolId: number, gameId: number): Promise<void> => {
+  await client.query(
+    `UPDATE football_pool.pool_game
+     SET row_numbers = $3::jsonb,
+         column_numbers = $4::jsonb,
+         updated_at = NOW()
+     WHERE pool_id = $1
+       AND game_id = $2`,
+    [poolId, gameId, JSON.stringify(buildRandomDigitOrder()), JSON.stringify(buildRandomDigitOrder())]
+  );
+
   await client.query(
     `UPDATE football_pool.game
-     SET row_numbers = $2::jsonb,
-         col_numbers = $3::jsonb,
-         is_simulation = TRUE
+     SET is_simulation = TRUE,
+         updated_at = NOW()
      WHERE id = $1`,
-    [gameId, JSON.stringify(buildRandomDigitOrder()), JSON.stringify(buildRandomDigitOrder())]
+    [gameId]
   );
 };
 
@@ -606,19 +688,29 @@ const resetSimulationGames = async (client: PoolClient, poolId: number): Promise
   );
 
   await client.query(
+    `UPDATE football_pool.pool_game
+     SET row_numbers = NULL,
+         column_numbers = NULL,
+         updated_at = NOW()
+     WHERE pool_id = $1`,
+    [poolId]
+  );
+
+  await client.query(
     `UPDATE football_pool.game
      SET is_simulation = TRUE,
-         row_numbers = NULL,
-         col_numbers = NULL,
-         q1_primary_score = NULL,
-         q1_opponent_score = NULL,
-         q2_primary_score = NULL,
-         q2_opponent_score = NULL,
-         q3_primary_score = NULL,
-         q3_opponent_score = NULL,
-         q4_primary_score = NULL,
-         q4_opponent_score = NULL
-     WHERE pool_id = $1`,
+         scores_by_quarter = '{}'::jsonb,
+         final_score_home = NULL,
+         final_score_away = NULL,
+         state = 'scheduled',
+         current_quarter = NULL,
+         time_remaining_in_quarter = NULL,
+         updated_at = NOW()
+     WHERE id IN (
+       SELECT pg.game_id
+       FROM football_pool.pool_game pg
+       WHERE pg.pool_id = $1
+     )`,
     [poolId]
   );
 };
@@ -649,9 +741,10 @@ export const getPoolSimulationStatus = async (
   );
   const simulationResult = await client.query<{ simulation_game_count: number }>(
     `SELECT COUNT(*)::int AS simulation_game_count
-     FROM football_pool.game
-     WHERE pool_id = $1
-       AND COALESCE(is_simulation, FALSE) = TRUE`,
+     FROM football_pool.pool_game pg
+     JOIN football_pool.game g ON g.id = pg.game_id
+     WHERE pg.pool_id = $1
+       AND COALESCE(g.is_simulation, FALSE) = TRUE`,
     [poolId]
   );
 
@@ -747,7 +840,7 @@ export const createPoolSeasonSimulation = async (
         continue;
       }
 
-      await prepareGameForSimulation(client, game.id);
+      await prepareGameForSimulation(client, poolId, game.id);
       await processGameScoresWithClient(client, game.id, buildRandomScores());
       simulatedGames += 1;
     }
@@ -757,7 +850,7 @@ export const createPoolSeasonSimulation = async (
     const firstGame = findNextPlayableGame(games);
 
     if (firstGame) {
-      await prepareGameForSimulation(client, firstGame.id);
+      await prepareGameForSimulation(client, poolId, firstGame.id);
       currentGameId = firstGame.id;
       nextQuarter = mode === 'by_quarter' ? 1 : null;
       progressAction = mode === 'by_quarter' ? 'complete_quarter' : 'complete_game';
@@ -806,7 +899,7 @@ export const advancePoolSeasonSimulation = async (
   }
 
   if (currentGame.row_numbers == null || currentGame.col_numbers == null) {
-    await prepareGameForSimulation(client, currentGame.id);
+    await prepareGameForSimulation(client, poolId, currentGame.id);
   }
 
   if (action === 'live') {
@@ -862,7 +955,7 @@ export const advancePoolSeasonSimulation = async (
 
     const nextGame = findNextPlayableGame(games, currentGame.id);
     if (nextGame) {
-      await prepareGameForSimulation(client, nextGame.id);
+      await prepareGameForSimulation(client, poolId, nextGame.id);
     }
 
     await upsertSimulationState(client, poolId, 'by_game', nextGame?.id ?? null, null);
@@ -897,7 +990,7 @@ export const advancePoolSeasonSimulation = async (
   if (quarterToComplete >= 4) {
     const nextGame = findNextPlayableGame(games, currentGame.id);
     if (nextGame) {
-      await prepareGameForSimulation(client, nextGame.id);
+      await prepareGameForSimulation(client, poolId, nextGame.id);
       const { scores: previewScores } = await loadSimulationAdvanceScores(nextGame.id, source);
       await writeGameScoreSnapshot(client, nextGame.id, buildMidQuarterSnapshot(previewScores, 1));
       nextGameId = nextGame.id;
@@ -934,10 +1027,11 @@ export const cleanupPoolSeasonSimulation = async (
   await clearSimulationState(client, poolId);
 
   const simulationGamesResult = await client.query<{ id: number }>(
-    `SELECT id
-     FROM football_pool.game
-     WHERE pool_id = $1
-       AND COALESCE(is_simulation, FALSE) = TRUE`,
+    `SELECT g.id
+     FROM football_pool.pool_game pg
+     JOIN football_pool.game g ON g.id = pg.game_id
+     WHERE pg.pool_id = $1
+       AND COALESCE(g.is_simulation, FALSE) = TRUE`,
     [poolId]
   );
 
@@ -970,15 +1064,32 @@ export const cleanupPoolSeasonSimulation = async (
       [poolId, simulationGameIds]
     );
 
-    const deleteGamesResult = await client.query(
-      `DELETE FROM football_pool.game
+    await client.query(
+      `UPDATE football_pool.pool_game
+       SET row_numbers = NULL,
+           column_numbers = NULL,
+           updated_at = NOW()
        WHERE pool_id = $1
-         AND id = ANY($2::int[])`,
+         AND game_id = ANY($2::int[])`,
       [poolId, simulationGameIds]
     );
 
+    const resetGamesResult = await client.query(
+      `UPDATE football_pool.game
+       SET is_simulation = FALSE,
+           scores_by_quarter = '{}'::jsonb,
+           final_score_home = NULL,
+           final_score_away = NULL,
+           state = 'scheduled',
+           current_quarter = NULL,
+           time_remaining_in_quarter = NULL,
+           updated_at = NOW()
+       WHERE id = ANY($1::int[])`,
+      [simulationGameIds]
+    );
+
     deletedWinnings = deleteWinningsResult.rowCount ?? 0;
-    deletedGames = deleteGamesResult.rowCount ?? 0;
+    deletedGames = resetGamesResult.rowCount ?? 0;
   }
 
   return {

@@ -523,11 +523,10 @@ const loadUsersById = async (client: PoolClient, userIds: number[]): Promise<Map
 };
 
 const loadGameLabel = async (client: PoolClient, gameId: number): Promise<GameLabelRecord | null> => {
-  // Get away team name from game_new and nfl_team
   const result = await client.query<{ away_team_name: string | null }>(
-    `SELECT nta.team_name as away_team_name
-     FROM football_pool.game_new g
-     LEFT JOIN football_pool.nfl_team nta ON nta.id = g.away_team_id
+    `SELECT away_team.name AS away_team_name
+     FROM football_pool.game g
+     LEFT JOIN football_pool.nfl_team away_team ON away_team.id = g.away_team_id
      WHERE g.id = $1
      LIMIT 1`,
     [gameId]

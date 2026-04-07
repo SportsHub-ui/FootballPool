@@ -26,7 +26,7 @@ type LandingPool = {
 type LandingGame = {
   id: number
   pool_game_id: number // new: pool_game PK
-  game_id: number // new: game_new PK
+  game_id: number // normalized shared game PK
   pool_id: number
   week_num: number | null
   opponent: string

@@ -335,64 +335,24 @@ const mapLookupRow = (row: GameLookupRow): IngestionGameTarget => ({
 });
 
 const loadGameTargetWithClient = async (client: PoolClient, gameId: number): Promise<IngestionGameTarget | null> => {
-  const normalizedResult = await client.query<GameLookupRow>(
+  const result = await client.query<GameLookupRow>(
     `SELECT g.id AS game_id,
             g.game_date::text AS game_date,
-            MIN(legacy.game_dt)::text AS kickoff_at,
+            COALESCE(g.kickoff_at::text, g.game_date::timestamp::text) AS kickoff_at,
             COALESCE(primary_team.name, '') AS home_team,
             COALESCE(opponent_team.name, '') AS away_team,
             COALESCE(g.state, 'scheduled') AS state,
             g.current_quarter,
             g.time_remaining_in_quarter
-     FROM football_pool.game_new g
+     FROM football_pool.game g
      LEFT JOIN football_pool.nfl_team primary_team ON primary_team.id = g.home_team_id
      LEFT JOIN football_pool.nfl_team opponent_team ON opponent_team.id = g.away_team_id
-     LEFT JOIN football_pool.pool_game pg ON pg.game_id = g.id
-     LEFT JOIN football_pool.game legacy
-       ON legacy.pool_id = pg.pool_id
-      AND legacy.game_dt::date = g.game_date
-      AND COALESCE(legacy.week_num, -1) = COALESCE(g.week_number, -1)
-      AND COALESCE(legacy.opponent, '') = COALESCE(opponent_team.name, '')
-     WHERE g.id = $1
-     GROUP BY g.id,
-              g.game_date,
-              primary_team.name,
-              opponent_team.name,
-              g.state,
-              g.current_quarter,
-              g.time_remaining_in_quarter
-     LIMIT 1`,
-    [gameId]
-  );
-
-  if (normalizedResult.rows.length > 0) {
-    return mapLookupRow(normalizedResult.rows[0]);
-  }
-
-  const legacyResult = await client.query<GameLookupRow>(
-    `SELECT g.id AS game_id,
-            g.game_dt::date::text AS game_date,
-            g.game_dt::text AS kickoff_at,
-            p.primary_team AS home_team,
-            g.opponent AS away_team,
-            CASE
-              WHEN g.q4_primary_score IS NOT NULL AND g.q4_opponent_score IS NOT NULL THEN 'completed'
-              WHEN g.q1_primary_score IS NOT NULL OR g.q1_opponent_score IS NOT NULL
-                OR g.q2_primary_score IS NOT NULL OR g.q2_opponent_score IS NOT NULL
-                OR g.q3_primary_score IS NOT NULL OR g.q3_opponent_score IS NOT NULL
-                OR g.q4_primary_score IS NOT NULL OR g.q4_opponent_score IS NOT NULL THEN 'in_progress'
-              ELSE 'scheduled'
-            END AS state,
-            NULL::int AS current_quarter,
-            NULL::varchar AS time_remaining_in_quarter
-     FROM football_pool.game g
-     JOIN football_pool.pool p ON p.id = g.pool_id
      WHERE g.id = $1
      LIMIT 1`,
     [gameId]
   );
 
-  return legacyResult.rows[0] ? mapLookupRow(legacyResult.rows[0]) : null;
+  return result.rows[0] ? mapLookupRow(result.rows[0]) : null;
 };
 
 export const listTodayGameTargetsForIngestion = async (at: Date = new Date()): Promise<IngestionGameTarget[]> => {
@@ -400,66 +360,25 @@ export const listTodayGameTargetsForIngestion = async (at: Date = new Date()): P
   const client = await db.connect();
 
   try {
-    const normalizedResult = await client.query<GameLookupRow>(
+    const result = await client.query<GameLookupRow>(
       `SELECT g.id AS game_id,
               g.game_date::text AS game_date,
-              MIN(legacy.game_dt)::text AS kickoff_at,
+              COALESCE(g.kickoff_at::text, g.game_date::timestamp::text) AS kickoff_at,
               COALESCE(primary_team.name, '') AS home_team,
               COALESCE(opponent_team.name, '') AS away_team,
               COALESCE(g.state, 'scheduled') AS state,
               g.current_quarter,
               g.time_remaining_in_quarter
-       FROM football_pool.game_new g
+       FROM football_pool.game g
        LEFT JOIN football_pool.nfl_team primary_team ON primary_team.id = g.home_team_id
        LEFT JOIN football_pool.nfl_team opponent_team ON opponent_team.id = g.away_team_id
-       LEFT JOIN football_pool.pool_game pg ON pg.game_id = g.id
-       LEFT JOIN football_pool.game legacy
-         ON legacy.pool_id = pg.pool_id
-        AND legacy.game_dt::date = g.game_date
-        AND COALESCE(legacy.week_num, -1) = COALESCE(g.week_number, -1)
-        AND COALESCE(legacy.opponent, '') = COALESCE(opponent_team.name, '')
        WHERE g.game_date = $1::date
          AND UPPER(COALESCE(opponent_team.name, '')) <> 'BYE'
-       GROUP BY g.id,
-                g.game_date,
-                primary_team.name,
-                opponent_team.name,
-                g.state,
-                g.current_quarter,
-                g.time_remaining_in_quarter
        ORDER BY g.game_date ASC, g.id ASC`,
       [dateKey]
     );
 
-    if (normalizedResult.rows.length > 0) {
-      return normalizedResult.rows.map(mapLookupRow);
-    }
-
-    const legacyResult = await client.query<GameLookupRow>(
-      `SELECT g.id AS game_id,
-              g.game_dt::date::text AS game_date,
-              g.game_dt::text AS kickoff_at,
-              p.primary_team AS home_team,
-              g.opponent AS away_team,
-              CASE
-                WHEN g.q4_primary_score IS NOT NULL AND g.q4_opponent_score IS NOT NULL THEN 'completed'
-                WHEN g.q1_primary_score IS NOT NULL OR g.q1_opponent_score IS NOT NULL
-                  OR g.q2_primary_score IS NOT NULL OR g.q2_opponent_score IS NOT NULL
-                  OR g.q3_primary_score IS NOT NULL OR g.q3_opponent_score IS NOT NULL
-                  OR g.q4_primary_score IS NOT NULL OR g.q4_opponent_score IS NOT NULL THEN 'in_progress'
-                ELSE 'scheduled'
-              END AS state,
-              NULL::int AS current_quarter,
-              NULL::varchar AS time_remaining_in_quarter
-       FROM football_pool.game g
-       JOIN football_pool.pool p ON p.id = g.pool_id
-       WHERE g.game_dt::date = $1::date
-         AND UPPER(COALESCE(g.opponent, '')) <> 'BYE'
-       ORDER BY g.game_dt ASC, g.id ASC`,
-      [dateKey]
-    );
-
-    return legacyResult.rows.map(mapLookupRow);
+    return result.rows.map(mapLookupRow);
   } finally {
     client.release();
   }
@@ -694,62 +613,6 @@ export const getScoresForGame = async (
   return update.scores;
 };
 
-const syncLegacyGameScoresWithClient = async (
-  client: PoolClient,
-  gameId: number,
-  scores: QuarterScoresInput
-): Promise<void> => {
-  const gameLookup = await client.query<{ game_date: string; week_number: number | null; opponent: string | null }>(
-    `SELECT g.game_date::text AS game_date,
-            g.week_number,
-            opponent_team.name AS opponent
-     FROM football_pool.game_new g
-     LEFT JOIN football_pool.nfl_team opponent_team ON opponent_team.id = g.away_team_id
-     WHERE g.id = $1
-     LIMIT 1`,
-    [gameId]
-  );
-
-  const lookup = gameLookup.rows[0];
-  if (!lookup) {
-    return;
-  }
-
-  await client.query(
-    `UPDATE football_pool.game legacy
-     SET q1_primary_score = $1,
-         q1_opponent_score = $2,
-         q2_primary_score = $3,
-         q2_opponent_score = $4,
-         q3_primary_score = $5,
-         q3_opponent_score = $6,
-         q4_primary_score = $7,
-         q4_opponent_score = $8
-     WHERE legacy.pool_id IN (
-       SELECT pg.pool_id
-       FROM football_pool.pool_game pg
-       WHERE pg.game_id = $9
-     )
-       AND legacy.game_dt::date = $10::date
-       AND COALESCE(legacy.week_num, -1) = COALESCE($11::int, -1)
-       AND COALESCE(legacy.opponent, '') = COALESCE($12, '')`,
-    [
-      scores.q1PrimaryScore,
-      scores.q1OpponentScore,
-      scores.q2PrimaryScore,
-      scores.q2OpponentScore,
-      scores.q3PrimaryScore,
-      scores.q3OpponentScore,
-      scores.q4PrimaryScore,
-      scores.q4OpponentScore,
-      gameId,
-      lookup.game_date,
-      lookup.week_number,
-      lookup.opponent ?? null
-    ]
-  );
-};
-
 const applyGameIngestionUpdateWithClient = async (
   client: PoolClient,
   update: GameIngestionUpdate,
@@ -769,7 +632,7 @@ const applyGameIngestionUpdateWithClient = async (
             state,
             current_quarter,
             time_remaining_in_quarter
-     FROM football_pool.game_new
+     FROM football_pool.game
      WHERE id = $1
      LIMIT 1`,
     [update.gameId]
@@ -793,7 +656,7 @@ const applyGameIngestionUpdateWithClient = async (
 
   if (changed) {
     await client.query(
-      `UPDATE football_pool.game_new
+      `UPDATE football_pool.game
        SET scores_by_quarter = $1::jsonb,
            final_score_home = $2,
            final_score_away = $3,
@@ -813,7 +676,6 @@ const applyGameIngestionUpdateWithClient = async (
       ]
     );
 
-    await syncLegacyGameScoresWithClient(client, update.gameId, update.scores);
   }
 
   const shouldProcess = changed || Boolean(options?.forceProcess);

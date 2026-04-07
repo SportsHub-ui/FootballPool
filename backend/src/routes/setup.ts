@@ -1769,7 +1769,7 @@ setupRouter.delete('/pools/:poolId', async (req, res) => {
     }>(
       `
         SELECT
-          (SELECT COUNT(*)::int FROM football_pool.game WHERE pool_id = $1) AS game_refs,
+          (SELECT COUNT(*)::int FROM football_pool.pool_game WHERE pool_id = $1) AS game_refs,
           (SELECT COUNT(*)::int FROM football_pool.square WHERE pool_id = $1) AS square_refs,
           (SELECT COUNT(*)::int FROM football_pool.user_pool WHERE pool_id = $1) AS user_refs,
           (SELECT COUNT(*)::int FROM football_pool.winnings_ledger WHERE pool_id = $1) AS winnings_refs
