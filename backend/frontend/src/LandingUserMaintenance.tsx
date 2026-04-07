@@ -1,18 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { formatPhoneNumber } from './utils/phone'
 
-type LandingPool = {
-  id: number
-  pool_name: string | null
-  season: number | null
-  primary_team: string | null
-  default_flg: boolean
-  sign_in_req_flg: boolean
-  team_name: string | null
-  primary_color: string | null
-  secondary_color: string | null
-  logo_file: string | null
-}
+import type { LandingPool } from './LandingMetrics'
 
 type LandingUserPool = {
   pool_id: number
@@ -78,7 +67,7 @@ const formatUserName = (user: Pick<LandingUserRecord, 'first_name' | 'last_name'
 }
 
 const buildPoolLabel = (pool: LandingPool): string => {
-  const teamLabel = pool.team_name ?? pool.primary_team ?? `Team ${pool.id}`
+  const teamLabel = pool.team_name ?? `Team ${pool.id}`
   const parts = [`${teamLabel} — ${pool.pool_name ?? `Pool ${pool.id}`}`]
   if (pool.season) {
     parts.push(String(pool.season))

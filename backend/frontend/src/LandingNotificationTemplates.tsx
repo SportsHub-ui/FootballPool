@@ -1,18 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { LandingPool } from './LandingMetrics'
 import type { FormEvent } from 'react'
-
-type LandingPool = {
-  id: number
-  pool_name: string | null
-  season: number | null
-  primary_team: string | null
-  default_flg: boolean
-  sign_in_req_flg: boolean
-  team_name: string | null
-  primary_color: string | null
-  secondary_color: string | null
-  logo_file: string | null
-}
 
 type TemplateScope = 'participant' | 'pool_contact'
 type NotificationKind = 'quarter_win' | 'game_total' | 'lead_warning'
@@ -57,7 +45,7 @@ const kindLabel: Record<NotificationKind, string> = {
 }
 
 const formatPoolSelectionLabel = (pool: LandingPool): string => {
-  const teamLabel = pool.team_name ?? pool.primary_team ?? `Pool ${pool.id}`
+  const teamLabel = pool.team_name ?? `Pool ${pool.id}`
   const poolLabel = pool.pool_name ?? `Pool ${pool.id}`
   return pool.season ? `${teamLabel} — ${poolLabel} • ${pool.season}` : `${teamLabel} — ${poolLabel}`
 }
