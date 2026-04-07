@@ -29,6 +29,18 @@ const sources = [
     url: 'https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/teams'
   },
   {
+    label: 'NBA',
+    sportCode: 'BASKETBALL',
+    leagueCode: 'NBA',
+    url: 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams'
+  },
+  {
+    label: 'NHL',
+    sportCode: 'HOCKEY',
+    leagueCode: 'NHL',
+    url: 'https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/teams'
+  },
+  {
     label: 'NCAAF',
     sportCode: 'FOOTBALL',
     leagueCode: 'NCAAF',
