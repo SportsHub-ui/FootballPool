@@ -1028,6 +1028,66 @@ describe('Football Pool API', () => {
       expect(advanceResponse.body.completedQuarter).toBe(1)
     })
 
+    it('should still allow ending a simulation when simulated games remain after state drift', async () => {
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({ teamName: `Cleanup Sim Team ${Date.now()}` })
+
+      const teamId = Number(teamResponse.body.id)
+
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `Cleanup Sim Pool ${Date.now()}`,
+          teamId,
+          season: 2025,
+          primaryTeam: 'Green Bay Packers',
+          squareCost: 20,
+          q1Payout: 100,
+          q2Payout: 100,
+          q3Payout: 100,
+          q4Payout: 200
+        })
+
+      const poolId = Number(poolResponse.body.id)
+
+      await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: 1,
+          opponent: 'Cleanup Opponent',
+          gameDate: '2025-09-07',
+          isSimulation: true
+        })
+
+      await db.query(
+        `DELETE FROM football_pool.pool_simulation_state
+         WHERE pool_id = $1`,
+        [poolId]
+      )
+
+      await db.query(
+        `UPDATE football_pool.square
+         SET participant_id = NULL,
+             player_id = NULL,
+             paid_flg = FALSE
+         WHERE pool_id = $1`,
+        [poolId]
+      )
+
+      const statusResponse = await request(app)
+        .get(`/api/setup/pools/${poolId}/simulation`)
+        .set(organizerHeaders)
+
+      expect(statusResponse.status).toBe(200)
+      expect(statusResponse.body.status.hasSimulationData).toBe(true)
+      expect(statusResponse.body.status.canCleanup).toBe(true)
+    })
+
     it('should seed a by-quarter simulation with a live mid-quarter board highlight', async () => {
       const teamResponse = await request(app)
         .post('/api/setup/teams')

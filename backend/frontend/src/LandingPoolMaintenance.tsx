@@ -688,15 +688,15 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     }
   }
 
-  const hasSimulationData = simulationStatus?.hasSimulationData ?? poolGames.some((game) => game.is_simulation)
-  const simulationButtonLabel = hasSimulationData ? 'Cleanup' : `Start ${formatSimulationMode(simulationMode)}`
+  const hasSimulationData = Boolean(simulationStatus?.hasSimulationData || poolGames.some((game) => game.is_simulation))
+  const simulationButtonLabel = hasSimulationData ? 'End Simulation' : `Start ${formatSimulationMode(simulationMode)}`
   const simulationButtonDisabled = hasSimulationData
-    ? !selectedPoolId || saving || simulationBusy !== null || !(simulationStatus?.canCleanup ?? hasSimulationData)
+    ? !selectedPoolId || saving || simulationBusy !== null || !(simulationStatus?.canCleanup || hasSimulationData)
     : !selectedPoolId || saving || simulationBusy !== null || !(simulationStatus?.canSimulate ?? false)
   const simulationButtonTitle = !selectedPoolId
     ? 'Select a pool to enable simulation.'
     : hasSimulationData
-      ? 'Remove the simulated season data for this pool.'
+      ? 'End the simulation and clear the simulated season data for this pool.'
       : simulationStatus?.canSimulate
         ? simulationMode === 'full_year'
           ? 'Create the full season simulation for this pool.'

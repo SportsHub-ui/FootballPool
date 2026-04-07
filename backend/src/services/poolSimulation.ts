@@ -758,7 +758,8 @@ export const getPoolSimulationStatus = async (
 
   const hasAssignedSquares = assignedSquareCount > 0;
   const hasSimulationState = Boolean(simulationState);
-  const hasSimulationData = hasSimulationState || (simulationGameCount > 0 && hasAssignedSquares);
+  const hasSimulationGames = simulationGameCount > 0;
+  const hasSimulationData = hasSimulationState || hasSimulationGames;
   const blockers: string[] = [];
 
   if (!env.SIMULATION_ENABLED) {
