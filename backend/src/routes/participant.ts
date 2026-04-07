@@ -165,17 +165,52 @@ participantRouter.get('/pools/:poolId/games', async (req, res) => {
 
     const client = await db.connect();
     try {
+      // Join pool_game to game_new and nfl_team for normalized structure
       const result = await client.query(
-        `SELECT g.id, g.pool_id, g.week_num, g.opponent, g.game_dt, g.is_simulation,
-                g.q1_primary_score, g.q1_opponent_score, g.q2_primary_score, g.q2_opponent_score,
-                g.q3_primary_score, g.q3_opponent_score, g.q4_primary_score, g.q4_opponent_score
-         FROM football_pool.game g
-         WHERE g.pool_id = $1
-         ORDER BY COALESCE(g.week_num, 999), g.game_dt ASC, g.id ASC`,
+        `SELECT pg.id as pool_game_id, pg.pool_id, g.id as game_id, g.season_year, g.week_number, g.game_date,
+                g.home_team_id, g.away_team_id, g.state, g.scores_by_quarter,
+                nth.name as home_team_name, nta.name as away_team_name
+         FROM football_pool.pool_game pg
+         JOIN football_pool.game_new g ON g.id = pg.game_id
+         LEFT JOIN football_pool.nfl_team nth ON nth.id = g.home_team_id
+         LEFT JOIN football_pool.nfl_team nta ON nta.id = g.away_team_id
+         WHERE pg.pool_id = $1
+         ORDER BY g.week_number ASC, g.game_date ASC, g.id ASC`,
         [poolId]
       );
 
-      res.json(result.rows);
+      // Map scores_by_quarter JSONB to flat quarter scores for compatibility
+      const games = result.rows.map(row => {
+        let scores = {};
+        try {
+          scores = row.scores_by_quarter ? JSON.parse(row.scores_by_quarter) : {};
+        } catch {
+          scores = {};
+        }
+        return {
+          pool_game_id: row.pool_game_id,
+          pool_id: row.pool_id,
+          game_id: row.game_id,
+          season_year: row.season_year,
+          week_number: row.week_number,
+          game_date: row.game_date,
+          home_team_id: row.home_team_id,
+          away_team_id: row.away_team_id,
+          home_team_name: row.home_team_name,
+          away_team_name: row.away_team_name,
+          state: row.state,
+          q1_primary_score: scores['1']?.home ?? null,
+          q1_opponent_score: scores['1']?.away ?? null,
+          q2_primary_score: scores['2']?.home ?? null,
+          q2_opponent_score: scores['2']?.away ?? null,
+          q3_primary_score: scores['3']?.home ?? null,
+          q3_opponent_score: scores['3']?.away ?? null,
+          q4_primary_score: scores['4']?.home ?? null,
+          q4_opponent_score: scores['4']?.away ?? null
+        };
+      });
+
+      res.json(games);
     } finally {
       client.release();
     }
@@ -211,80 +246,74 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
         return res.status(404).json({ error: 'Pool not found' });
       }
 
-      const gameResult = gameId
-        ? await client.query(
-            `SELECT id, week_num, opponent, game_dt, row_numbers, col_numbers
-             FROM football_pool.game
-             WHERE pool_id = $1 AND id = $2
-             LIMIT 1`,
-            [poolId, gameId]
-          )
-        : await client.query(
-            `SELECT id, week_num, opponent, game_dt, row_numbers, col_numbers
-             FROM football_pool.game
-             WHERE pool_id = $1
-             ORDER BY CASE WHEN game_dt >= CURRENT_DATE THEN 0 ELSE 1 END,
-                      COALESCE(week_num, 999),
-                      game_dt ASC,
-                      id ASC
-             LIMIT 1`,
-            [poolId]
-          );
-
-      const selectedGame = gameResult.rows[0] ?? null;
-
-      const [payoutsResult, gamesUpToSelectionResult, squaresResult] = await Promise.all([
-        client.query(
-          `SELECT q1_payout, q2_payout, q3_payout, q4_payout
-           FROM football_pool.pool
-           WHERE id = $1
+      // Find the selected pool_game and game_new
+      let selectedGameRow = null;
+      if (gameId) {
+        const result = await client.query(
+          `SELECT pg.id as pool_game_id, g.*, nth.team_name as home_team_name, nta.team_name as away_team_name, pg.row_numbers, pg.column_numbers
+           FROM football_pool.pool_game pg
+           JOIN football_pool.game_new g ON g.id = pg.game_id
+           LEFT JOIN football_pool.nfl_team nth ON nth.id = g.home_team_id
+           LEFT JOIN football_pool.nfl_team nta ON nta.id = g.away_team_id
+           WHERE pg.pool_id = $1 AND g.id = $2
+           LIMIT 1`,
+          [poolId, gameId]
+        );
+        selectedGameRow = result.rows[0] ?? null;
+      } else {
+        const result = await client.query(
+          `SELECT pg.id as pool_game_id, g.*, nth.team_name as home_team_name, nta.team_name as away_team_name, pg.row_numbers, pg.column_numbers
+           FROM football_pool.pool_game pg
+           JOIN football_pool.game_new g ON g.id = pg.game_id
+           LEFT JOIN football_pool.nfl_team nth ON nth.id = g.home_team_id
+           LEFT JOIN football_pool.nfl_team nta ON nta.id = g.away_team_id
+           WHERE pg.pool_id = $1
+           ORDER BY CASE WHEN g.game_date >= CURRENT_DATE THEN 0 ELSE 1 END, g.week_number ASC, g.game_date ASC, g.id ASC
            LIMIT 1`,
           [poolId]
-        ),
-        client.query(
-          `SELECT id,
-                  week_num,
-                  game_dt,
-                  row_numbers,
-                  col_numbers,
-                  q1_primary_score,
-                  q1_opponent_score,
-                  q2_primary_score,
-                  q2_opponent_score,
-                  q3_primary_score,
-                  q3_opponent_score,
-                  q4_primary_score,
-                  q4_opponent_score
-           FROM football_pool.game
-           WHERE pool_id = $1
-             AND (
-               $2::int IS NULL
-               OR COALESCE(week_num, 999) < COALESCE($2::int, 999)
-               OR (
-                 COALESCE(week_num, 999) = COALESCE($2::int, 999)
-                 AND ($3::timestamptz IS NULL OR game_dt <= $3::timestamptz)
-               )
-             )
-           ORDER BY COALESCE(week_num, 999), game_dt ASC, id ASC`,
-          [poolId, selectedGame?.week_num ?? null, selectedGame?.game_dt ?? null]
-        ),
-        client.query(
-          `SELECT s.id,
-                  s.square_num,
-                  s.participant_id,
-                  s.player_id,
-                  s.paid_flg,
-                  u.first_name AS participant_first_name,
-                  u.last_name AS participant_last_name,
-                  pt.jersey_num AS player_jersey_num
-           FROM football_pool.square s
-           LEFT JOIN football_pool.users u ON u.id = s.participant_id
-           LEFT JOIN football_pool.player_team pt ON pt.id = s.player_id
-           WHERE s.pool_id = $1
-           ORDER BY s.square_num`,
-          [poolId]
-        )
-      ]);
+        );
+        selectedGameRow = result.rows[0] ?? null;
+      }
+
+      // Get all pool_game/game_new up to the selected game
+      const gamesUpToSelectionResult = await client.query(
+        `SELECT pg.id as pool_game_id, g.*, pg.row_numbers, pg.column_numbers
+         FROM football_pool.pool_game pg
+         JOIN football_pool.game_new g ON g.id = pg.game_id
+         WHERE pg.pool_id = $1
+           AND (
+             $2::int IS NULL
+             OR g.week_number < $2::int
+             OR (g.week_number = $2::int AND ($3::date IS NULL OR g.game_date <= $3::date))
+           )
+         ORDER BY g.week_number ASC, g.game_date ASC, g.id ASC`,
+        [poolId, selectedGameRow?.week_number ?? null, selectedGameRow?.game_date ?? null]
+      );
+
+      const payoutsResult = await client.query(
+        `SELECT q1_payout, q2_payout, q3_payout, q4_payout
+         FROM football_pool.pool
+         WHERE id = $1
+         LIMIT 1`,
+        [poolId]
+      );
+
+      const squaresResult = await client.query(
+        `SELECT s.id,
+                s.square_num,
+                s.participant_id,
+                s.player_id,
+                s.paid_flg,
+                u.first_name AS participant_first_name,
+                u.last_name AS participant_last_name,
+                pt.jersey_num AS player_jersey_num
+         FROM football_pool.square s
+         LEFT JOIN football_pool.users u ON u.id = s.participant_id
+         LEFT JOIN football_pool.player_team pt ON pt.id = s.player_id
+         WHERE s.pool_id = $1
+         ORDER BY s.square_num`,
+        [poolId]
+      );
 
       const payouts = payoutsResult.rows[0] ?? {
         q1_payout: 0,
@@ -296,6 +325,33 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
       const simulationStatus = await getPoolSimulationStatus(client, poolId).catch(() => null);
       const currentGameTotals = new Map<number, number>();
       const seasonTotals = new Map<number, number>();
+      // Parse scores_by_quarter for each game
+      const parseScores = (row: any) => {
+        let scores = {};
+        try {
+          scores = row.scores_by_quarter ? JSON.parse(row.scores_by_quarter) : {};
+        } catch {
+          scores = {};
+        }
+        return scores;
+      };
+      const getQuarterScore = (scores: any, quarter: string, which: 'home' | 'away') =>
+        scores[quarter]?.[which] ?? null;
+
+      const selectedGame = selectedGameRow
+        ? {
+            ...selectedGameRow,
+            q1_primary_score: getQuarterScore(parseScores(selectedGameRow), '1', 'home'),
+            q1_opponent_score: getQuarterScore(parseScores(selectedGameRow), '1', 'away'),
+            q2_primary_score: getQuarterScore(parseScores(selectedGameRow), '2', 'home'),
+            q2_opponent_score: getQuarterScore(parseScores(selectedGameRow), '2', 'away'),
+            q3_primary_score: getQuarterScore(parseScores(selectedGameRow), '3', 'home'),
+            q3_opponent_score: getQuarterScore(parseScores(selectedGameRow), '3', 'away'),
+            q4_primary_score: getQuarterScore(parseScores(selectedGameRow), '4', 'home'),
+            q4_opponent_score: getQuarterScore(parseScores(selectedGameRow), '4', 'away')
+          }
+        : null;
+
       const selectedGameIsLiveSimulationQuarter =
         selectedGame &&
         simulationStatus?.mode === 'by_quarter' &&
@@ -315,6 +371,7 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
           : null;
 
       for (const game of gamesUpToSelectionResult.rows) {
+        const scores = parseScores(game);
         const liveQuarterToExclude =
           selectedGameIsLiveSimulationQuarter && selectedGame && Number(game.id) === Number(selectedGame.id)
             ? Number(simulationStatus?.nextQuarter ?? 0)
@@ -323,22 +380,22 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
         const entries = [
           {
             quarter: 1,
-            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, game.q1_opponent_score, game.q1_primary_score),
+            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, getQuarterScore(scores, '1', 'away'), getQuarterScore(scores, '1', 'home')),
             amount: Number(payouts.q1_payout ?? 0)
           },
           {
             quarter: 2,
-            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, game.q2_opponent_score, game.q2_primary_score),
+            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, getQuarterScore(scores, '2', 'away'), getQuarterScore(scores, '2', 'home')),
             amount: Number(payouts.q2_payout ?? 0)
           },
           {
             quarter: 3,
-            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, game.q3_opponent_score, game.q3_primary_score),
+            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, getQuarterScore(scores, '3', 'away'), getQuarterScore(scores, '3', 'home')),
             amount: Number(payouts.q3_payout ?? 0)
           },
           {
             quarter: 4,
-            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, game.q4_opponent_score, game.q4_primary_score),
+            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, getQuarterScore(scores, '4', 'away'), getQuarterScore(scores, '4', 'home')),
             amount: Number(payouts.q4_payout ?? 0)
           }
         ];
@@ -347,13 +404,10 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
           if (entry.squareNum == null || entry.amount <= 0) {
             continue;
           }
-
           if (liveQuarterToExclude != null && entry.quarter >= liveQuarterToExclude) {
             continue;
           }
-
           seasonTotals.set(entry.squareNum, (seasonTotals.get(entry.squareNum) ?? 0) + entry.amount);
-
           if (selectedGame && Number(game.id) === Number(selectedGame.id)) {
             currentGameTotals.set(entry.squareNum, (currentGameTotals.get(entry.squareNum) ?? 0) + entry.amount);
           }
@@ -372,9 +426,9 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
           poolId,
           poolName: poolResult.rows[0].pool_name,
           primaryTeam: poolResult.rows[0].primary_team,
-          opponent: selectedGame?.opponent ?? 'Opponent',
+          opponent: selectedGame?.away_team_name ?? 'Opponent',
           gameId: selectedGame?.id ?? null,
-          gameDate: selectedGame?.game_dt ?? null,
+          gameDate: selectedGame?.game_date ?? null,
           teamName: poolResult.rows[0].team_name,
           teamPrimaryColor: poolResult.rows[0].primary_color ?? '#fbbc04',
           teamSecondaryColor: poolResult.rows[0].secondary_color ?? '#111111',

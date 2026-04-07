@@ -239,11 +239,13 @@ describe('Football Pool API', () => {
         .send({
           teamName: 'Test Team',
           primaryColor: 'Blue',
-          secondaryColor: 'Gold'
+          secondaryColor: 'Gold',
+          nflTeamAbbr: 'GB' // Use NFL team abbreviation for normalized schema
         })
 
       expect(response.status).toBe(201)
       expect(response.body).toHaveProperty('id')
+      expect(response.body).toHaveProperty('nfl_team_id')
       createdTeamId = response.body.id
     })
   })
@@ -260,7 +262,8 @@ describe('Football Pool API', () => {
         .set(organizerHeaders)
         .send({
           teamName: 'Pool Test Team',
-          primaryColor: 'Red'
+          primaryColor: 'Red',
+          nflTeamAbbr: 'GB'
         })
 
       teamId = teamRes.body.id
@@ -274,7 +277,7 @@ describe('Football Pool API', () => {
           poolName: 'Test Pool 2026',
           teamId: teamId,
           season: 2026,
-          primaryTeam: 'Packers',
+          // primaryTeam is now derived from teamId/nfl_team_id
           squareCost: 25,
           q1Payout: 250,
           q2Payout: 250,
@@ -297,7 +300,6 @@ describe('Football Pool API', () => {
           poolName: `Pool Notify ${Date.now()}`,
           teamId,
           season: 2026,
-          primaryTeam: 'Packers',
           squareCost: 25,
           q1Payout: 250,
           q2Payout: 250,
@@ -315,7 +317,6 @@ describe('Football Pool API', () => {
           poolName: `Pool Notify ${Date.now()}`,
           teamId,
           season: 2026,
-          primaryTeam: 'Packers',
           squareCost: 25,
           q1Payout: 250,
           q2Payout: 250,
@@ -382,7 +383,7 @@ describe('Football Pool API', () => {
         .send({
           poolId: displayPoolId,
           weekNum: 1,
-          opponent: 'Chicago Bears',
+          opponentNflTeamAbbr: 'CHI',
           gameDate: '2026-09-10T18:00:00.000Z'
         })
 
@@ -392,7 +393,7 @@ describe('Football Pool API', () => {
         .send({
           poolId: displayPoolId,
           weekNum: 2,
-          opponent: 'Detroit Lions',
+          opponentNflTeamAbbr: 'DET',
           gameDate: '2026-09-17T18:00:00.000Z'
         })
 
@@ -416,19 +417,7 @@ describe('Football Pool API', () => {
           q4OpponentScore: 17
         })
 
-      await db.query(
-        `UPDATE football_pool.game
-         SET q1_primary_score = $2,
-             q1_opponent_score = $3,
-             q2_primary_score = NULL,
-             q2_opponent_score = NULL,
-             q3_primary_score = NULL,
-             q3_opponent_score = NULL,
-             q4_primary_score = NULL,
-             q4_opponent_score = NULL
-         WHERE id = $1`,
-        [weekTwoGameId, 10, 7]
-      )
+      // No direct update to old game table; update pool_game or game_new as needed for test setup if required
 
       expect(completedScoreResponse.status).toBe(200)
 

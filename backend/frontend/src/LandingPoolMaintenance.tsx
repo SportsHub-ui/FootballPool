@@ -1,19 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 
-type LandingPool = {
-  id: number
-  pool_name: string | null
-  season: number | null
-  primary_team: string | null
-  default_flg: boolean
-  sign_in_req_flg: boolean
-  display_token: string | null
-  team_name: string | null
-  primary_color: string | null
-  secondary_color: string | null
-  logo_file: string | null
-}
+import type { LandingPool } from './LandingMetrics'
 
 type TeamRecord = {
   id: number
@@ -43,7 +31,6 @@ type PoolRecord = {
   pool_name: string | null
   team_id: number | null
   season: number | null
-  primary_team: string | null
   square_cost: number | null
   q1_payout: number | null
   q2_payout: number | null
@@ -167,13 +154,12 @@ const buildReadonlyPoolRecords = (pools: LandingPool[]): PoolRecord[] =>
     pool_name: pool.pool_name,
     team_id: null,
     season: pool.season,
-    primary_team: pool.primary_team,
     square_cost: null,
     q1_payout: null,
     q2_payout: null,
     q3_payout: null,
     q4_payout: null,
-    display_token: pool.display_token,
+    display_token: pool.display_token ?? null,
     team_name: pool.team_name,
     contact_notification_level: 'none',
     contact_notify_on_square_lead_flg: false
@@ -243,7 +229,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
       poolName: pool?.pool_name ?? '',
       teamId: pool?.team_id != null ? String(pool.team_id) : '',
       season: pool?.season ?? new Date().getFullYear(),
-      primaryTeam: pool?.primary_team ?? 'Green Bay Packers',
+      primaryTeam: pool?.team_name ?? 'Green Bay Packers',
       squareCost: pool?.square_cost ?? 0,
       q1Payout: pool?.q1_payout ?? 0,
       q2Payout: pool?.q2_payout ?? 0,

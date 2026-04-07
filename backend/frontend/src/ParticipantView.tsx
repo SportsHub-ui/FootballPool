@@ -6,11 +6,14 @@ type UserPool = {
   id: number
   pool_name: string
   season: number
-  primary_team: string
+  primary_team_id: number | null // references nfl_team.id
   square_cost: number
   team_name: string
   total_squares: number
   user_squares: number
+  primary_color?: string | null
+  secondary_color?: string | null
+  logo_file?: string | null
 }
 
 type UserSquare = {
@@ -46,11 +49,15 @@ type WinningsResponse = {
 
 type Game = {
   id: number
+  pool_game_id: number // new: pool_game PK
+  game_id: number // new: game_new PK
   pool_id: number
   week_num: number | null
   opponent: string
   game_dt: string
   is_simulation: boolean
+  row_numbers: number[] | null
+  col_numbers: number[] | null
   q1_primary_score: number | null
   q1_opponent_score: number | null
   q2_primary_score: number | null
@@ -78,6 +85,7 @@ type BoardSquare = {
 type PoolBoard = {
   poolId: number
   poolName: string
+  primaryTeamId: number | null // references nfl_team.id
   primaryTeam: string
   opponent: string
   gameId: number | null
