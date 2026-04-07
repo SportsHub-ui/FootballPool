@@ -96,7 +96,9 @@ const toDateInputValue = (value: string): string => {
 export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase, onRequireSignIn }: Props) {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [refreshingActiveGames, setRefreshingActiveGames] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [refreshFeedback, setRefreshFeedback] = useState<string | null>(null)
   const [poolRecords, setPoolRecords] = useState<PoolRecord[]>([])
   const [games, setGames] = useState<GameRecord[]>([])
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null)
@@ -351,12 +353,65 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
     }
   }
 
+  const onRefreshActiveGames = async (): Promise<void> => {
+    if (!token) {
+      setError('Sign in as an organizer to refresh active games.')
+      onRequireSignIn()
+      return
+    }
+
+    setRefreshingActiveGames(true)
+    setError(null)
+    setRefreshFeedback(null)
+
+    try {
+      const result = await request<{ total?: number; success?: number; failed?: number }>('/api/ingestion/run', {
+        method: 'POST',
+        headers: {
+          ...authHeaders,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ source: 'espn' })
+      })
+
+      const total = Number(result.total ?? 0)
+      const success = Number(result.success ?? 0)
+      const failed = Number(result.failed ?? 0)
+
+      setRefreshFeedback(
+        total > 0
+          ? `Refresh finished: ${success} of ${total} active game${total === 1 ? '' : 's'} checked${failed > 0 ? `, ${failed} failed` : ''}.`
+          : 'No eligible active games need a refresh right now.'
+      )
+
+      await loadScheduleData(selectedGameId)
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : 'Failed to refresh active games')
+    } finally {
+      setRefreshingActiveGames(false)
+    }
+  }
+
   return (
     <section className="player-maintenance-shell">
       <div className="landing-hero-bar landing-player-hero" style={heroStyle}>
         <div>
           <h1>Schedule Maintenance</h1>
           <p>{heroSubtitle}</p>
+        </div>
+
+        <div className="landing-hero-controls">
+          <button
+            type="button"
+            className="secondary compact"
+            onClick={() => {
+              void onRefreshActiveGames()
+            }}
+            disabled={refreshingActiveGames || !token}
+          >
+            {refreshingActiveGames ? 'Refreshing active games...' : 'Refresh Active Games'}
+          </button>
+          {refreshFeedback ? <p className="small">{refreshFeedback}</p> : null}
         </div>
       </div>
 
