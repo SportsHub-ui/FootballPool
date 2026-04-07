@@ -2,11 +2,21 @@ import { useEffect, useMemo, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 
 import type { LandingPool } from './LandingMetrics'
+import { getPoolLeagueDefinition, type PayoutSlotKey, type SupportedLeagueCode } from './utils/poolLeagues'
 
 type TeamRecord = {
   id: number
   team_name: string | null
   has_members_flg?: boolean
+}
+
+type SportTeamRecord = {
+  id: number
+  name: string | null
+  abbreviation: string | null
+  sport_code: string | null
+  league_code: string | null
+  espn_team_uid?: string | null
 }
 
 type GameRecord = {
@@ -33,6 +43,9 @@ type PoolRecord = {
   team_id: number | null
   season: number | null
   primary_team: string | null
+  primary_sport_team_id?: number | null
+  sport_code?: string | null
+  league_code?: string | null
   square_cost: number | null
   q1_payout: number | null
   q2_payout: number | null
@@ -78,43 +91,8 @@ const POOL_LIST_MIN_HEIGHT = 120
 const POOL_LIST_MAX_HEIGHT = 360
 const POOL_LIST_DEFAULT_HEIGHT = 170
 const TOTAL_SQUARES = 100
-const NFL_SEASON_GAMES = 17
 const SHOW_SIMULATION_CONTROLS =
   (import.meta.env.VITE_ENABLE_SIMULATION_CONTROLS ?? 'true').toString().toLowerCase() === 'true'
-const NFL_TEAMS = [
-  'Arizona Cardinals',
-  'Atlanta Falcons',
-  'Baltimore Ravens',
-  'Buffalo Bills',
-  'Carolina Panthers',
-  'Chicago Bears',
-  'Cincinnati Bengals',
-  'Cleveland Browns',
-  'Dallas Cowboys',
-  'Denver Broncos',
-  'Detroit Lions',
-  'Green Bay Packers',
-  'Houston Texans',
-  'Indianapolis Colts',
-  'Jacksonville Jaguars',
-  'Kansas City Chiefs',
-  'Las Vegas Raiders',
-  'Los Angeles Chargers',
-  'Los Angeles Rams',
-  'Miami Dolphins',
-  'Minnesota Vikings',
-  'New England Patriots',
-  'New Orleans Saints',
-  'New York Giants',
-  'New York Jets',
-  'Philadelphia Eagles',
-  'Pittsburgh Steelers',
-  'San Francisco 49ers',
-  'Seattle Seahawks',
-  'Tampa Bay Buccaneers',
-  'Tennessee Titans',
-  'Washington Commanders'
-] as const
 
 const formatCurrency = (value: number | null | undefined): string =>
   value == null ? '—' : `$${value.toLocaleString()}`
@@ -151,6 +129,13 @@ const formatSimulationMode = (mode: SimulationMode | null | undefined): string =
   return 'Full Year'
 }
 
+const hasRecordedPayoutSlot = (game: GameRecord, slot: PayoutSlotKey): boolean => {
+  if (slot === 'q1') return hasRecordedQuarter(game.q1_primary_score, game.q1_opponent_score)
+  if (slot === 'q2') return hasRecordedQuarter(game.q2_primary_score, game.q2_opponent_score)
+  if (slot === 'q3') return hasRecordedQuarter(game.q3_primary_score, game.q3_opponent_score)
+  return hasRecordedQuarter(game.q4_primary_score, game.q4_opponent_score)
+}
+
 const buildReadonlyPoolRecords = (pools: LandingPool[]): PoolRecord[] =>
   pools.map((pool) => ({
     id: pool.id,
@@ -158,6 +143,9 @@ const buildReadonlyPoolRecords = (pools: LandingPool[]): PoolRecord[] =>
     team_id: null,
     season: pool.season,
     primary_team: pool.team_name ?? null,
+    primary_sport_team_id: null,
+    sport_code: 'FOOTBALL',
+    league_code: 'NFL',
     square_cost: null,
     q1_payout: null,
     q2_payout: null,
@@ -175,6 +163,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [teamOptions, setTeamOptions] = useState<TeamRecord[]>([])
+  const [sportTeamOptions, setSportTeamOptions] = useState<SportTeamRecord[]>([])
   const [poolRecords, setPoolRecords] = useState<PoolRecord[]>([])
   const [poolGames, setPoolGames] = useState<GameRecord[]>([])
   const [hasOrganizerAccess, setHasOrganizerAccess] = useState(false)
@@ -190,7 +179,10 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     poolName: '',
     teamId: '',
     season: new Date().getFullYear(),
-    primaryTeam: 'Green Bay Packers',
+    leagueCode: 'NFL' as SupportedLeagueCode,
+    sportCode: 'FOOTBALL',
+    primarySportTeamId: '',
+    primaryTeam: '',
     squareCost: 0,
     q1Payout: 0,
     q2Payout: 0,
@@ -201,6 +193,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   })
 
   const canManagePools = hasOrganizerAccess
+  const selectedLeagueDefinition = useMemo(() => getPoolLeagueDefinition(poolForm.leagueCode), [poolForm.leagueCode])
 
   const simulationHeaders = useMemo(() => {
     if (!SHOW_SIMULATION_CONTROLS || token) {
@@ -227,13 +220,18 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   }
 
   const loadPoolIntoForm = (pool: PoolRecord | null) => {
+    const leagueDefinition = getPoolLeagueDefinition(pool?.league_code)
+
     setSelectedPoolId(pool?.id ?? null)
     setIsCreatingNew(pool == null)
     setPoolForm({
       poolName: pool?.pool_name ?? '',
       teamId: pool?.team_id != null ? String(pool.team_id) : '',
       season: pool?.season ?? new Date().getFullYear(),
-      primaryTeam: pool?.primary_team?.trim() || pool?.team_name?.trim() || 'Green Bay Packers',
+      leagueCode: leagueDefinition.leagueCode,
+      sportCode: pool?.sport_code?.trim() || leagueDefinition.sportCode,
+      primarySportTeamId: pool?.primary_sport_team_id != null ? String(pool.primary_sport_team_id) : '',
+      primaryTeam: pool?.primary_team?.trim() || '',
       squareCost: pool?.square_cost ?? 0,
       q1Payout: pool?.q1_payout ?? 0,
       q2Payout: pool?.q2_payout ?? 0,
@@ -308,6 +306,59 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     void loadPoolData(selectedPoolId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pools, token])
+
+  useEffect(() => {
+    if (!canManagePools || !token) {
+      setSportTeamOptions([])
+      return
+    }
+
+    let isActive = true
+
+    const loadSportTeams = async (): Promise<void> => {
+      try {
+        const result = await request<{ sportTeams: SportTeamRecord[] }>(
+          `/api/setup/sport-teams?leagueCode=${encodeURIComponent(poolForm.leagueCode)}`,
+          { headers: authHeaders }
+        )
+
+        if (!isActive) {
+          return
+        }
+
+        setSportTeamOptions(result.sportTeams)
+        setPoolForm((current) => {
+          if (current.primarySportTeamId) {
+            return current
+          }
+
+          const matchedTeam = result.sportTeams.find((team) => {
+            const currentPrimaryTeam = current.primaryTeam.trim().toLowerCase()
+            return currentPrimaryTeam.length > 0 && (team.name?.trim().toLowerCase() ?? '') === currentPrimaryTeam
+          })
+
+          return matchedTeam
+            ? {
+                ...current,
+                primarySportTeamId: String(matchedTeam.id),
+                primaryTeam: matchedTeam.name?.trim() || current.primaryTeam
+              }
+            : current
+        })
+      } catch (loadError) {
+        if (isActive) {
+          setSportTeamOptions([])
+          setError((current) => current ?? (loadError instanceof Error ? loadError.message : 'Failed to load sport teams'))
+        }
+      }
+    }
+
+    void loadSportTeams()
+
+    return () => {
+      isActive = false
+    }
+  }, [authHeaders, canManagePools, poolForm.leagueCode, token])
 
   const authorizedHeroPool = useMemo(() => {
     const defaultPool = pools.find((pool) => pool.default_flg)
@@ -447,21 +498,24 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
 
   const payoutSummary = useMemo(() => {
     const squareCost = Math.max(0, Number(poolForm.squareCost) || 0)
-    const q1Payout = Math.max(0, Number(poolForm.q1Payout) || 0)
-    const q2Payout = Math.max(0, Number(poolForm.q2Payout) || 0)
-    const q3Payout = Math.max(0, Number(poolForm.q3Payout) || 0)
-    const q4Payout = Math.max(0, Number(poolForm.q4Payout) || 0)
+    const payoutValues: Record<PayoutSlotKey, number> = {
+      q1: Math.max(0, Number(poolForm.q1Payout) || 0),
+      q2: Math.max(0, Number(poolForm.q2Payout) || 0),
+      q3: Math.max(0, Number(poolForm.q3Payout) || 0),
+      q4: Math.max(0, Number(poolForm.q4Payout) || 0)
+    }
 
     const totalRevenue = squareCost * TOTAL_SQUARES
-    const totalPayout = (q1Payout + q2Payout + q3Payout + q4Payout) * NFL_SEASON_GAMES
+    const totalPayoutPerGame = selectedLeagueDefinition.activePayoutSlots.reduce((sum, slot) => sum + payoutValues[slot], 0)
+    const totalPayout = totalPayoutPerGame * selectedLeagueDefinition.regularSeasonGameCount
 
     const rawPaidOutToDate = poolGames.reduce((sum, game) => {
       return (
         sum +
-        (hasRecordedQuarter(game.q1_primary_score, game.q1_opponent_score) ? q1Payout : 0) +
-        (hasRecordedQuarter(game.q2_primary_score, game.q2_opponent_score) ? q2Payout : 0) +
-        (hasRecordedQuarter(game.q3_primary_score, game.q3_opponent_score) ? q3Payout : 0) +
-        (hasRecordedQuarter(game.q4_primary_score, game.q4_opponent_score) ? q4Payout : 0)
+        selectedLeagueDefinition.activePayoutSlots.reduce(
+          (slotSum, slot) => slotSum + (hasRecordedPayoutSlot(game, slot) ? payoutValues[slot] : 0),
+          0
+        )
       )
     }, 0)
 
@@ -474,7 +528,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
       paidOutToDate,
       remainingToBePaid: Math.max(0, totalPayout - paidOutToDate)
     }
-  }, [poolForm.q1Payout, poolForm.q2Payout, poolForm.q3Payout, poolForm.q4Payout, poolForm.squareCost, poolGames])
+  }, [poolForm.q1Payout, poolForm.q2Payout, poolForm.q3Payout, poolForm.q4Payout, poolForm.squareCost, poolGames, selectedLeagueDefinition])
 
   const onSelectPool = (poolId: number): void => {
     const pool = poolRecords.find((entry) => entry.id === poolId) ?? null
@@ -484,6 +538,16 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   const onAddPool = (): void => {
     setError(null)
     loadPoolIntoForm(null)
+  }
+
+  const setPayoutForSlot = (slot: PayoutSlotKey, value: number): void => {
+    setPoolForm((current) => ({
+      ...current,
+      q1Payout: slot === 'q1' ? value : current.q1Payout,
+      q2Payout: slot === 'q2' ? value : current.q2Payout,
+      q3Payout: slot === 'q3' ? value : current.q3Payout,
+      q4Payout: slot === 'q4' ? value : current.q4Payout
+    }))
   }
 
   const togglePoolListExpanded = (): void => {
@@ -513,8 +577,8 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   }
 
   const onSavePool = async (): Promise<void> => {
-    if (!poolForm.poolName.trim() || !poolForm.teamId) {
-      setError('Pool name and organization are required.')
+    if (!poolForm.poolName.trim() || !poolForm.teamId || !poolForm.primaryTeam.trim()) {
+      setError('Pool name, organization, and preferred sport team are required.')
       return
     }
 
@@ -532,6 +596,8 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
         poolName: poolForm.poolName.trim(),
         teamId: Number(poolForm.teamId),
         season: Number(poolForm.season),
+        leagueCode: poolForm.leagueCode,
+        primarySportTeamId: poolForm.primarySportTeamId ? Number(poolForm.primarySportTeamId) : undefined,
         primaryTeam: poolForm.primaryTeam.trim() || undefined,
         squareCost: Number(poolForm.squareCost),
         q1Payout: Number(poolForm.q1Payout),
@@ -826,6 +892,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                   <th>Pool</th>
                   <th>Organization</th>
                   <th>Season</th>
+                  <th>League</th>
                   <th>Notifications</th>
                   <th>Cost</th>
                 </tr>
@@ -840,6 +907,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                     <td>{formatPoolName(pool)}</td>
                     <td>{pool.team_name ?? '—'}</td>
                     <td>{pool.season ?? '—'}</td>
+                    <td>{pool.league_code ?? 'NFL'}</td>
                     <td>{formatNotificationSummary(pool.contact_notification_level, pool.contact_notify_on_square_lead_flg)}</td>
                     <td>{formatCurrency(pool.square_cost)}</td>
                   </tr>
@@ -1011,15 +1079,59 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
             </label>
 
             <label className="field-block">
-              <span>Preferred sport team</span>
+              <span>League</span>
               <select
-                value={poolForm.primaryTeam}
-                onChange={(event) => setPoolForm((current) => ({ ...current, primaryTeam: event.target.value }))}
+                value={poolForm.leagueCode}
+                onChange={(event) => {
+                  const nextLeague = getPoolLeagueDefinition(event.target.value as SupportedLeagueCode)
+                  setPoolForm((current) => ({
+                    ...current,
+                    leagueCode: nextLeague.leagueCode,
+                    sportCode: nextLeague.sportCode,
+                    primarySportTeamId: '',
+                    primaryTeam: '',
+                    q1Payout: nextLeague.activePayoutSlots.includes('q1') ? current.q1Payout : 0,
+                    q2Payout: nextLeague.activePayoutSlots.includes('q2') ? current.q2Payout : 0,
+                    q3Payout: nextLeague.activePayoutSlots.includes('q3') ? current.q3Payout : 0,
+                    q4Payout: nextLeague.activePayoutSlots.includes('q4') ? current.q4Payout : 0
+                  }))
+                }}
                 disabled={saving}
               >
-                {NFL_TEAMS.map((teamName) => (
-                  <option key={teamName} value={teamName}>
-                    {teamName}
+                <option value="NFL">NFL</option>
+                <option value="NCAAF">NCAAF</option>
+                <option value="NCAAB">NCAAB</option>
+                <option value="MLB">MLB</option>
+                <option value="NBA">NBA</option>
+                <option value="NHL">NHL</option>
+              </select>
+            </label>
+
+            <label className="field-block">
+              <span>Sport</span>
+              <input value={poolForm.sportCode} readOnly disabled />
+            </label>
+
+            <label className="field-block">
+              <span>Preferred sport team</span>
+              <select
+                value={poolForm.primarySportTeamId}
+                onChange={(event) => {
+                  const selectedId = event.target.value
+                  const selectedSportTeam = sportTeamOptions.find((team) => String(team.id) === selectedId)
+                  setPoolForm((current) => ({
+                    ...current,
+                    primarySportTeamId: selectedId,
+                    primaryTeam: selectedSportTeam?.name?.trim() || ''
+                  }))
+                }}
+                disabled={saving || sportTeamOptions.length === 0}
+              >
+                <option value="">{sportTeamOptions.length > 0 ? 'Select preferred sport team' : `No ${poolForm.leagueCode} teams available`}</option>
+                {sportTeamOptions.map((team) => (
+                  <option key={team.id} value={team.id}>
+                    {team.name ?? `Sport Team ${team.id}`}
+                    {team.abbreviation ? ` (${team.abbreviation})` : ''}
                   </option>
                 ))}
               </select>
@@ -1036,49 +1148,27 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
               />
             </label>
 
-            <label className="field-block">
-              <span>Q1 payout</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={formatCurrencyInput(poolForm.q1Payout)}
-                onChange={(event) => setPoolForm((current) => ({ ...current, q1Payout: parseCurrencyInput(event.target.value) }))}
-                disabled={saving}
-              />
-            </label>
+            {selectedLeagueDefinition.activePayoutSlots.map((slot) => {
+              const payoutValue =
+                slot === 'q1' ? poolForm.q1Payout : slot === 'q2' ? poolForm.q2Payout : slot === 'q3' ? poolForm.q3Payout : poolForm.q4Payout
 
-            <label className="field-block">
-              <span>Q2 payout</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={formatCurrencyInput(poolForm.q2Payout)}
-                onChange={(event) => setPoolForm((current) => ({ ...current, q2Payout: parseCurrencyInput(event.target.value) }))}
-                disabled={saving}
-              />
-            </label>
+              return (
+                <label key={slot} className="field-block">
+                  <span>{selectedLeagueDefinition.payoutLabels[slot]}</span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={formatCurrencyInput(payoutValue)}
+                    onChange={(event) => setPayoutForSlot(slot, parseCurrencyInput(event.target.value))}
+                    disabled={saving}
+                  />
+                </label>
+              )
+            })}
 
-            <label className="field-block">
-              <span>Q3 payout</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={formatCurrencyInput(poolForm.q3Payout)}
-                onChange={(event) => setPoolForm((current) => ({ ...current, q3Payout: parseCurrencyInput(event.target.value) }))}
-                disabled={saving}
-              />
-            </label>
-
-            <label className="field-block">
-              <span>Q4 payout</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                value={formatCurrencyInput(poolForm.q4Payout)}
-                onChange={(event) => setPoolForm((current) => ({ ...current, q4Payout: parseCurrencyInput(event.target.value) }))}
-                disabled={saving}
-              />
-            </label>
+            <p className="small landing-readonly-note landing-field-span">
+              Payout checkpoints follow the selected league. NCAA basketball uses 1st half and final, and MLB uses final only.
+            </p>
 
             <label className="field-block">
               <span>Contact notification level</span>

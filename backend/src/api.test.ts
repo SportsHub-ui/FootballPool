@@ -473,6 +473,74 @@ describe('Football Pool API', () => {
       expect(updatedPool?.contact_notify_on_square_lead_flg).toBe(true)
     })
 
+    it('should persist pool league selection and filter primary sport teams by league', async () => {
+      const idResult = await db.query<{ next_id: number }>(
+        `SELECT COALESCE(MAX(id), 0) + 1 AS next_id
+         FROM football_pool.sport_team`
+      )
+      const sportTeamId = Number(idResult.rows[0]?.next_id ?? 1)
+
+      await db.query(
+        `INSERT INTO football_pool.sport_team (
+           id,
+           name,
+           abbreviation,
+           sport_code,
+           league_code,
+           espn_team_id,
+           espn_team_uid
+         )
+         VALUES ($1, $2, $3, 'BASKETBALL', 'NCAAB', $4, $5)
+         ON CONFLICT (id) DO NOTHING`,
+        [sportTeamId, `Test College Hoops ${sportTeamId}`, 'TCH', `test-${sportTeamId}`, `test:ncaab:${sportTeamId}`]
+      )
+
+      const sportTeamsResponse = await request(app)
+        .get('/api/setup/sport-teams?leagueCode=NCAAB')
+        .set(organizerHeaders)
+
+      expect(sportTeamsResponse.status).toBe(200)
+      expect(
+        sportTeamsResponse.body.sportTeams.some(
+          (team: { id: number; league_code: string }) => team.id === sportTeamId && team.league_code === 'NCAAB'
+        )
+      ).toBe(true)
+      expect(
+        sportTeamsResponse.body.sportTeams.every((team: { league_code: string }) => team.league_code === 'NCAAB')
+      ).toBe(true)
+
+      const poolName = `College Hoops Pool ${Date.now()}`
+      const createResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName,
+          teamId,
+          season: 2026,
+          leagueCode: 'NCAAB',
+          primarySportTeamId: sportTeamId,
+          squareCost: 20,
+          q1Payout: 100,
+          q2Payout: 200,
+          q3Payout: 300,
+          q4Payout: 400
+        })
+
+      expect(createResponse.status).toBe(201)
+
+      const listResponse = await request(app)
+        .get('/api/setup/pools')
+        .set(organizerHeaders)
+
+      const createdPool = listResponse.body.pools.find((pool: { pool_name: string }) => pool.pool_name === poolName)
+      expect(createdPool?.league_code).toBe('NCAAB')
+      expect(createdPool?.sport_code).toBe('BASKETBALL')
+      expect(createdPool?.primary_sport_team_id).toBe(sportTeamId)
+      expect(createdPool?.primary_team).toBe(`Test College Hoops ${sportTeamId}`)
+      expect(createdPool?.q2_payout).toBe(0)
+      expect(createdPool?.q3_payout).toBe(0)
+    })
+
     it('should initialize 100 squares in a pool', async () => {
       const response = await request(app)
         .post(`/api/setup/pools/${createdPoolId}/squares/init`)
@@ -1785,8 +1853,9 @@ describe('Football Pool API', () => {
         `SELECT recipient_email, notification_kind, recipient_scope, quarter
          FROM football_pool.notification_log
          WHERE game_id = $1
+           AND recipient_email IN ($2, $3)
          ORDER BY recipient_email, quarter NULLS LAST`,
-        [gameId]
+        [gameId, contactEmail, winnerEmail]
       )
 
       expect(notificationResult.rows).toEqual([
@@ -1805,9 +1874,10 @@ describe('Football Pool API', () => {
          FROM football_pool.notification_log
          WHERE game_id = $1
            AND recipient_scope = 'user'
+           AND recipient_email = $2
            AND quarter = 1
          LIMIT 1`,
-        [gameId]
+        [gameId, winnerEmail]
       )
 
       expect(userMessageResult.rows[0]?.subject).toBe(`Quarter 1 winner in ${poolName}`)
@@ -1910,8 +1980,9 @@ describe('Football Pool API', () => {
          FROM football_pool.notification_log
          WHERE game_id = $1
            AND recipient_scope = 'user'
+           AND recipient_email = $2
          ORDER BY quarter NULLS LAST`,
-        [gameId]
+        [gameId, winnerEmail]
       )
 
       expect(notificationResult.rows).toEqual([

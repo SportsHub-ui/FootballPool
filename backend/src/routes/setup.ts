@@ -6,6 +6,7 @@ import { PoolClient } from 'pg';
 import { z } from 'zod';
 import { db } from '../config/db';
 import { env } from '../config/env';
+import { getPoolLeagueDefinition, normalizePayoutsForLeague, supportedLeagueCodes } from '../config/poolLeagues';
 import { requireRole } from '../middleware/auth';
 import {
   advancePoolSeasonSimulation,
@@ -72,6 +73,7 @@ const optionalVenmoAcctSchema = z
   .or(z.literal(''));
 
 const notificationLevelSchema = z.enum(['none', 'quarter_win', 'game_total']).optional();
+const leagueCodeSchema = z.enum(supportedLeagueCodes).optional();
 
 const memberAssignmentSchema = z
   .object({
@@ -121,6 +123,8 @@ const createPoolSchema = z.object({
   poolName: z.string().min(1),
   teamId: z.number().int().positive(),
   season: z.number().int().min(2000).max(2100),
+  leagueCode: leagueCodeSchema,
+  primarySportTeamId: z.number().int().positive().optional(),
   primaryTeam: z.string().trim().optional().or(z.literal('')),
   squareCost: z.number().int().nonnegative(),
   q1Payout: z.number().int().nonnegative(),
@@ -216,6 +220,10 @@ const updateNotificationTemplateSchema = z.object({
   subjectTemplate: z.string().trim().min(1).max(255),
   bodyTemplate: z.string().trim().min(1),
   markupFormat: z.enum(notificationMarkupFormatValues).default('plain_text')
+});
+
+const sportTeamQuerySchema = z.object({
+  leagueCode: z.string().trim().max(16).optional()
 });
 
 setupRouter.get('/images/:imageId/file', async (req, res) => {
@@ -448,6 +456,83 @@ const resolvePrimaryTeamName = async (
   }
 
   return resolved;
+};
+
+const resolvePrimarySportTeamContext = async (
+  client: PoolClient,
+  payload: z.infer<typeof createPoolSchema>
+): Promise<{
+  sportCode: string;
+  leagueCode: string;
+  primarySportTeamId: number | null;
+  primaryTeamName: string | null;
+}> => {
+  const fallbackDefinition = getPoolLeagueDefinition(payload.leagueCode);
+
+  if (payload.primarySportTeamId != null) {
+    const result = await client.query<{
+      id: number;
+      name: string | null;
+      sport_code: string | null;
+      league_code: string | null;
+    }>(
+      `SELECT id, name, sport_code, league_code
+       FROM football_pool.sport_team
+       WHERE id = $1
+       LIMIT 1`,
+      [payload.primarySportTeamId]
+    );
+
+    if ((result.rowCount ?? 0) === 0) {
+      throw new Error('Selected preferred sport team was not found.');
+    }
+
+    const row = result.rows[0];
+    return {
+      sportCode: row.sport_code?.trim() || fallbackDefinition.sportCode,
+      leagueCode: row.league_code?.trim() || fallbackDefinition.leagueCode,
+      primarySportTeamId: Number(row.id),
+      primaryTeamName: row.name?.trim() || null
+    };
+  }
+
+  const providedName = payload.primaryTeam?.trim();
+  if (providedName) {
+    const result = await client.query<{ id: number; name: string | null }>(
+      `SELECT id, name
+       FROM football_pool.sport_team
+       WHERE UPPER(COALESCE(league_code, '')) = UPPER($1)
+         AND (
+           LOWER(name) = LOWER($2)
+           OR UPPER(COALESCE(abbreviation, '')) = UPPER($3)
+         )
+       LIMIT 1`,
+      [fallbackDefinition.leagueCode, providedName, providedName]
+    );
+
+    if ((result.rowCount ?? 0) > 0) {
+      return {
+        sportCode: fallbackDefinition.sportCode,
+        leagueCode: fallbackDefinition.leagueCode,
+        primarySportTeamId: Number(result.rows[0].id),
+        primaryTeamName: result.rows[0].name?.trim() || providedName
+      };
+    }
+
+    return {
+      sportCode: fallbackDefinition.sportCode,
+      leagueCode: fallbackDefinition.leagueCode,
+      primarySportTeamId: null,
+      primaryTeamName: providedName
+    };
+  }
+
+  return {
+    sportCode: fallbackDefinition.sportCode,
+    leagueCode: fallbackDefinition.leagueCode,
+    primarySportTeamId: null,
+    primaryTeamName: null
+  };
 };
 
 setupRouter.get('/notifications/templates', async (req, res) => {
@@ -1018,7 +1103,16 @@ setupRouter.post('/pools', async (req, res) => {
     await client.query('BEGIN');
     const id = await nextId(client, 'pool');
     const displayToken = await generateUniquePoolDisplayToken(client);
-    const primaryTeamName = await resolvePrimaryTeamName(client, parsed.data.teamId, parsed.data.primaryTeam ?? null);
+    const primarySportTeam = await resolvePrimarySportTeamContext(client, parsed.data);
+    const normalizedPayouts = normalizePayoutsForLeague(primarySportTeam.leagueCode, {
+      q1Payout: parsed.data.q1Payout,
+      q2Payout: parsed.data.q2Payout,
+      q3Payout: parsed.data.q3Payout,
+      q4Payout: parsed.data.q4Payout
+    });
+    const primaryTeamName =
+      primarySportTeam.primaryTeamName ??
+      (await resolvePrimaryTeamName(client, parsed.data.teamId, parsed.data.primaryTeam ?? null));
 
     await client.query(
       `
@@ -1028,6 +1122,9 @@ setupRouter.post('/pools', async (req, res) => {
           team_id,
           season,
           primary_team,
+          primary_sport_team_id,
+          sport_code,
+          league_code,
           square_cost,
           q1_payout,
           q2_payout,
@@ -1039,7 +1136,7 @@ setupRouter.post('/pools', async (req, res) => {
           contact_notify_on_square_lead_flg,
           created_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, FALSE, $12, $13, NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, FALSE, $15, $16, NOW())
       `,
       [
         id,
@@ -1047,11 +1144,14 @@ setupRouter.post('/pools', async (req, res) => {
         parsed.data.teamId,
         parsed.data.season,
         primaryTeamName,
+        primarySportTeam.primarySportTeamId,
+        primarySportTeam.sportCode,
+        primarySportTeam.leagueCode,
         parsed.data.squareCost,
-        parsed.data.q1Payout,
-        parsed.data.q2Payout,
-        parsed.data.q3Payout,
-        parsed.data.q4Payout,
+        normalizedPayouts.q1Payout,
+        normalizedPayouts.q2Payout,
+        normalizedPayouts.q3Payout,
+        normalizedPayouts.q4Payout,
         displayToken,
         parsed.data.contactNotificationLevel ?? 'none',
         parsed.data.contactNotifyOnSquareLead ?? false
@@ -1646,6 +1746,39 @@ setupRouter.get('/teams', async (_req, res) => {
   }
 });
 
+setupRouter.get('/sport-teams', async (req, res) => {
+  const parsedQuery = sportTeamQuerySchema.safeParse(req.query);
+
+  if (!parsedQuery.success) {
+    res.status(400).json({ error: parsedQuery.error.issues });
+    return;
+  }
+
+  try {
+    const requestedLeagueCode = parsedQuery.data.leagueCode?.trim().toUpperCase() || null;
+    const result = await db.query(
+      `SELECT id,
+              name,
+              abbreviation,
+              sport_code,
+              league_code,
+              espn_team_uid
+       FROM football_pool.sport_team
+       WHERE ($1::text IS NULL OR UPPER(COALESCE(league_code, '')) = $1)
+       ORDER BY name, id
+       LIMIT 1000`,
+      [requestedLeagueCode]
+    );
+
+    res.json({ sportTeams: result.rows });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to load sport teams',
+      detail: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 setupRouter.patch('/teams/:teamId', async (req, res) => {
   const parsedParams = teamIdParams.safeParse(req.params);
   const parsedBody = updateTeamSchema.safeParse(req.body);
@@ -1783,6 +1916,9 @@ setupRouter.get('/pools', async (_req, res) => {
           p.team_id,
           p.season,
           p.primary_team,
+          p.primary_sport_team_id,
+          p.sport_code,
+          p.league_code,
           p.square_cost,
           p.q1_payout,
           p.q2_payout,
@@ -1830,7 +1966,16 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
   try {
     await ensureNotificationSupport(client);
 
-    const primaryTeamName = await resolvePrimaryTeamName(client, parsedBody.data.teamId, parsedBody.data.primaryTeam ?? null);
+    const primarySportTeam = await resolvePrimarySportTeamContext(client, parsedBody.data);
+    const normalizedPayouts = normalizePayoutsForLeague(primarySportTeam.leagueCode, {
+      q1Payout: parsedBody.data.q1Payout,
+      q2Payout: parsedBody.data.q2Payout,
+      q3Payout: parsedBody.data.q3Payout,
+      q4Payout: parsedBody.data.q4Payout
+    });
+    const primaryTeamName =
+      primarySportTeam.primaryTeamName ??
+      (await resolvePrimaryTeamName(client, parsedBody.data.teamId, parsedBody.data.primaryTeam ?? null));
 
     const result = await client.query(
       `
@@ -1840,13 +1985,16 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
           team_id = $3,
           season = $4,
           primary_team = $5,
-          square_cost = $6,
-          q1_payout = $7,
-          q2_payout = $8,
-          q3_payout = $9,
-          q4_payout = $10,
-          contact_notification_level = COALESCE($11, contact_notification_level),
-          contact_notify_on_square_lead_flg = COALESCE($12, contact_notify_on_square_lead_flg)
+          primary_sport_team_id = $6,
+          sport_code = $7,
+          league_code = $8,
+          square_cost = $9,
+          q1_payout = $10,
+          q2_payout = $11,
+          q3_payout = $12,
+          q4_payout = $13,
+          contact_notification_level = COALESCE($14, contact_notification_level),
+          contact_notify_on_square_lead_flg = COALESCE($15, contact_notify_on_square_lead_flg)
         WHERE id = $1
         RETURNING id
       `,
@@ -1856,11 +2004,14 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
         parsedBody.data.teamId,
         parsedBody.data.season,
         primaryTeamName,
+        primarySportTeam.primarySportTeamId,
+        primarySportTeam.sportCode,
+        primarySportTeam.leagueCode,
         parsedBody.data.squareCost,
-        parsedBody.data.q1Payout,
-        parsedBody.data.q2Payout,
-        parsedBody.data.q3Payout,
-        parsedBody.data.q4Payout,
+        normalizedPayouts.q1Payout,
+        normalizedPayouts.q2Payout,
+        normalizedPayouts.q3Payout,
+        normalizedPayouts.q4Payout,
         parsedBody.data.contactNotificationLevel ?? null,
         parsedBody.data.contactNotifyOnSquareLead ?? null
       ]

@@ -1,4 +1,5 @@
 ﻿import type { PoolClient } from 'pg';
+import { getPoolLeagueDefinition } from '../config/poolLeagues';
 
 type PoolScheduleContext = {
   id: number;
@@ -6,7 +7,10 @@ type PoolScheduleContext = {
   primary_team: string | null;
   team_name: string | null;
   team_id: number | null;
+  primary_sport_team_id: number | null;
   sport_team_id: number | null;
+  sport_code: string | null;
+  league_code: string | null;
   espn_team_id: string | null;
   espn_team_uid: string | null;
 }
@@ -21,8 +25,8 @@ type EspnTeam = {
   name: string;
   color: string | null;
   logoUrl: string | null;
-  sportCode: 'FOOTBALL';
-  leagueCode: 'NFL';
+  sportCode: string;
+  leagueCode: string;
 };
 
 type ImportedScheduleEntry = {
@@ -64,7 +68,30 @@ const addDays = (value: string, days: number): string => {
   return parsed.toISOString().slice(0, 10);
 };
 
-const getRegularSeasonWeekCount = (season: number): number => (season >= 2021 ? 18 : 17);
+const getRegularSeasonWeekCount = (leagueCode: string | null | undefined, season: number): number => {
+  const definition = getPoolLeagueDefinition(leagueCode);
+
+  if (definition.leagueCode === 'NFL') {
+    return season >= 2021 ? 18 : 17;
+  }
+
+  if (definition.leagueCode === 'NCAAF') {
+    return 12;
+  }
+
+  return 0;
+};
+
+const buildEspnTeamsUrl = (leagueCode: string | null | undefined): string => {
+  const definition = getPoolLeagueDefinition(leagueCode);
+  const needsLargeLimit = definition.leagueCode === 'NCAAF' || definition.leagueCode === 'NCAAB';
+  return `https://site.api.espn.com/apis/site/v2/sports/${definition.espnPath}/teams${needsLargeLimit ? '?limit=500' : ''}`;
+};
+
+const buildEspnScheduleUrl = (team: EspnTeam, season: number): string => {
+  const definition = getPoolLeagueDefinition(team.leagueCode);
+  return `https://site.api.espn.com/apis/site/v2/sports/${definition.espnPath}/teams/${encodeURIComponent(team.id)}/schedule?season=${season}&seasontype=2`;
+};
 
 const toHexColor = (value: string | null | undefined): string | null => {
   const cleaned = (value ?? '').trim().replace(/^#/, '');
@@ -112,11 +139,12 @@ const upsertSportTeamFromEspn = async (client: PoolClient, team: EspnTeam): Prom
   return Number(result.rows[0].id);
 };
 
-const fetchEspnTeams = async (): Promise<EspnTeam[]> => {
-  const response = await fetch('https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams');
+const fetchEspnTeams = async (leagueCode: string | null | undefined): Promise<EspnTeam[]> => {
+  const definition = getPoolLeagueDefinition(leagueCode);
+  const response = await fetch(buildEspnTeamsUrl(definition.leagueCode));
 
   if (!response.ok) {
-    throw new Error(`ESPN teams request failed with status ${response.status}`);
+    throw new Error(`${definition.label} teams request failed with status ${response.status}`);
   }
 
   const data = (await response.json()) as {
@@ -154,8 +182,8 @@ const fetchEspnTeams = async (): Promise<EspnTeam[]> => {
       name: team.name ?? '',
       color: toHexColor(team.color),
       logoUrl: team.logos?.[0]?.href ?? null,
-      sportCode: 'FOOTBALL' as const,
-      leagueCode: 'NFL' as const
+      sportCode: definition.sportCode,
+      leagueCode: definition.leagueCode
     }));
 };
 
@@ -180,12 +208,13 @@ const scoreTeamMatch = (team: EspnTeam, hints: string[]): number => {
 };
 
 const findEspnTeam = async (pool: PoolScheduleContext): Promise<EspnTeam> => {
-  const hints = [pool.team_name, pool.primary_team].map((value) => normalize(value)).filter(Boolean);
+  const leagueDefinition = getPoolLeagueDefinition(pool.league_code);
+  const hints = [pool.primary_team, pool.team_name].map((value) => normalize(value)).filter(Boolean);
   if (hints.length === 0) {
     throw new Error('This pool does not have a preferred team configured yet.');
   }
 
-  const teams = await fetchEspnTeams();
+  const teams = await fetchEspnTeams(leagueDefinition.leagueCode);
 
   if (pool.espn_team_uid) {
     const exactUidMatch = teams.find((team) => team.uid === pool.espn_team_uid);
@@ -206,16 +235,14 @@ const findEspnTeam = async (pool: PoolScheduleContext): Promise<EspnTeam> => {
     .sort((left, right) => right.score - left.score)[0];
 
   if (!best || best.score <= 0) {
-    throw new Error(`Could not find an NFL team match for ${[pool.team_name, pool.primary_team].filter(Boolean).join(' / ')}.`);
+    throw new Error(`Could not find a ${leagueDefinition.label} team match for ${[pool.team_name, pool.primary_team].filter(Boolean).join(' / ')}.`);
   }
 
   return best.team;
 };
 
 const fetchSeasonSchedule = async (team: EspnTeam, season: number): Promise<ImportedScheduleEntry[]> => {
-  const response = await fetch(
-    `https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/${encodeURIComponent(team.id)}/schedule?season=${season}&seasontype=2`
-  );
+  const response = await fetch(buildEspnScheduleUrl(team, season));
 
   if (!response.ok) {
     throw new Error(`ESPN schedule request failed with status ${response.status}`);
@@ -242,14 +269,19 @@ const fetchSeasonSchedule = async (team: EspnTeam, season: number): Promise<Impo
   };
 
   const teamHint = normalize(team.displayName || team.shortDisplayName || team.abbreviation);
+  const useWeekNumbers = getPoolLeagueDefinition(team.leagueCode).sportCode === 'FOOTBALL';
   const byWeek = new Map<number, ImportedScheduleEntry>();
+  let sequenceNumber = 0;
 
   for (const event of data.events ?? []) {
     const competition = event.competitions?.[0];
-    const weekNum = Number(event.week?.number ?? 0);
-
-    if (!competition || !Number.isFinite(weekNum) || weekNum <= 0) {
+    if (!competition) {
       continue;
+    }
+
+    let weekNum = useWeekNumbers ? Number(event.week?.number ?? 0) : sequenceNumber + 1;
+    if (!Number.isFinite(weekNum) || weekNum <= 0 || byWeek.has(weekNum)) {
+      weekNum = sequenceNumber + 1;
     }
 
     const competitors = competition.competitors ?? [];
@@ -270,42 +302,46 @@ const fetchSeasonSchedule = async (team: EspnTeam, season: number): Promise<Impo
       gameDate: toDateOnly(competition.date ?? event.date ?? ''),
       isBye: false
     });
+
+    sequenceNumber += 1;
   }
 
   if (byWeek.size === 0) {
     throw new Error(`No regular-season schedule was returned for ${team.displayName} in ${season}.`);
   }
 
-  const totalWeeks = getRegularSeasonWeekCount(season);
+  const totalWeeks = getRegularSeasonWeekCount(team.leagueCode, season);
 
-  for (let weekNum = 1; weekNum <= totalWeeks; weekNum += 1) {
-    if (byWeek.has(weekNum)) {
-      continue;
+  if (useWeekNumbers && totalWeeks > 0) {
+    for (let weekNum = 1; weekNum <= totalWeeks; weekNum += 1) {
+      if (byWeek.has(weekNum)) {
+        continue;
+      }
+
+      const previousWeek = Array.from(byWeek.values())
+        .filter((entry) => entry.weekNum < weekNum)
+        .sort((left, right) => right.weekNum - left.weekNum)[0];
+      const nextWeek = Array.from(byWeek.values())
+        .filter((entry) => entry.weekNum > weekNum)
+        .sort((left, right) => left.weekNum - right.weekNum)[0];
+
+      const estimatedDate = previousWeek
+        ? addDays(previousWeek.gameDate, 7)
+        : nextWeek
+          ? addDays(nextWeek.gameDate, -7)
+          : `${season}-09-01`;
+
+      byWeek.set(weekNum, {
+        weekNum,
+        opponent: 'BYE',
+        opponentAbbreviation: null,
+        opponentEspnTeamId: null,
+        opponentEspnTeamUid: null,
+        opponentSlug: null,
+        gameDate: estimatedDate,
+        isBye: true
+      });
     }
-
-    const previousWeek = Array.from(byWeek.values())
-      .filter((entry) => entry.weekNum < weekNum)
-      .sort((left, right) => right.weekNum - left.weekNum)[0];
-    const nextWeek = Array.from(byWeek.values())
-      .filter((entry) => entry.weekNum > weekNum)
-      .sort((left, right) => left.weekNum - right.weekNum)[0];
-
-    const estimatedDate = previousWeek
-      ? addDays(previousWeek.gameDate, 7)
-      : nextWeek
-        ? addDays(nextWeek.gameDate, -7)
-        : `${season}-09-01`;
-
-    byWeek.set(weekNum, {
-      weekNum,
-      opponent: 'BYE',
-      opponentAbbreviation: null,
-      opponentEspnTeamId: null,
-      opponentEspnTeamUid: null,
-      opponentSlug: null,
-      gameDate: estimatedDate,
-      isBye: true
-    });
   }
 
   return Array.from(byWeek.values()).sort((left, right) => left.weekNum - right.weekNum);
@@ -317,14 +353,18 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
     `SELECT p.id,
             p.season,
             p.primary_team,
+            p.primary_sport_team_id,
+            p.sport_code,
+            p.league_code,
             t.team_name,
             t.id AS team_id,
-            t.sport_team_id,
-            st.espn_team_id,
-            st.espn_team_uid
+            COALESCE(p.primary_sport_team_id, t.sport_team_id) AS sport_team_id,
+            COALESCE(pool_team.espn_team_id, org_team.espn_team_id) AS espn_team_id,
+            COALESCE(pool_team.espn_team_uid, org_team.espn_team_uid) AS espn_team_uid
      FROM football_pool.pool p
      LEFT JOIN football_pool.organization t ON t.id = p.team_id
-     LEFT JOIN football_pool.sport_team st ON st.id = t.sport_team_id
+     LEFT JOIN football_pool.sport_team pool_team ON pool_team.id = p.primary_sport_team_id
+     LEFT JOIN football_pool.sport_team org_team ON org_team.id = t.sport_team_id
      WHERE p.id = $1
      LIMIT 1`,
     [poolId]
@@ -340,7 +380,17 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
 
   const team = await findEspnTeam(pool);
   const importedSchedule = await fetchSeasonSchedule(team, Number(pool.season));
-  const nflTeamId = await upsertSportTeamFromEspn(client, team);
+  const primarySportTeamId = await upsertSportTeamFromEspn(client, team);
+
+  await client.query(
+    `UPDATE football_pool.pool
+     SET primary_sport_team_id = $2,
+         primary_team = $3,
+         sport_code = $4,
+         league_code = $5
+     WHERE id = $1`,
+    [poolId, primarySportTeamId, team.displayName, team.sportCode, team.leagueCode]
+  );
 
   if (pool.team_id != null) {
     await client.query(
@@ -348,7 +398,7 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
        SET sport_team_id = $2
        WHERE id = $1
          AND COALESCE(sport_team_id, 0) <> $2`,
-      [pool.team_id, nflTeamId]
+      [pool.team_id, primarySportTeamId]
     );
   }
 
@@ -365,7 +415,7 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
          AND week_number = $2
          AND (home_team_id = $3 OR away_team_id = $3)
        LIMIT 1`,
-      [pool.season, entry.weekNum, nflTeamId]
+      [pool.season, entry.weekNum, primarySportTeamId]
     );
     let gameId: number;
     if (existingGame.rows[0]) {
@@ -385,18 +435,18 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
             name: entry.opponent,
             color: null,
             logoUrl: null,
-            sportCode: 'FOOTBALL',
-            leagueCode: 'NFL'
+            sportCode: team.sportCode,
+            leagueCode: team.leagueCode
           });
         } else {
           const oppResult = await client.query<{ id: number }>(
             `SELECT id
              FROM football_pool.sport_team
-             WHERE league_code = 'NFL'
-               AND sport_code = 'FOOTBALL'
-               AND (LOWER(name) = $1 OR LOWER(name) LIKE '%' || $1 || '%')
+             WHERE league_code = $1
+               AND sport_code = $2
+               AND (LOWER(name) = $3 OR LOWER(name) LIKE '%' || $3 || '%')
              LIMIT 1`,
-            [entry.opponent.toLowerCase()]
+            [team.leagueCode, team.sportCode, entry.opponent.toLowerCase()]
           );
           opponentTeamId = oppResult.rows[0]?.id ?? null;
         }
@@ -418,7 +468,7 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
          )
          VALUES ($1, $2, $3, $4, $5::date, $5::timestamp, 'scheduled', FALSE, '{}'::jsonb, NOW(), NOW())
          RETURNING id`,
-        [pool.season, entry.weekNum, nflTeamId, opponentTeamId, entry.gameDate]
+        [pool.season, entry.weekNum, primarySportTeamId, opponentTeamId, entry.gameDate]
       );
       gameId = insertResult.rows[0].id;
     }

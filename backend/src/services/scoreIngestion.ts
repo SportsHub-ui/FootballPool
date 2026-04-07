@@ -1,6 +1,7 @@
 ﻿import type { PoolClient } from 'pg';
 import { db } from '../config/db';
 import { env } from '../config/env';
+import { getPoolLeagueDefinition } from '../config/poolLeagues';
 import {
   processGameScoresWithClient,
   type QuarterScoresInput,
@@ -23,6 +24,8 @@ export interface IngestionGameTarget {
   awayEspnTeamId: string | null;
   homeEspnTeamUid: string | null;
   awayEspnTeamUid: string | null;
+  sportCode: string;
+  leagueCode: string;
   state: string;
   currentQuarter: number | null;
   timeRemainingInQuarter: string | null;
@@ -62,6 +65,8 @@ interface GameLookupRow {
   away_espn_team_id: string | null;
   home_espn_team_uid: string | null;
   away_espn_team_uid: string | null;
+  sport_code: string | null;
+  league_code: string | null;
   state: string | null;
   current_quarter: number | null;
   time_remaining_in_quarter: string | null;
@@ -255,6 +260,79 @@ const buildFallbackQuarterScoresFromFinal = (primaryFinal: number, opponentFinal
   };
 };
 
+const buildSportAwareScoresFromCompetition = (
+  target: IngestionGameTarget,
+  primaryCompetitor: EspnCompetitor | null | undefined,
+  opponentCompetitor: EspnCompetitor | null | undefined,
+  state: string
+): QuarterScoresInput => {
+  const [q1Primary, q2Primary, q3Primary, q4Primary] = toCumulativeQuarterScores(primaryCompetitor?.linescores);
+  const [q1Opponent, q2Opponent, q3Opponent, q4Opponent] = toCumulativeQuarterScores(opponentCompetitor?.linescores);
+  const primaryFinal = toNullableScore(primaryCompetitor?.score);
+  const opponentFinal = toNullableScore(opponentCompetitor?.score);
+  const normalizedSport = String(target.sportCode ?? '').trim().toUpperCase();
+  const normalizedLeague = String(target.leagueCode ?? '').trim().toUpperCase();
+
+  if (normalizedSport === 'BASEBALL') {
+    return state === 'completed' && primaryFinal != null && opponentFinal != null
+      ? {
+          ...EMPTY_SCORES,
+          q4PrimaryScore: primaryFinal,
+          q4OpponentScore: opponentFinal
+        }
+      : EMPTY_SCORES;
+  }
+
+  if (normalizedLeague === 'NCAAB') {
+    return {
+      q1PrimaryScore: q1Primary,
+      q1OpponentScore: q1Opponent,
+      q2PrimaryScore: null,
+      q2OpponentScore: null,
+      q3PrimaryScore: null,
+      q3OpponentScore: null,
+      q4PrimaryScore: state === 'completed' ? (q2Primary ?? primaryFinal) : null,
+      q4OpponentScore: state === 'completed' ? (q2Opponent ?? opponentFinal) : null
+    };
+  }
+
+  if (normalizedSport === 'HOCKEY') {
+    return {
+      q1PrimaryScore: q1Primary,
+      q1OpponentScore: q1Opponent,
+      q2PrimaryScore: q2Primary,
+      q2OpponentScore: q2Opponent,
+      q3PrimaryScore: null,
+      q3OpponentScore: null,
+      q4PrimaryScore: state === 'completed' ? (q3Primary ?? primaryFinal) : null,
+      q4OpponentScore: state === 'completed' ? (q3Opponent ?? opponentFinal) : null
+    };
+  }
+
+  const quarterBreakdownExists =
+    [q1Primary, q2Primary, q3Primary, q4Primary].some((value) => value != null) &&
+    [q1Opponent, q2Opponent, q3Opponent, q4Opponent].some((value) => value != null);
+
+  if (quarterBreakdownExists) {
+    return {
+      q1PrimaryScore: q1Primary,
+      q1OpponentScore: q1Opponent,
+      q2PrimaryScore: q2Primary,
+      q2OpponentScore: q2Opponent,
+      q3PrimaryScore: q3Primary,
+      q3OpponentScore: q3Opponent,
+      q4PrimaryScore: q4Primary ?? (state === 'completed' ? primaryFinal : null),
+      q4OpponentScore: q4Opponent ?? (state === 'completed' ? opponentFinal : null)
+    };
+  }
+
+  if (primaryFinal != null && opponentFinal != null && state !== 'scheduled') {
+    return buildFallbackQuarterScoresFromFinal(primaryFinal, opponentFinal);
+  }
+
+  return EMPTY_SCORES;
+};
+
 const inferGameStateFromScores = (scores: QuarterScoresInput): string => {
   if (scores.q4PrimaryScore != null && scores.q4OpponentScore != null) {
     return 'completed';
@@ -351,6 +429,8 @@ const mapLookupRow = (row: GameLookupRow): IngestionGameTarget => ({
   awayEspnTeamId: row.away_espn_team_id ?? null,
   homeEspnTeamUid: row.home_espn_team_uid ?? null,
   awayEspnTeamUid: row.away_espn_team_uid ?? null,
+  sportCode: row.sport_code ?? 'FOOTBALL',
+  leagueCode: row.league_code ?? 'NFL',
   state: normalizeGameState(row.state),
   currentQuarter: row.current_quarter != null ? Number(row.current_quarter) : null,
   timeRemainingInQuarter: row.time_remaining_in_quarter ?? null
@@ -369,6 +449,8 @@ const loadGameTargetWithClient = async (client: PoolClient, gameId: number): Pro
             opponent_team.espn_team_id AS away_espn_team_id,
             primary_team.espn_team_uid AS home_espn_team_uid,
             opponent_team.espn_team_uid AS away_espn_team_uid,
+            primary_team.sport_code AS sport_code,
+            primary_team.league_code AS league_code,
             COALESCE(g.state, 'scheduled') AS state,
             g.current_quarter,
             g.time_remaining_in_quarter
@@ -400,6 +482,8 @@ export const listTodayGameTargetsForIngestion = async (at: Date = new Date()): P
               opponent_team.espn_team_id AS away_espn_team_id,
               primary_team.espn_team_uid AS home_espn_team_uid,
               opponent_team.espn_team_uid AS away_espn_team_uid,
+              primary_team.sport_code AS sport_code,
+              primary_team.league_code AS league_code,
               COALESCE(g.state, 'scheduled') AS state,
               g.current_quarter,
               g.time_remaining_in_quarter
@@ -420,9 +504,14 @@ export const listTodayGameTargetsForIngestion = async (at: Date = new Date()): P
 
 const getScoreboardCacheTtlMs = (): number => Math.max(15_000, env.SCORE_INGEST_ACTIVE_INTERVAL_SECONDS * 1000);
 
-const fetchScoreboardForDate = async (dateParam: string): Promise<EspnScoreboardResponse> => {
+const fetchScoreboardForDate = async (
+  leagueCode: string | null | undefined,
+  dateParam: string
+): Promise<EspnScoreboardResponse> => {
+  const definition = getPoolLeagueDefinition(leagueCode);
+  const cacheKey = `${definition.leagueCode}:${dateParam}`;
   const now = Date.now();
-  const cached = scoreboardCache.get(dateParam);
+  const cached = scoreboardCache.get(cacheKey);
 
   if (cached && cached.expiresAt > now) {
     return cached.data;
@@ -435,7 +524,7 @@ const fetchScoreboardForDate = async (dateParam: string): Promise<EspnScoreboard
 
   try {
     const response = await fetch(
-      `https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates=${dateParam}`,
+      `https://site.api.espn.com/apis/site/v2/sports/${definition.espnPath}/scoreboard?dates=${dateParam}`,
       { signal: controller.signal }
     );
 
@@ -446,7 +535,7 @@ const fetchScoreboardForDate = async (dateParam: string): Promise<EspnScoreboard
     }
 
     const data = (await response.json()) as EspnScoreboardResponse;
-    scoreboardCache.set(dateParam, {
+    scoreboardCache.set(cacheKey, {
       expiresAt: now + getScoreboardCacheTtlMs(),
       data
     });
@@ -457,7 +546,7 @@ const fetchScoreboardForDate = async (dateParam: string): Promise<EspnScoreboard
     recordApiUsage({
       metricType: 'external_api',
       provider: 'espn',
-      routeKey: '/site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard',
+      routeKey: `/site.api.espn.com/apis/site/v2/sports/${definition.espnPath}/scoreboard`,
       method: 'GET',
       statusCode,
       durationMs: Date.now() - startedAt,
@@ -554,40 +643,13 @@ const buildEspnUpdateFromCompetition = (
     competitors[0];
   const opponentCompetitor = competitors.find((competitor) => competitor !== primaryCompetitor) ?? competitors[1];
 
-  const [q1Primary, q2Primary, q3Primary, q4Primary] = toCumulativeQuarterScores(primaryCompetitor?.linescores);
-  const [q1Opponent, q2Opponent, q3Opponent, q4Opponent] = toCumulativeQuarterScores(opponentCompetitor?.linescores);
-
-  const quarterBreakdownExists =
-    [q1Primary, q2Primary, q3Primary, q4Primary].some((value) => value != null) &&
-    [q1Opponent, q2Opponent, q3Opponent, q4Opponent].some((value) => value != null);
-
   const state = normalizeGameState(
     competition.status?.type?.completed
       ? 'completed'
       : competition.status?.type?.state ?? competition.status?.type?.description ?? target.state
   );
 
-  const scores = quarterBreakdownExists
-    ? {
-        q1PrimaryScore: q1Primary,
-        q1OpponentScore: q1Opponent,
-        q2PrimaryScore: q2Primary,
-        q2OpponentScore: q2Opponent,
-        q3PrimaryScore: q3Primary,
-        q3OpponentScore: q3Opponent,
-        q4PrimaryScore: q4Primary,
-        q4OpponentScore: q4Opponent
-      }
-    : (() => {
-        const primaryFinal = toNullableScore(primaryCompetitor?.score);
-        const opponentFinal = toNullableScore(opponentCompetitor?.score);
-
-        if (primaryFinal != null && opponentFinal != null && state !== 'scheduled') {
-          return buildFallbackQuarterScoresFromFinal(primaryFinal, opponentFinal);
-        }
-
-        return EMPTY_SCORES;
-      })();
+  const scores = buildSportAwareScoresFromCompetition(target, primaryCompetitor, opponentCompetitor, state);
 
   return {
     gameId,
@@ -620,7 +682,7 @@ const getScoresFromEspn = async (gameId: number): Promise<GameIngestionUpdate> =
     }
 
     const dateValue = new Date(`${target.gameDate}T12:00:00.000Z`);
-    const scoreboard = await fetchScoreboardForDate(toYyyyMmDd(dateValue));
+    const scoreboard = await fetchScoreboardForDate(target.leagueCode, toYyyyMmDd(dateValue));
     const competition = findMatchingCompetition(target, scoreboard);
 
     if (!competition) {

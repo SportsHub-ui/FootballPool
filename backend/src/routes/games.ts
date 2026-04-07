@@ -13,7 +13,7 @@ gamesRouter.use(requireRole('organizer'));
 
 const createGameSchema = z.object({
   poolId: z.number().int().positive(),
-  weekNum: z.number().int().min(1).max(25).nullable().optional(),
+  weekNum: z.number().int().min(1).max(400).nullable().optional(),
   homeTeamId: z.number().int().positive().optional(),
   awayTeamId: z.number().int().positive().optional(),
   opponent: z.string().trim().min(1).optional(),
@@ -142,8 +142,18 @@ const resolveGameTeams = async (
   client: PoolClient,
   input: z.infer<typeof createGameSchema>
 ): Promise<{ seasonYear: number; homeTeamId: number; awayTeamId: number }> => {
-  const poolResult = await client.query<{ season: number | null; primary_team: string | null }>(
-    `SELECT season, primary_team
+  const poolResult = await client.query<{
+    season: number | null
+    primary_team: string | null
+    primary_sport_team_id: number | null
+    sport_code: string | null
+    league_code: string | null
+  }>(
+    `SELECT season,
+            primary_team,
+            primary_sport_team_id,
+            COALESCE(sport_code, 'FOOTBALL') AS sport_code,
+            COALESCE(league_code, 'NFL') AS league_code
      FROM football_pool.pool
      WHERE id = $1
      LIMIT 1`,
@@ -155,27 +165,30 @@ const resolveGameTeams = async (
     throw new Error('Pool not found')
   }
 
-  let resolvedHomeTeamId = input.homeTeamId ?? null
+  const sportCode = String(pool.sport_code ?? 'FOOTBALL')
+  const leagueCode = String(pool.league_code ?? 'NFL')
+
+  let resolvedHomeTeamId = input.homeTeamId ?? pool.primary_sport_team_id ?? null
   if (resolvedHomeTeamId == null && pool.primary_team) {
     const homeResult = await client.query<{ id: number }>(
       `SELECT id
        FROM football_pool.sport_team
-       WHERE league_code = 'NFL'
-         AND sport_code = 'FOOTBALL'
-         AND (LOWER(name) = LOWER($1)
-           OR LOWER(name) LIKE '%' || LOWER($1) || '%')
+       WHERE league_code = $1
+         AND sport_code = $2
+         AND (LOWER(name) = LOWER($3)
+           OR LOWER(name) LIKE '%' || LOWER($3) || '%')
        LIMIT 1`,
-      [pool.primary_team]
+      [leagueCode, sportCode, pool.primary_team]
     )
     resolvedHomeTeamId = homeResult.rows[0]?.id ?? null
 
     if (resolvedHomeTeamId == null) {
       const createdHomeResult = await client.query<{ id: number }>(
         `INSERT INTO football_pool.sport_team (name, sport_code, league_code)
-         VALUES ($1, 'FOOTBALL', 'NFL')
+         VALUES ($1, $2, $3)
          ON CONFLICT (sport_code, league_code, name) DO UPDATE SET name = EXCLUDED.name
          RETURNING id`,
-        [pool.primary_team.trim()]
+        [pool.primary_team.trim(), sportCode, leagueCode]
       )
       resolvedHomeTeamId = createdHomeResult.rows[0]?.id ?? null
     }
@@ -188,11 +201,11 @@ const resolveGameTeams = async (
     const awayByAbbrResult = await client.query<{ id: number }>(
       `SELECT id
        FROM football_pool.sport_team
-       WHERE league_code = 'NFL'
-         AND sport_code = 'FOOTBALL'
-         AND UPPER(COALESCE(abbreviation, '')) = UPPER($1)
+       WHERE league_code = $1
+         AND sport_code = $2
+         AND UPPER(COALESCE(abbreviation, '')) = UPPER($3)
        LIMIT 1`,
-      [opponentAbbreviation]
+      [leagueCode, sportCode, opponentAbbreviation]
     )
     resolvedAwayTeamId = awayByAbbrResult.rows[0]?.id ?? null
   }
@@ -201,22 +214,22 @@ const resolveGameTeams = async (
     const awayResult = await client.query<{ id: number }>(
       `SELECT id
        FROM football_pool.sport_team
-       WHERE league_code = 'NFL'
-         AND sport_code = 'FOOTBALL'
-         AND (LOWER(name) = LOWER($1)
-           OR LOWER(name) LIKE '%' || LOWER($1) || '%')
+       WHERE league_code = $1
+         AND sport_code = $2
+         AND (LOWER(name) = LOWER($3)
+           OR LOWER(name) LIKE '%' || LOWER($3) || '%')
        LIMIT 1`,
-      [input.opponent.trim()]
+      [leagueCode, sportCode, input.opponent.trim()]
     )
     resolvedAwayTeamId = awayResult.rows[0]?.id ?? null
 
     if (resolvedAwayTeamId == null) {
       const createdAwayResult = await client.query<{ id: number }>(
         `INSERT INTO football_pool.sport_team (name, sport_code, league_code)
-         VALUES ($1, 'FOOTBALL', 'NFL')
+         VALUES ($1, $2, $3)
          ON CONFLICT (sport_code, league_code, name) DO UPDATE SET name = EXCLUDED.name
          RETURNING id`,
-        [input.opponent.trim()]
+        [input.opponent.trim(), sportCode, leagueCode]
       )
       resolvedAwayTeamId = createdAwayResult.rows[0]?.id ?? null
     }
