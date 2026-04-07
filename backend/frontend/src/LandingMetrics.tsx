@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 
-type LandingPool = {
+export type LandingPool = {
   id: number
   pool_name: string | null
   season: number | null
-  primary_team: string | null
+  primary_team_id: number | null // references nfl_team.id
   square_cost?: number | null
   default_flg: boolean
   sign_in_req_flg: boolean
@@ -12,6 +12,7 @@ type LandingPool = {
   primary_color: string | null
   secondary_color: string | null
   logo_file: string | null
+  display_token?: string | null
 }
 
 type PoolMetricsResponse = {
@@ -19,9 +20,12 @@ type PoolMetricsResponse = {
     id: number
     pool_name: string | null
     season: number | null
-    primary_team: string | null
+    primary_team_id: number | null // references nfl_team.id
     team_name: string | null
     square_cost: number | null
+    primary_color?: string | null
+    secondary_color?: string | null
+    logo_file?: string | null
   }
   summary: {
     totalSquares: number
@@ -44,6 +48,7 @@ type PoolMetricsResponse = {
     squaresSold: number
     winsCount: number
     totalWon: number
+    teamId?: number | null // new: reference to nfl_team
   }>
   participantMetrics: Array<{
     participantId: number
@@ -101,7 +106,7 @@ const buildEmptyMetrics = (pool: LandingPool | null, poolId: number): PoolMetric
     id: pool?.id ?? poolId,
     pool_name: pool?.pool_name ?? null,
     season: pool?.season ?? null,
-    primary_team: pool?.primary_team ?? null,
+    primary_team_id: pool?.primary_team_id ?? null,
     team_name: pool?.team_name ?? null,
     square_cost: pool?.square_cost ?? null
   },
@@ -202,6 +207,7 @@ export function LandingMetrics({
           headers: authHeaders
         })
 
+        // The backend now returns normalized fields (primary_team_id, etc.)
         const data = await response.json().catch(() => ({}))
         const fallbackMetrics = buildEmptyMetrics(
           pools.find((pool) => pool.id === selectedPoolId) ?? null,
@@ -223,8 +229,18 @@ export function LandingMetrics({
         }
 
         if (isActive) {
+          // Patch for normalized backend: ensure all new fields are present
           const nextMetrics = data && typeof data === 'object' && 'summary' in data
-            ? (data as PoolMetricsResponse)
+            ? {
+                ...data,
+                pool: {
+                  ...data.pool,
+                  primary_team_id: data.pool.primary_team_id ?? null,
+                  primary_color: data.pool.primary_color ?? null,
+                  secondary_color: data.pool.secondary_color ?? null,
+                  logo_file: data.pool.logo_file ?? null
+                }
+              } as PoolMetricsResponse
             : fallbackMetrics
 
           setMetrics(nextMetrics)
@@ -272,6 +288,8 @@ export function LandingMetrics({
     () => pools.find((pool) => pool.id === selectedPoolId) ?? null,
     [pools, selectedPoolId]
   )
+
+  // If needed, fetch NFL team details for display using selectedPool.primary_team_id
 
   const heroStyle = useMemo(
     () => ({
@@ -378,7 +396,7 @@ export function LandingMetrics({
             <option value="">{pools.length > 0 ? 'Select Pool' : 'No Pools Available'}</option>
             {pools.map((pool) => (
               <option key={pool.id} value={pool.id}>
-                {pool.team_name ?? pool.primary_team ?? 'Team'} • {pool.pool_name ?? `Pool ${pool.id}`}
+                {pool.team_name ?? 'Team'} • {pool.pool_name ?? `Pool ${pool.id}`}
               </option>
             ))}
           </select>

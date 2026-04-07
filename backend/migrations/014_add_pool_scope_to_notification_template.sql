@@ -16,6 +16,15 @@ EXCEPTION
   WHEN undefined_table THEN NULL;
 END $$;
 
+DROP INDEX IF EXISTS football_pool.idx_notification_template_recipient_kind;
+
+DELETE FROM football_pool.notification_template a
+USING football_pool.notification_template b
+WHERE a.ctid < b.ctid
+  AND COALESCE(a.pool_id, -1) = COALESCE(b.pool_id, -1)
+  AND a.recipient_scope = b.recipient_scope
+  AND a.notification_kind = b.notification_kind;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_template_global_unique
   ON football_pool.notification_template (recipient_scope, notification_kind)
   WHERE pool_id IS NULL;
