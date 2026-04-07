@@ -180,13 +180,25 @@ participantRouter.get('/pools/:poolId/games', async (req, res) => {
       );
 
       // Map scores_by_quarter JSONB to flat quarter scores for compatibility
-      const games = result.rows.map(row => {
-        let scores = {};
-        try {
-          scores = row.scores_by_quarter ? JSON.parse(row.scores_by_quarter) : {};
-        } catch {
-          scores = {};
+      type QuarterScoreMap = Partial<Record<'1' | '2' | '3' | '4', { home?: number | null; away?: number | null }>>;
+      const toQuarterScoreMap = (value: unknown): QuarterScoreMap => {
+        if (!value) return {};
+        if (typeof value === 'string') {
+          try {
+            return JSON.parse(value) as QuarterScoreMap;
+          } catch {
+            return {};
+          }
         }
+        if (typeof value === 'object') {
+          return value as QuarterScoreMap;
+        }
+        return {};
+      };
+
+      const games = result.rows.map((row) => {
+        const scores = toQuarterScoreMap(row.scores_by_quarter);
+
         return {
           pool_game_id: row.pool_game_id,
           pool_id: row.pool_id,

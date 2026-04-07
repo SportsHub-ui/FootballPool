@@ -322,3 +322,5 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
     byeWeeks
   };
 }
+
+export const importPoolScheduleFromEspn = importSchedule;
