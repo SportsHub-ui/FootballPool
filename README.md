@@ -180,8 +180,20 @@ These cleanup commands preserve `football_pool.schema_migrations` and the seeded
 
 ### Display Links
 - Every pool gets an automatically generated `display_token`.
-- Open the app with `?display=<display_token>` to launch directly into the Squares page for that pool in display-only mode.
-- The display view hides menus, sign-in, and pool/game selectors and opens on the last completed game for the linked pool.
+- Basic display launch URL:
+  - `http://localhost:5173/?display=<display_token>`
+- Optional display query parameters:
+  - `refresh=<seconds>` - auto-refresh interval in seconds (minimum `5`, default `30`)
+  - `tz=<IANA timezone>` - timezone used for the display header and updated timestamp, for example `America/Chicago`
+- Example display URLs:
+  - `http://localhost:5173/?display=<display_token>`
+  - `http://localhost:5173/?display=<display_token>&refresh=15&tz=America/Chicago`
+- The display view is optimized for TVs / projectors and hides menus, sign-in, pool/game selectors, and payout schedule details.
+- The display screen now includes a scoreboard-style header, auto-refresh polling, and still listens for live score updates through SSE.
+- If `tz` is omitted, the frontend uses `VITE_DISPLAY_TIME_ZONE` when configured, otherwise it falls back to the display device's local browser timezone.
+- Frontend environment defaults for display mode:
+  - `VITE_DISPLAY_REFRESH_SECONDS=30`
+  - `VITE_DISPLAY_TIME_ZONE=America/Chicago`
 - `GET /api/landing/display/:displayToken` - Resolve a public read-only board payload for the linked pool
 
 ## Authentication

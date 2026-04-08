@@ -834,9 +834,24 @@ button:disabled {
   letter-spacing: 0.02em;
 }
 
+.pool-board-header-copy {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+}
+
 .pool-board-header-title {
   flex: 0 1 auto;
   text-align: center;
+}
+
+.pool-board-header-meta {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.78;
 }
 
 .pool-board-nav-arrow {
@@ -1901,11 +1916,261 @@ button:disabled {
   padding: 0 0.1rem;
 }
 
+.landing-page-shell.is-display-only {
+  --landing-gap: clamp(0.18rem, 0.55vh, 0.45rem);
+  --landing-digit-size: clamp(2rem, 3.2vh, 2.75rem);
+  --landing-square-size: clamp(3.35rem, 7.2vh, 5.15rem);
+  padding: clamp(0.2rem, 0.55vh, 0.45rem);
+  align-content: stretch;
+  background: radial-gradient(circle at top, #12243a 0%, #08111d 58%, #050a12 100%);
+}
+
 .landing-placeholder-card,
 .player-maintenance-shell,
 .user-maintenance-shell {
   display: grid;
   gap: 0.85rem;
+}
+
+.landing-placeholder-card.is-display-only {
+  min-height: calc(100dvh - (2 * clamp(0.25rem, 0.7vh, 0.6rem)));
+  height: 100%;
+  align-content: stretch;
+}
+
+.pool-board.is-display-only {
+  --board-header-height: 54px;
+  --board-brand-width: clamp(120px, 10vw, 150px);
+  --board-brand-height: clamp(100px, 9vh, 135px);
+  --board-quarter-summary-width: clamp(180px, 18vw, 260px);
+  min-height: 100%;
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+}
+
+.pool-board.is-display-only .pool-board-main {
+  min-height: 0;
+  height: 100%;
+}
+
+.pool-board.is-display-only .pool-board-brand {
+  opacity: 0.22;
+  left: auto;
+  right: 0.45rem;
+  top: calc(var(--board-header-height) + 4.8rem);
+  z-index: 1;
+  pointer-events: none;
+}
+
+.pool-board.is-display-only .pool-board-grid-wrap {
+  height: 100%;
+}
+
+.display-scoreboard-spotlight {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: stretch;
+  gap: 0.5rem;
+  padding: 0.45rem 0.6rem 0.6rem;
+  background: linear-gradient(180deg, rgba(10, 18, 31, 0.96) 0%, rgba(8, 14, 24, 0.92) 100%);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.display-scoreboard-spotlight.is-active {
+  box-shadow: inset 0 -3px 0 rgba(255, 208, 0, 0.55);
+}
+
+.display-scoreboard-spotlight.is-completed {
+  box-shadow: inset 0 -3px 0 rgba(65, 201, 123, 0.48);
+}
+
+.display-scoreboard-team {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.6rem;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 0.55rem 0.75rem;
+}
+
+.display-scoreboard-team-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.display-scoreboard-team-logo {
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 0.15rem;
+}
+
+.display-scoreboard-team-name {
+  font-size: clamp(0.95rem, 1.15vw, 1.2rem);
+  font-weight: 900;
+  line-height: 1.05;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.display-scoreboard-team-score {
+  font-size: clamp(2rem, 3.8vw, 3rem);
+  line-height: 1;
+  font-weight: 900;
+  color: #fff7cc;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+}
+
+.display-scoreboard-meta {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 0.18rem;
+  min-width: clamp(140px, 16vw, 200px);
+  padding: 0.45rem 0.6rem;
+  text-align: center;
+}
+
+.display-scoreboard-meta-label {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #c6d4e6;
+}
+
+.display-scoreboard-meta strong {
+  font-size: clamp(0.95rem, 1.1vw, 1.15rem);
+  line-height: 1.15;
+  color: #ffffff;
+}
+
+.display-scoreboard-meta span:last-child {
+  font-size: 0.78rem;
+  color: #dbe6f3;
+}
+
+.pool-board.is-display-only .pool-board-header {
+  font-size: clamp(1.2rem, 2.1vw, 1.8rem);
+  letter-spacing: 0.04em;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.28);
+  box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.2);
+}
+
+.pool-board.is-display-only .pool-board-header-meta {
+  font-size: 0.72rem;
+  opacity: 0.85;
+}
+
+.pool-board.is-display-only .board-axis-title {
+  font-size: clamp(1rem, 1.55vw, 1.4rem);
+}
+
+.pool-board.is-display-only .axis-team-logo {
+  width: 26px;
+  height: 26px;
+}
+
+.pool-board.is-display-only .digit-cell {
+  font-size: clamp(0.95rem, 1.3vw, 1.2rem);
+  font-weight: 800;
+}
+
+.pool-board.is-display-only .board-row {
+  grid-template-columns: 60px repeat(10, minmax(0, 1fr));
+}
+
+.pool-board.is-display-only .landing-square-card {
+  border-radius: 12px;
+  padding: 0.28rem;
+}
+
+.pool-board.is-display-only .square-owner {
+  font-size: clamp(0.82rem, 1.15vw, 1.08rem);
+  line-height: 1.05;
+  padding-bottom: 0;
+  font-weight: 900;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.45);
+}
+
+.pool-board.is-display-only .square-owner.is-display-only {
+  gap: 0;
+}
+
+.pool-board.is-display-only .square-owner.is-display-only span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pool-board.is-display-only .square-player-num {
+  font-size: clamp(0.58rem, 0.82vw, 0.75rem);
+}
+
+.pool-board.is-display-only .square-open-number {
+  font-size: clamp(1.75rem, 2.4vw, 2.3rem);
+  font-weight: 900;
+  padding-bottom: 0;
+}
+
+.pool-board.is-display-only .board-quarter-card {
+  padding: 0.85rem;
+  border-width: 2px;
+  box-shadow: 0 10px 22px rgba(8, 15, 28, 0.28);
+}
+
+.pool-board.is-display-only .board-quarter-card.is-completed {
+  background: linear-gradient(180deg, #d9ffe8 0%, #a8e6c1 100%);
+  border-color: rgba(34, 110, 63, 0.5);
+}
+
+.pool-board.is-display-only .board-quarter-card.is-active {
+  background: linear-gradient(180deg, #fff0a6 0%, #ffd54f 100%);
+  border-color: #c49102;
+  box-shadow: inset 0 0 0 2px rgba(196, 145, 2, 0.25), 0 10px 24px rgba(196, 145, 2, 0.25);
+}
+
+.pool-board.is-display-only .board-quarter-card-header {
+  font-size: 0.86rem;
+  letter-spacing: 0.08em;
+}
+
+.pool-board.is-display-only .board-quarter-scoreline span {
+  font-size: clamp(1.3rem, 1.9vw, 1.7rem);
+  font-weight: 900;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.pool-board.is-display-only .board-quarter-winner-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+}
+
+.pool-board.is-display-only .board-quarter-winner strong {
+  font-size: clamp(1rem, 1.15vw, 1.2rem);
+}
+
+.pool-board.is-display-only .landing-square-card.win-3,
+.pool-board.is-display-only .landing-square-card.is-week-win {
+  box-shadow: inset 0 0 0 3px rgba(34, 110, 63, 0.42), 0 6px 18px rgba(31, 157, 85, 0.24);
+}
+
+.pool-board.is-display-only .landing-square-card.is-current-win {
+  box-shadow: inset 0 0 0 3px #c49102, 0 0 18px rgba(255, 208, 0, 0.38);
 }
 
 .landing-collapsible {

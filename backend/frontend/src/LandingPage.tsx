@@ -150,6 +150,11 @@ const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '')
 const DEFAULT_POOL_LOGO = '/football-pool.png'
 const SHOW_SIMULATION_CONTROLS =
   (import.meta.env.VITE_ENABLE_SIMULATION_CONTROLS ?? 'true').toString().toLowerCase() === 'true'
+const DEFAULT_DISPLAY_REFRESH_SECONDS = Math.max(
+  5,
+  Number.parseInt((import.meta.env.VITE_DISPLAY_REFRESH_SECONDS ?? '30').toString(), 10) || 30
+)
+const DEFAULT_DISPLAY_TIME_ZONE = (import.meta.env.VITE_DISPLAY_TIME_ZONE ?? '').toString().trim()
 
 const NFL_TEAM_BRANDS: TeamBrand[] = [
   { key: 'cardinals', color: '#97233f', accent: '#000000', logo: 'https://a.espncdn.com/i/teamlogos/nfl/500/ari.png' },
@@ -222,10 +227,51 @@ const boardMoneyFormatter = new Intl.NumberFormat('en-US', {
 
 const formatBoardMoney = (value: number | null | undefined): string => boardMoneyFormatter.format(Number(value ?? 0))
 
-const formatDate = (value: string | null | undefined): string => {
-  if (!value) return new Date().toLocaleDateString()
-  return new Date(value).toLocaleDateString()
+const resolveBrowserTimeZone = (): string => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+
+const resolveDisplayTimeZone = (value: string | null | undefined): string => {
+  const candidate = (value ?? '').toString().trim()
+  const fallback = DEFAULT_DISPLAY_TIME_ZONE || resolveBrowserTimeZone()
+
+  if (!candidate) {
+    return fallback
+  }
+
+  try {
+    new Intl.DateTimeFormat(undefined, { timeZone: candidate }).format(new Date())
+    return candidate
+  } catch {
+    return fallback
+  }
 }
+
+const resolveDisplayRefreshSeconds = (value: string | null | undefined): number => {
+  const parsed = Number.parseInt((value ?? '').toString(), 10)
+
+  if (!Number.isFinite(parsed) || parsed < 5 || parsed > 3600) {
+    return DEFAULT_DISPLAY_REFRESH_SECONDS
+  }
+
+  return parsed
+}
+
+const formatDate = (value: string | null | undefined, options?: { timeZone?: string | null }): string => {
+  const dateValue = value ? new Date(value) : new Date()
+
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    ...(options?.timeZone ? { timeZone: options.timeZone } : {})
+  }).format(dateValue)
+}
+
+const formatClockTime = (value: Date, timeZone?: string | null): string => new Intl.DateTimeFormat(undefined, {
+  hour: 'numeric',
+  minute: '2-digit',
+  timeZone: timeZone ?? undefined,
+  timeZoneName: 'short'
+}).format(value)
 
 const isCompletedGame = (game: LandingGame | null): boolean => {
   if (!game) return false
@@ -438,6 +484,22 @@ export function LandingPage() {
     const value = new URLSearchParams(window.location.search).get('display')
     return value?.trim() ? value.trim() : null
   })
+  const [displayRefreshSeconds] = useState<number>(() => {
+    if (typeof window === 'undefined') {
+      return DEFAULT_DISPLAY_REFRESH_SECONDS
+    }
+
+    const searchParams = new URLSearchParams(window.location.search)
+    return resolveDisplayRefreshSeconds(searchParams.get('refresh'))
+  })
+  const [displayTimeZone] = useState<string>(() => {
+    if (typeof window === 'undefined') {
+      return resolveDisplayTimeZone(DEFAULT_DISPLAY_TIME_ZONE)
+    }
+
+    const searchParams = new URLSearchParams(window.location.search)
+    return resolveDisplayTimeZone(searchParams.get('tz') ?? DEFAULT_DISPLAY_TIME_ZONE)
+  })
   const displayOnlyMode = Boolean(displayToken)
   const [showLogin, setShowLogin] = useState(false)
   const [activePage, setActivePage] = useState<'Squares' | 'Metrics' | 'Notifications' | 'Players' | 'Teams' | 'Pools' | 'Schedules' | 'Users'>('Squares')
@@ -462,7 +524,9 @@ export function LandingPage() {
   })
   const [participantOptions, setParticipantOptions] = useState<LandingUserOption[]>([])
   const [playerOptions, setPlayerOptions] = useState<LandingPlayerOption[]>([])
+  const [lastDisplayRefreshAt, setLastDisplayRefreshAt] = useState<string | null>(null)
   const liveRefreshTimerRef = useRef<number | null>(null)
+  const displayRefreshInFlightRef = useRef(false)
 
   const authHeaders = useMemo(() => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -582,11 +646,21 @@ export function LandingPage() {
     }
   }
 
-  const loadDisplayBoard = async (displayCode: string): Promise<void> => {
-    setBusy('loading')
-    setPageError(null)
-    setPageNotice(null)
-    setSelectedSquare(null)
+  const loadDisplayBoard = async (displayCode: string, options?: { quiet?: boolean }): Promise<void> => {
+    const quiet = Boolean(options?.quiet)
+
+    if (quiet && displayRefreshInFlightRef.current) {
+      return
+    }
+
+    if (quiet) {
+      displayRefreshInFlightRef.current = true
+    } else {
+      setBusy('loading')
+      setPageError(null)
+      setPageNotice(null)
+      setSelectedSquare(null)
+    }
 
     try {
       const response = await fetch(`${API_BASE}/api/landing/display/${encodeURIComponent(displayCode)}`, {
@@ -607,16 +681,26 @@ export function LandingPage() {
       setSelectedGameId(launch.selectedGameId ?? null)
       setBoard(launch.board ?? null)
       setSimulationStatus(null)
+      setLastDisplayRefreshAt(formatClockTime(new Date(), displayTimeZone))
     } catch (error) {
       setSimulationStatus(null)
-      setPageError(error instanceof Error ? error.message : 'Failed to load display board')
-      setPools([])
-      setSelectedPoolId(null)
-      setGames([])
-      setSelectedGameId(null)
-      setBoard(null)
+
+      if (quiet) {
+        console.error('Failed to auto-refresh display board:', error)
+      } else {
+        setPageError(error instanceof Error ? error.message : 'Failed to load display board')
+        setPools([])
+        setSelectedPoolId(null)
+        setGames([])
+        setSelectedGameId(null)
+        setBoard(null)
+      }
     } finally {
-      setBusy(null)
+      if (quiet) {
+        displayRefreshInFlightRef.current = false
+      } else {
+        setBusy(null)
+      }
     }
   }
 
@@ -670,12 +754,24 @@ export function LandingPage() {
   }, [displayOnlyMode, displayToken, token])
 
   useEffect(() => {
-    if (typeof window === 'undefined' || activePage !== 'Squares') {
+    if (typeof window === 'undefined' || (!displayOnlyMode && activePage !== 'Squares')) {
       return
     }
 
+    let intervalId: number | null = null
+
+    if (displayOnlyMode && displayToken) {
+      intervalId = window.setInterval(() => {
+        void loadDisplayBoard(displayToken, { quiet: true })
+      }, displayRefreshSeconds * 1000)
+    }
+
     if (displayOnlyMode ? !displayToken : !selectedPoolId) {
-      return
+      return () => {
+        if (intervalId != null) {
+          window.clearInterval(intervalId)
+        }
+      }
     }
 
     const eventSource = new EventSource(`${API_BASE}/api/ingestion/events`)
@@ -723,6 +819,10 @@ export function LandingPage() {
     eventSource.addEventListener('game-updated', handleGameUpdated as EventListener)
 
     return () => {
+      if (intervalId != null) {
+        window.clearInterval(intervalId)
+      }
+
       if (liveRefreshTimerRef.current != null) {
         window.clearTimeout(liveRefreshTimerRef.current)
         liveRefreshTimerRef.current = null
@@ -731,7 +831,7 @@ export function LandingPage() {
       eventSource.removeEventListener('game-updated', handleGameUpdated as EventListener)
       eventSource.close()
     }
-  }, [activePage, board?.gameId, displayOnlyMode, displayToken, games, selectedGameId, selectedPoolId, token])
+  }, [activePage, board?.gameId, displayOnlyMode, displayRefreshSeconds, displayToken, games, selectedGameId, selectedPoolId, token])
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -1147,6 +1247,15 @@ export function LandingPage() {
   }, [board, latestScoredQuarter, scoreSegments, selectedGame, selectedPool, simulationStatus])
 
   const showQuarterSummaries = quarterSummaries.length > 0
+  const featuredDisplaySummary = useMemo(() => {
+    if (!displayOnlyMode || quarterSummaries.length === 0) {
+      return null
+    }
+
+    return quarterSummaries.find((summary) => summary.status === 'active')
+      ?? [...quarterSummaries].reverse().find((summary) => summary.status === 'completed')
+      ?? quarterSummaries[0]
+  }, [displayOnlyMode, quarterSummaries])
 
   const currentGameIndex = useMemo(
     () => games.findIndex((game) => game.id === selectedGameId),
@@ -1175,10 +1284,12 @@ export function LandingPage() {
         ? `${pools[0].team_name ?? 'Team'} • ${pools[0].pool_name ?? 'Pool'}`
         : 'Football Pool'
 
-  const heroDate = selectedPool ? formatDate(selectedGame?.game_dt ?? board?.gameDate) : new Date().toLocaleDateString()
+  const heroDate = selectedPool
+    ? formatDate(selectedGame?.game_dt ?? board?.gameDate, { timeZone: displayOnlyMode ? displayTimeZone : null })
+    : formatDate(null, { timeZone: displayOnlyMode ? displayTimeZone : null })
 
   return (
-    <div className={`landing-page-shell ${activePage === 'Squares' ? 'is-squares-page' : 'is-scroll-page'}`}>
+    <div className={`landing-page-shell ${activePage === 'Squares' ? 'is-squares-page' : 'is-scroll-page'} ${displayOnlyMode ? 'is-display-only' : ''}`}>
       {!displayOnlyMode ? (
         <>
           <nav className="landing-nav-bar">
@@ -1247,14 +1358,14 @@ export function LandingPage() {
       ) : null}
 
       {pageError ? <div className="error-banner landing-error-banner">{pageError}</div> : null}
-      {pageNotice ? (
+      {pageNotice && !displayOnlyMode ? (
         <article className="panel">
           <p className="small landing-readonly-note">{pageNotice}</p>
         </article>
       ) : null}
 
       {activePage === 'Squares' ? (
-        <section className="landing-placeholder-card">
+        <section className={`landing-placeholder-card ${displayOnlyMode ? 'is-display-only' : ''}`}>
           {!displayOnlyMode ? (
             <div className="board-game-selector landing-board-selector-bar">
               <label className="field-block">
@@ -1330,7 +1441,7 @@ export function LandingPage() {
           {selectedPool && board ? (
             <>
               <div
-                className="pool-board"
+                className={`pool-board ${displayOnlyMode ? 'is-display-only' : ''}`}
               style={{
                 ['--team-primary' as string]: board.teamPrimaryColor ?? primaryBrand.color,
                 ['--team-secondary' as string]: board.teamSecondaryColor ?? '#111'
@@ -1348,8 +1459,15 @@ export function LandingPage() {
                   >
                     ←
                   </button>
-                ) : <span />}
-                <span className="pool-board-header-title">{`${heroTitle} • ${heroDate}`}</span>
+                ) : null}
+                <div className="pool-board-header-copy">
+                  <span className="pool-board-header-title">{`${heroTitle} • ${heroDate}`}</span>
+                  {displayOnlyMode ? (
+                    <span className="pool-board-header-meta">
+                      Auto-refresh every {displayRefreshSeconds}s • {displayTimeZone}{lastDisplayRefreshAt ? ` • Updated ${lastDisplayRefreshAt}` : ''}
+                    </span>
+                  ) : null}
+                </div>
                 {!displayOnlyMode ? (
                   <button
                     type="button"
@@ -1361,8 +1479,34 @@ export function LandingPage() {
                   >
                     →
                   </button>
-                ) : <span />}
+                ) : null}
               </div>
+
+              {displayOnlyMode && featuredDisplaySummary ? (
+                <section className={`display-scoreboard-spotlight is-${featuredDisplaySummary.status}`} aria-label="Featured live scoreboard">
+                  <div className="display-scoreboard-team">
+                    <div className="display-scoreboard-team-brand">
+                      {primaryTeamLogo ? <img src={primaryTeamLogo} alt={primaryTeamLabel} className="display-scoreboard-team-logo" /> : null}
+                      <span className="display-scoreboard-team-name">{primaryTeamLabel}</span>
+                    </div>
+                    <strong className="display-scoreboard-team-score">{featuredDisplaySummary.primaryScore ?? '—'}</strong>
+                  </div>
+
+                  <div className="display-scoreboard-meta">
+                    <span className="display-scoreboard-meta-label">{featuredDisplaySummary.label} • {featuredDisplaySummary.status === 'completed' ? 'Winner' : featuredDisplaySummary.status === 'active' ? 'Leader' : 'Pending'}</span>
+                    <strong>{featuredDisplaySummary.ownerName}</strong>
+                    {featuredDisplaySummary.squareNum != null ? <span>Square {featuredDisplaySummary.squareNum}</span> : null}
+                  </div>
+
+                  <div className="display-scoreboard-team is-opponent">
+                    <div className="display-scoreboard-team-brand">
+                      {opponentTeamLogo ? <img src={opponentTeamLogo} alt={opponentTeamLabel} className="display-scoreboard-team-logo" /> : null}
+                      <span className="display-scoreboard-team-name">{opponentTeamLabel}</span>
+                    </div>
+                    <strong className="display-scoreboard-team-score">{featuredDisplaySummary.opponentScore ?? '—'}</strong>
+                  </div>
+                </section>
+              ) : null}
 
               <div className="pool-board-main">
                 <div className="pool-board-brand">
@@ -1402,8 +1546,12 @@ export function LandingPage() {
                             const winClass = hasWeekWin ? 'win-3' : hasSeasonWin ? 'win-1' : 'win-0'
                             const winStateClass = hasWeekWin ? 'is-week-win' : hasSeasonWin ? 'is-season-win' : ''
                             const isSelectedSquare = selectedSquare === square.square_num
-                            const hasTooltip = hasWeekWin || hasSeasonWin || isCurrentLeader
-                            const squareTooltip = hasTooltip
+                            const displayOwnerName = displayOnlyMode
+                              ? `${square.participant_first_name ?? ''} ${square.participant_last_name ? `${square.participant_last_name.charAt(0)}.` : ''}`.trim()
+                              : ''
+                            const displayOwnerLabel = displayOwnerName || square.participant_first_name || square.participant_last_name || 'Assigned'
+                            const showPayoutTooltip = !displayOnlyMode && (hasWeekWin || hasSeasonWin || isCurrentLeader)
+                            const squareTooltip = showPayoutTooltip
                               ? `${isCurrentLeader ? 'Currently leading • ' : ''}Week: ${formatBoardMoney(square.current_game_won)} • YTD: ${formatBoardMoney(square.season_won_total)}${hasActiveSelection ? ' • Click to manage assignment' : ''}`
                               : undefined
 
@@ -1416,16 +1564,16 @@ export function LandingPage() {
                                 aria-label={squareTooltip}
                               >
                                 {square.participant_id ? (
-                                  <span className="square-owner">
-                                    <span>{square.participant_first_name ?? ''}</span>
-                                    <span>{square.participant_last_name ?? ''}</span>
-                                    <span className="square-player-num">{square.player_jersey_num != null ? `#${square.player_jersey_num}` : ''}</span>
+                                  <span className={`square-owner ${displayOnlyMode ? 'is-display-only' : ''}`}>
+                                    <span>{displayOnlyMode ? displayOwnerLabel : square.participant_first_name ?? ''}</span>
+                                    {!displayOnlyMode ? <span>{square.participant_last_name ?? ''}</span> : null}
+                                    {!displayOnlyMode ? <span className="square-player-num">{square.player_jersey_num != null ? `#${square.player_jersey_num}` : ''}</span> : null}
                                   </span>
                                 ) : (
                                   <span className="square-open-number">{square.square_num}</span>
                                 )}
 
-                                {hasTooltip ? (
+                                {showPayoutTooltip ? (
                                   <span className="square-hover-tooltip" aria-hidden="true">
                                     <span><strong>Week</strong>{formatBoardMoney(square.current_game_won)}</span>
                                     <span><strong>YTD</strong>{formatBoardMoney(square.season_won_total)}</span>
@@ -1477,7 +1625,7 @@ export function LandingPage() {
               </div>
             </div>
 
-              {board?.payoutSummary ? <PayoutSummaryPanel summary={board.payoutSummary} title="Pool payout schedule" /> : null}
+              {!displayOnlyMode && board?.payoutSummary ? <PayoutSummaryPanel summary={board.payoutSummary} title="Pool payout schedule" /> : null}
             </>
           ) : (
             <article className="panel">
