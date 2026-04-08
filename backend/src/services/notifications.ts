@@ -1,8 +1,10 @@
 ﻿import { createHash } from 'crypto';
 import type { PoolClient } from 'pg';
 import { env } from '../config/env';
+import { getScoreSegmentLabel } from '../config/poolLeagues';
 import {
   DEFAULT_NOTIFICATION_TEMPLATES,
+  LEGACY_NOTIFICATION_TEMPLATES,
   getNotificationTemplateMap,
   renderMarkupToHtml,
   renderNotificationTemplate,
@@ -65,6 +67,7 @@ type UserPreferenceRecord = {
 type PoolNotificationRecord = {
   pool_name: string | null;
   primary_team: string | null;
+  league_code: string | null;
   contact_notification_level: string | null;
   contact_notify_on_square_lead_flg: boolean | null;
   team_name: string | null;
@@ -277,6 +280,31 @@ export const ensureNotificationSupport = async (client: PoolClient): Promise<voi
         for (const [notificationKind, template] of Object.entries(templatesByKind) as Array<
           [NotificationKind, (typeof templatesByKind)[NotificationKind]]
         >) {
+          const legacyTemplate = LEGACY_NOTIFICATION_TEMPLATES[recipientScope]?.[notificationKind];
+
+          if (legacyTemplate) {
+            await client.query(
+              `UPDATE football_pool.notification_template
+               SET subject_template = $3::text,
+                   body_template = $4::text,
+                   markup_format = $5::varchar(20),
+                   updated_at = NOW()
+               WHERE pool_id IS NULL
+                 AND recipient_scope = $1::varchar(20)
+                 AND notification_kind = $2::varchar(30)
+                 AND subject_template = $6::text
+                 AND body_template = $7::text`,
+              [
+                recipientScope,
+                notificationKind,
+                template.subjectTemplate,
+                template.bodyTemplate,
+                template.markupFormat,
+                legacyTemplate.subjectTemplate,
+                legacyTemplate.bodyTemplate
+              ]
+            );
+          }
           await client.query(
             `INSERT INTO football_pool.notification_template (
                pool_id,
@@ -434,6 +462,7 @@ const loadPoolNotificationRecord = async (client: PoolClient, poolId: number): P
   const result = await client.query<PoolNotificationRecord>(
     `SELECT p.pool_name,
             p.primary_team,
+            p.league_code,
             p.contact_notification_level,
             p.contact_notify_on_square_lead_flg,
             t.team_name,
@@ -617,6 +646,7 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
     const winnerUser = userRecords.get(Number(quarter.winnerUserId));
     const winnerName = formatPersonName(winnerUser?.first_name, winnerUser?.last_name, winnerUser?.email ?? `User #${quarter.winnerUserId}`);
     const scoreLine = `${primaryTeamName} ${quarter.primaryScore ?? '—'} · ${opponentName} ${quarter.opponentScore ?? '—'}`;
+    const segmentLabel = getScoreSegmentLabel(poolRecord.league_code, quarter.quarter);
 
     if (winnerUser?.email && normalizeNotificationLevel(winnerUser.notification_level) === 'quarter_win') {
       const userNotification = buildNotificationContent(templateMap, 'participant', 'quarter_win', {
@@ -627,6 +657,7 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
         opponentName,
         scoreLine,
         quarter: quarter.quarter,
+        segmentLabel,
         squareNum: quarter.squareNum,
         payout: formatMoney(quarter.payout)
       });
@@ -652,6 +683,7 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
           primaryTeamName,
           opponentName,
           quarter: quarter.quarter,
+          segmentLabel,
           squareNum: quarter.squareNum,
           payout: quarter.payout,
           winnerUserId: quarter.winnerUserId
@@ -669,6 +701,7 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
           opponentName,
           scoreLine,
           quarter: quarter.quarter,
+          segmentLabel,
           squareNum: quarter.squareNum,
           payout: formatMoney(quarter.payout)
         });
@@ -689,6 +722,7 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
             primaryTeamName,
             opponentName,
             quarter: quarter.quarter,
+            segmentLabel,
             squareNum: quarter.squareNum,
             payout: quarter.payout,
             winnerUserId: quarter.winnerUserId,
@@ -721,7 +755,7 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
 
       const winnerName = formatPersonName(winnerUser.first_name, winnerUser.last_name, winnerUser.email);
       const breakdown = summary.wins
-        .map((quarter) => `Q${quarter.quarter}: ${formatMoney(quarter.payout)} (square #${quarter.squareNum})`)
+        .map((quarter) => `${getScoreSegmentLabel(poolRecord.league_code, quarter.quarter)}: ${formatMoney(quarter.payout)} (square #${quarter.squareNum})`)
         .join('\n');
 
       const totalNotification = buildNotificationContent(templateMap, 'participant', 'game_total', {
@@ -813,6 +847,7 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
 
   const leaderName = formatPersonName(leaderSquare.first_name, leaderSquare.last_name, leaderSquare.email ?? `User #${leaderSquare.participant_id}`);
   const leadScoreLine = `${primaryTeamName} ${context.currentLeader.primaryScore ?? '—'} · ${opponentName} ${context.currentLeader.opponentScore ?? '—'}`;
+  const leaderSegmentLabel = getScoreSegmentLabel(poolRecord.league_code, context.currentLeader.quarter);
 
   if (leaderSquare.email && Boolean(leaderSquare.notify_on_square_lead_flg)) {
     const leadNotification = buildNotificationContent(templateMap, 'participant', 'lead_warning', {
@@ -823,6 +858,7 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
       opponentName,
       scoreLine: leadScoreLine,
       quarter: context.currentLeader.quarter,
+      segmentLabel: leaderSegmentLabel,
       squareNum: context.currentLeader.squareNum
     });
 
@@ -854,6 +890,7 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
       payload: {
         poolName,
         quarter: context.currentLeader.quarter,
+        segmentLabel: leaderSegmentLabel,
         squareNum: context.currentLeader.squareNum,
         primaryScore: context.currentLeader.primaryScore,
         opponentScore: context.currentLeader.opponentScore
@@ -871,6 +908,7 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
         opponentName,
         scoreLine: leadScoreLine,
         quarter: context.currentLeader.quarter,
+        segmentLabel: leaderSegmentLabel,
         squareNum: context.currentLeader.squareNum
       });
 
@@ -898,6 +936,7 @@ export const emitScoreNotifications = async (client: PoolClient, context: ScoreN
           poolName,
           leaderName,
           quarter: context.currentLeader.quarter,
+          segmentLabel: leaderSegmentLabel,
           squareNum: context.currentLeader.squareNum,
           primaryScore: context.currentLeader.primaryScore,
           opponentScore: context.currentLeader.opponentScore

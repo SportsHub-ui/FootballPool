@@ -10,6 +10,7 @@ import { getPoolSimulationStatus } from '../services/poolSimulation';
 import { ensureNotificationSupport } from '../services/notifications';
 import { loadPoolPayoutConfig, resolvePoolPayoutsForRound } from '../services/poolPayouts';
 import { resolveWinningSquareNumber } from '../services/scoreProcessing';
+import { buildMatchupDisplayLabel } from '../utils/matchupLabels';
 
 export const landingRouter = Router();
 
@@ -102,7 +103,18 @@ const mapLandingGameRow = (row: Record<string, any>) => {
     game_id: toNullableNumber(row.game_id) ?? toNullableNumber(row.id),
     pool_id: toNullableNumber(row.pool_id),
     week_num: toNullableNumber(row.week_num),
-    opponent: (row.opponent ?? row.away_team_name ?? 'Opponent') as string,
+    opponent: buildMatchupDisplayLabel(
+      typeof row.home_team_name === 'string' ? row.home_team_name : null,
+      typeof row.away_team_name === 'string'
+        ? row.away_team_name
+        : typeof row.opponent === 'string'
+          ? row.opponent
+          : null,
+      {
+        roundLabel: typeof row.round_label === 'string' ? row.round_label : null,
+        fallback: 'Opponent'
+      }
+    ),
     game_dt: row.game_dt ?? row.game_date ?? null,
     is_simulation: Boolean(row.is_simulation ?? false),
     round_label: typeof row.round_label === 'string' ? row.round_label : null,
@@ -131,6 +143,8 @@ const loadPoolGames = async (client: PoolClient, poolId: number) => {
             g.id AS game_id,
             pg.pool_id,
             g.week_number AS week_num,
+            home_team.name AS home_team_name,
+            away_team.name AS away_team_name,
             away_team.name AS opponent,
             COALESCE(g.kickoff_at, g.game_date::timestamp) AS game_dt,
             COALESCE(g.is_simulation, FALSE) AS is_simulation,
@@ -141,6 +155,7 @@ const loadPoolGames = async (client: PoolClient, poolId: number) => {
             g.scores_by_quarter
      FROM football_pool.pool_game pg
      JOIN football_pool.game g ON g.id = pg.game_id
+     LEFT JOIN football_pool.sport_team home_team ON home_team.id = g.home_team_id
      LEFT JOIN football_pool.sport_team away_team ON away_team.id = g.away_team_id
      WHERE pg.pool_id = $1
      ORDER BY COALESCE(g.week_number, 999), COALESCE(g.kickoff_at, g.game_date::timestamp) ASC, g.id ASC`,

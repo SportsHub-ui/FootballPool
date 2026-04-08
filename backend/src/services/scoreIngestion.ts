@@ -16,6 +16,8 @@ export interface IngestionGameTarget {
   gameId: number;
   gameDate: string;
   kickoffAt: string | null;
+  espnEventId: string | null;
+  espnEventUid: string | null;
   homeTeam: string;
   awayTeam: string;
   homeAbbreviation: string | null;
@@ -38,6 +40,8 @@ export interface GameIngestionUpdate {
   state: string;
   currentQuarter: number | null;
   timeRemainingInQuarter: string | null;
+  espnEventId?: string | null;
+  espnEventUid?: string | null;
   detectedAt: string;
 }
 
@@ -57,6 +61,8 @@ interface GameLookupRow {
   game_id: number;
   game_date: string;
   kickoff_at: string | null;
+  espn_event_id: string | null;
+  espn_event_uid: string | null;
   home_team: string | null;
   away_team: string | null;
   home_abbreviation: string | null;
@@ -106,8 +112,16 @@ type EspnCompetition = {
 
 type EspnScoreboardResponse = {
   events?: Array<{
+    id?: string;
+    uid?: string;
     competitions?: EspnCompetition[];
   }>;
+};
+
+type MatchedEspnCompetition = {
+  eventId: string | null;
+  eventUid: string | null;
+  competition: EspnCompetition;
 };
 
 const EMPTY_SCORES: QuarterScoresInput = {
@@ -421,6 +435,8 @@ const mapLookupRow = (row: GameLookupRow): IngestionGameTarget => ({
   gameId: Number(row.game_id),
   gameDate: String(row.game_date),
   kickoffAt: row.kickoff_at ?? null,
+  espnEventId: row.espn_event_id ?? null,
+  espnEventUid: row.espn_event_uid ?? null,
   homeTeam: row.home_team ?? '',
   awayTeam: row.away_team ?? '',
   homeAbbreviation: row.home_abbreviation ?? null,
@@ -441,6 +457,8 @@ const loadGameTargetWithClient = async (client: PoolClient, gameId: number): Pro
     `SELECT g.id AS game_id,
             g.game_date::text AS game_date,
             COALESCE(g.kickoff_at::text, g.game_date::timestamp::text) AS kickoff_at,
+            g.espn_event_id,
+            g.espn_event_uid,
             COALESCE(primary_team.name, '') AS home_team,
             COALESCE(opponent_team.name, '') AS away_team,
             primary_team.abbreviation AS home_abbreviation,
@@ -474,6 +492,8 @@ export const listTodayGameTargetsForIngestion = async (at: Date = new Date()): P
       `SELECT g.id AS game_id,
               g.game_date::text AS game_date,
               COALESCE(g.kickoff_at::text, g.game_date::timestamp::text) AS kickoff_at,
+              g.espn_event_id,
+              g.espn_event_uid,
               COALESCE(primary_team.name, '') AS home_team,
               COALESCE(opponent_team.name, '') AS away_team,
               primary_team.abbreviation AS home_abbreviation,
@@ -584,11 +604,22 @@ const matchesEspnTeamIdentity = (
 const findMatchingCompetition = (
   target: IngestionGameTarget,
   scoreboard: EspnScoreboardResponse
-): EspnCompetition | null => {
+): MatchedEspnCompetition | null => {
   for (const event of scoreboard.events ?? []) {
     const competition = event.competitions?.[0];
     if (!competition || !competition.competitors || competition.competitors.length < 2) {
       continue;
+    }
+
+    if (
+      (target.espnEventUid && event.uid && event.uid.trim() === target.espnEventUid.trim()) ||
+      (target.espnEventId && event.id && event.id.trim() === target.espnEventId.trim())
+    ) {
+      return {
+        eventId: event.id?.trim() ?? null,
+        eventUid: event.uid?.trim() ?? null,
+        competition
+      };
     }
 
     const expectedPrimary = target.homeTeam || env.SCORE_INGEST_PRIMARY_TEAM || '';
@@ -623,7 +654,11 @@ const findMatchingCompetition = (
       });
 
     if (directMatch || swappedMatch) {
-      return competition;
+      return {
+        eventId: event.id?.trim() ?? null,
+        eventUid: event.uid?.trim() ?? null,
+        competition
+      };
     }
   }
 
@@ -633,7 +668,8 @@ const findMatchingCompetition = (
 const buildEspnUpdateFromCompetition = (
   gameId: number,
   target: IngestionGameTarget,
-  competition: EspnCompetition
+  competition: EspnCompetition,
+  eventIdentifiers?: { eventId?: string | null; eventUid?: string | null }
 ): GameIngestionUpdate => {
   const competitors = competition.competitors ?? [];
   const expectedPrimary = target.homeTeam || env.SCORE_INGEST_PRIMARY_TEAM || '';
@@ -663,6 +699,8 @@ const buildEspnUpdateFromCompetition = (
       competition.status?.type?.detail ??
       target.timeRemainingInQuarter ??
       null,
+    espnEventId: eventIdentifiers?.eventId ?? target.espnEventId ?? null,
+    espnEventUid: eventIdentifiers?.eventUid ?? target.espnEventUid ?? null,
     detectedAt: new Date().toISOString()
   };
 };
@@ -682,10 +720,24 @@ const getScoresFromEspn = async (gameId: number): Promise<GameIngestionUpdate> =
     }
 
     const dateValue = new Date(`${target.gameDate}T12:00:00.000Z`);
-    const scoreboard = await fetchScoreboardForDate(target.leagueCode, toYyyyMmDd(dateValue));
-    const competition = findMatchingCompetition(target, scoreboard);
+    const candidateDates = Array.from(
+      new Set([
+        toYyyyMmDd(dateValue),
+        toYyyyMmDd(new Date(dateValue.getTime() - 24 * 60 * 60 * 1000)),
+        toYyyyMmDd(new Date(dateValue.getTime() + 24 * 60 * 60 * 1000))
+      ])
+    );
 
-    if (!competition) {
+    let matchedCompetition: MatchedEspnCompetition | null = null;
+    for (const candidateDate of candidateDates) {
+      const scoreboard = await fetchScoreboardForDate(target.leagueCode, candidateDate);
+      matchedCompetition = findMatchingCompetition(target, scoreboard);
+      if (matchedCompetition) {
+        break;
+      }
+    }
+
+    if (!matchedCompetition) {
       return {
         gameId,
         source: 'espn',
@@ -693,11 +745,16 @@ const getScoresFromEspn = async (gameId: number): Promise<GameIngestionUpdate> =
         state: target.state,
         currentQuarter: target.currentQuarter,
         timeRemainingInQuarter: target.timeRemainingInQuarter,
+        espnEventId: target.espnEventId ?? null,
+        espnEventUid: target.espnEventUid ?? null,
         detectedAt: new Date().toISOString()
       };
     }
 
-    return buildEspnUpdateFromCompetition(gameId, target, competition);
+    return buildEspnUpdateFromCompetition(gameId, target, matchedCompetition.competition, {
+      eventId: matchedCompetition.eventId,
+      eventUid: matchedCompetition.eventUid
+    });
   } finally {
     client.release();
   }
@@ -720,6 +777,8 @@ export const getGameIngestionUpdate = async (
       state: inferGameStateFromScores(payloadScores),
       currentQuarter: inferCurrentQuarter(payloadScores),
       timeRemainingInQuarter: null,
+      espnEventId: null,
+      espnEventUid: null,
       detectedAt: new Date().toISOString()
     };
   }
@@ -736,6 +795,8 @@ export const getGameIngestionUpdate = async (
     state: inferGameStateFromScores(scores),
     currentQuarter: inferCurrentQuarter(scores),
     timeRemainingInQuarter: null,
+    espnEventId: null,
+    espnEventUid: null,
     detectedAt: new Date().toISOString()
   };
 };
@@ -761,13 +822,17 @@ const applyGameIngestionUpdateWithClient = async (
     state: string | null;
     current_quarter: number | null;
     time_remaining_in_quarter: string | null;
+    espn_event_id: string | null;
+    espn_event_uid: string | null;
   }>(
     `SELECT scores_by_quarter,
             final_score_home,
             final_score_away,
             state,
             current_quarter,
-            time_remaining_in_quarter
+            time_remaining_in_quarter,
+            espn_event_id,
+            espn_event_uid
      FROM football_pool.game
      WHERE id = $1
      LIMIT 1`,
@@ -788,7 +853,9 @@ const applyGameIngestionUpdateWithClient = async (
     !scoresEqual(existingScores, update.scores) ||
     normalizeGameState(existing.state) !== nextState ||
     Number(existing.current_quarter ?? 0) !== Number(nextQuarter ?? 0) ||
-    String(existing.time_remaining_in_quarter ?? '') !== String(nextClock ?? '');
+    String(existing.time_remaining_in_quarter ?? '') !== String(nextClock ?? '') ||
+    String(existing.espn_event_id ?? '') !== String(update.espnEventId ?? existing.espn_event_id ?? '') ||
+    String(existing.espn_event_uid ?? '') !== String(update.espnEventUid ?? existing.espn_event_uid ?? '');
 
   if (changed) {
     await client.query(
@@ -799,8 +866,10 @@ const applyGameIngestionUpdateWithClient = async (
            state = $4,
            current_quarter = $5,
            time_remaining_in_quarter = $6,
+           espn_event_id = COALESCE($7, espn_event_id),
+           espn_event_uid = COALESCE($8, espn_event_uid),
            updated_at = NOW()
-       WHERE id = $7`,
+       WHERE id = $9`,
       [
         JSON.stringify(buildScoresByQuarterJson(update.scores)),
         update.scores.q4PrimaryScore,
@@ -808,6 +877,8 @@ const applyGameIngestionUpdateWithClient = async (
         nextState,
         nextQuarter,
         nextClock,
+        update.espnEventId ?? null,
+        update.espnEventUid ?? null,
         update.gameId
       ]
     );

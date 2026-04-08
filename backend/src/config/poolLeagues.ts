@@ -76,6 +76,92 @@ export const getPoolLeagueDefinition = (leagueCode?: string | null): PoolLeagueD
   return poolLeagueDefinitions[normalized] ?? poolLeagueDefinitions.NFL;
 };
 
+const payoutSlotQuarterMap: Record<PayoutSlotKey, 1 | 2 | 3 | 4> = {
+  q1: 1,
+  q2: 2,
+  q3: 3,
+  q4: 4
+};
+
+export const getActiveScoreSegmentNumbers = (leagueCode?: string | null): Array<1 | 2 | 3 | 4> =>
+  getPoolLeagueDefinition(leagueCode).activePayoutSlots.map((slot) => payoutSlotQuarterMap[slot]);
+
+export const getScoreSegmentLabel = (leagueCode?: string | null, quarter?: number | null): string => {
+  const definition = getPoolLeagueDefinition(leagueCode);
+
+  if (quarter == null) {
+    return 'current segment';
+  }
+
+  const slot = quarter === 1 ? 'q1' : quarter === 2 ? 'q2' : quarter === 3 ? 'q3' : 'q4';
+  const rawLabel = String(definition.payoutLabels[slot] ?? `Q${quarter}`).replace(/\s*payout$/i, '').trim();
+  return rawLabel || `Q${quarter}`;
+};
+
+export const getSimulationStepDescriptor = (
+  leagueCode?: string | null
+): {
+  modeLabel: string;
+  singularLabel: string;
+  pluralLabel: string;
+} => {
+  const normalizedLeague = String(leagueCode ?? '').trim().toUpperCase();
+
+  if (normalizedLeague === 'NCAAB') {
+    return {
+      modeLabel: 'By Half',
+      singularLabel: 'Half',
+      pluralLabel: 'halves'
+    };
+  }
+
+  if (normalizedLeague === 'NHL') {
+    return {
+      modeLabel: 'By Period',
+      singularLabel: 'Period',
+      pluralLabel: 'periods'
+    };
+  }
+
+  if (normalizedLeague === 'MLB') {
+    return {
+      modeLabel: 'By Final Score',
+      singularLabel: 'Final',
+      pluralLabel: 'final scores'
+    };
+  }
+
+  return {
+    modeLabel: 'By Quarter',
+    singularLabel: 'Quarter',
+    pluralLabel: 'quarters'
+  };
+};
+
+export const getSimulationStepLabel = (leagueCode?: string | null, quarter?: number | null): string => {
+  const normalizedLeague = String(leagueCode ?? '').trim().toUpperCase();
+
+  if (quarter == null) {
+    return getSimulationStepDescriptor(leagueCode).singularLabel.toLowerCase();
+  }
+
+  if (normalizedLeague === 'NCAAB') {
+    return quarter === 1 ? '1st half' : 'final';
+  }
+
+  if (normalizedLeague === 'NHL') {
+    if (quarter === 1) return '1st period';
+    if (quarter === 2) return '2nd period';
+    return 'final';
+  }
+
+  if (normalizedLeague === 'MLB') {
+    return 'final';
+  }
+
+  return `quarter ${quarter}`;
+};
+
 export const normalizePayoutsForLeague = (
   leagueCode: string | null | undefined,
   payouts: { q1Payout: number; q2Payout: number; q3Payout: number; q4Payout: number }

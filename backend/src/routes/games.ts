@@ -7,6 +7,7 @@ import { requireRole } from '../middleware/auth';
 import { ensurePoolGameStructureSupport } from '../services/poolGameStructureSupport';
 import { importPoolScheduleFromEspn } from '../services/scheduleImport';
 import { ingestGameScores } from '../services/scoreIngestion';
+import { buildMatchupDisplayLabel, parseMatchupLabel } from '../utils/matchupLabels';
 
 export const gamesRouter = Router();
 
@@ -84,6 +85,8 @@ const toNullableNumber = (value: unknown): number | null => {
 const buildGameResponse = (row: Record<string, unknown>) => {
   const scores = toQuarterScoreMap(row.scores_by_quarter)
 
+  const roundLabel = typeof row.round_label === 'string' ? row.round_label : null
+
   return {
     ...row,
     id: Number(row.game_id ?? row.id),
@@ -91,7 +94,11 @@ const buildGameResponse = (row: Record<string, unknown>) => {
     pool_game_id: toNullableNumber(row.pool_game_id),
     pool_id: toNullableNumber(row.pool_id),
     week_num: toNullableNumber(row.week_number ?? row.week_num),
-    opponent: String(row.away_team ?? row.opponent ?? 'Opponent'),
+    opponent: buildMatchupDisplayLabel(
+      typeof row.home_team === 'string' ? row.home_team : null,
+      typeof row.away_team === 'string' ? row.away_team : typeof row.opponent === 'string' ? row.opponent : null,
+      { roundLabel, fallback: 'Opponent' }
+    ),
     game_dt: row.kickoff_at ?? row.game_date ?? null,
     is_simulation: Boolean(row.is_simulation ?? false),
     row_numbers: Array.isArray(row.row_numbers) ? row.row_numbers : null,
@@ -155,6 +162,42 @@ const loadPoolGameRecord = async (client: PoolClient, gameId: number, poolId?: n
   return result.rows[0] ? buildGameResponse(result.rows[0] as Record<string, unknown>) : null
 }
 
+const resolveOrCreateNamedSportTeamId = async (
+  client: PoolClient,
+  teamName: string,
+  sportCode: string,
+  leagueCode: string
+): Promise<number | null> => {
+  const normalizedName = teamName.trim()
+  if (!normalizedName) {
+    return null
+  }
+
+  const existingResult = await client.query<{ id: number }>(
+    `SELECT id
+     FROM football_pool.sport_team
+     WHERE league_code = $1
+       AND sport_code = $2
+       AND LOWER(name) = LOWER($3)
+     LIMIT 1`,
+    [leagueCode, sportCode, normalizedName]
+  )
+
+  if (existingResult.rows[0]?.id != null) {
+    return Number(existingResult.rows[0].id)
+  }
+
+  const createdResult = await client.query<{ id: number }>(
+    `INSERT INTO football_pool.sport_team (name, sport_code, league_code)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (sport_code, league_code, name) DO UPDATE SET name = EXCLUDED.name
+     RETURNING id`,
+    [normalizedName, sportCode, leagueCode]
+  )
+
+  return createdResult.rows[0]?.id != null ? Number(createdResult.rows[0].id) : null
+}
+
 const resolveGameTeams = async (
   client: PoolClient,
   input: z.infer<typeof createGameSchema>
@@ -190,8 +233,18 @@ const resolveGameTeams = async (
 
   const sportCode = String(pool.sport_code ?? 'FOOTBALL')
   const leagueCode = String(pool.league_code ?? 'NFL')
+  const poolType = String(pool.pool_type ?? 'season')
+  const parsedMatchup = poolType === 'tournament' ? parseMatchupLabel(input.opponent?.trim() ?? '') : null
 
-  let resolvedHomeTeamId = input.homeTeamId ?? pool.primary_sport_team_id ?? null
+  let resolvedHomeTeamId = input.homeTeamId ?? null
+  if (resolvedHomeTeamId == null && parsedMatchup) {
+    resolvedHomeTeamId = await resolveOrCreateNamedSportTeamId(client, parsedMatchup.homeName, sportCode, leagueCode)
+  }
+
+  if (resolvedHomeTeamId == null) {
+    resolvedHomeTeamId = pool.primary_sport_team_id ?? null
+  }
+
   if (resolvedHomeTeamId == null && pool.primary_team) {
     const homeResult = await client.query<{ id: number }>(
       `SELECT id
@@ -219,6 +272,10 @@ const resolveGameTeams = async (
 
   let resolvedAwayTeamId = input.awayTeamId ?? null
   const opponentAbbreviation = input.opponentSportTeamAbbr?.trim() || input.opponentNflTeamAbbr?.trim() || ''
+
+  if (resolvedAwayTeamId == null && parsedMatchup) {
+    resolvedAwayTeamId = await resolveOrCreateNamedSportTeamId(client, parsedMatchup.awayName, sportCode, leagueCode)
+  }
 
   if (resolvedAwayTeamId == null && opponentAbbreviation) {
     const awayByAbbrResult = await client.query<{ id: number }>(
@@ -262,7 +319,7 @@ const resolveGameTeams = async (
     throw new Error('Pool season is required before creating games')
   }
 
-  if (resolvedHomeTeamId == null && String(pool.pool_type ?? 'season') === 'tournament') {
+  if (resolvedHomeTeamId == null && poolType === 'tournament') {
     const genericHomeName = pool.primary_team?.trim() || (pool.winner_loser_flg ? 'Winning Score' : 'Home Team')
     const createdHomeResult = await client.query<{ id: number }>(
       `INSERT INTO football_pool.sport_team (name, sport_code, league_code)

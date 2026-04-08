@@ -33,6 +33,8 @@ type EspnTeam = {
 
 type ImportedScheduleEntry = {
   weekNum: number;
+  espnEventId: string | null;
+  espnEventUid: string | null;
   opponent: string;
   opponentAbbreviation: string | null;
   opponentEspnTeamId: string | null;
@@ -252,9 +254,12 @@ const fetchSeasonSchedule = async (team: EspnTeam, season: number): Promise<Impo
 
   const data = (await response.json()) as {
     events?: Array<{
+      id?: string;
+      uid?: string;
       date?: string;
       week?: { number?: number };
       competitions?: Array<{
+        id?: string;
         date?: string;
         competitors?: Array<{
           team?: {
@@ -296,6 +301,8 @@ const fetchSeasonSchedule = async (team: EspnTeam, season: number): Promise<Impo
 
     byWeek.set(weekNum, {
       weekNum,
+      espnEventId: event.id ?? competition.id ?? null,
+      espnEventUid: event.uid ?? null,
       opponent: opponent?.team?.displayName ?? opponent?.team?.shortDisplayName ?? 'BYE',
       opponentAbbreviation: opponent?.team?.abbreviation ?? null,
       opponentEspnTeamId: opponent?.team?.id ?? null,
@@ -335,6 +342,8 @@ const fetchSeasonSchedule = async (team: EspnTeam, season: number): Promise<Impo
 
       byWeek.set(weekNum, {
         weekNum,
+        espnEventId: null,
+        espnEventUid: null,
         opponent: 'BYE',
         opponentAbbreviation: null,
         opponentEspnTeamId: null,
@@ -409,6 +418,11 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
     );
   }
 
+  let created = 0;
+  let skipped = 0;
+  let updated = 0;
+  const byeWeeks: number[] = [];
+
   // Map of weekNum to normalized game id
   const gameByWeek = new Map<number, number>();
   // Insert or find all normalized shared games for this team
@@ -424,41 +438,52 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
        LIMIT 1`,
       [pool.season, entry.weekNum, primarySportTeamId]
     );
+    let opponentTeamId: number | null = null;
+    if (entry.opponent && entry.opponent !== 'BYE') {
+      if (entry.opponentEspnTeamUid && entry.opponentEspnTeamId) {
+        opponentTeamId = await upsertSportTeamFromEspn(client, {
+          id: entry.opponentEspnTeamId,
+          uid: entry.opponentEspnTeamUid,
+          displayName: entry.opponent,
+          shortDisplayName: entry.opponent,
+          abbreviation: entry.opponentAbbreviation ?? '',
+          slug: entry.opponentSlug ?? '',
+          name: entry.opponent,
+          color: null,
+          logoUrl: null,
+          sportCode: team.sportCode,
+          leagueCode: team.leagueCode
+        });
+      } else {
+        const oppResult = await client.query<{ id: number }>(
+          `SELECT id
+           FROM football_pool.sport_team
+           WHERE league_code = $1
+             AND sport_code = $2
+             AND (LOWER(name) = $3 OR LOWER(name) LIKE '%' || $3 || '%')
+           LIMIT 1`,
+          [team.leagueCode, team.sportCode, entry.opponent.toLowerCase()]
+        );
+        opponentTeamId = oppResult.rows[0]?.id ?? null;
+      }
+    }
+
     let gameId: number;
     if (existingGame.rows[0]) {
       gameId = existingGame.rows[0].id;
+      updated += 1;
+      await client.query(
+        `UPDATE football_pool.game
+         SET away_team_id = COALESCE($2, away_team_id),
+             game_date = COALESCE($3::date, game_date),
+             kickoff_at = COALESCE($3::timestamp, kickoff_at, game_date::timestamp),
+             espn_event_id = COALESCE($4, espn_event_id),
+             espn_event_uid = COALESCE($5, espn_event_uid),
+             updated_at = NOW()
+         WHERE id = $1`,
+        [gameId, opponentTeamId, entry.gameDate, entry.espnEventId, entry.espnEventUid]
+      );
     } else {
-      // Find opponent NFL team id
-      let opponentTeamId: number | null = null;
-      if (entry.opponent && entry.opponent !== 'BYE') {
-        if (entry.opponentEspnTeamUid && entry.opponentEspnTeamId) {
-          opponentTeamId = await upsertSportTeamFromEspn(client, {
-            id: entry.opponentEspnTeamId,
-            uid: entry.opponentEspnTeamUid,
-            displayName: entry.opponent,
-            shortDisplayName: entry.opponent,
-            abbreviation: entry.opponentAbbreviation ?? '',
-            slug: entry.opponentSlug ?? '',
-            name: entry.opponent,
-            color: null,
-            logoUrl: null,
-            sportCode: team.sportCode,
-            leagueCode: team.leagueCode
-          });
-        } else {
-          const oppResult = await client.query<{ id: number }>(
-            `SELECT id
-             FROM football_pool.sport_team
-             WHERE league_code = $1
-               AND sport_code = $2
-               AND (LOWER(name) = $3 OR LOWER(name) LIKE '%' || $3 || '%')
-             LIMIT 1`,
-            [team.leagueCode, team.sportCode, entry.opponent.toLowerCase()]
-          );
-          opponentTeamId = oppResult.rows[0]?.id ?? null;
-        }
-      }
-      // Insert a new normalized game row
       const insertResult = await client.query<{ id: number }>(
         `INSERT INTO football_pool.game (
            season_year,
@@ -469,13 +494,15 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
            kickoff_at,
            state,
            is_simulation,
+           espn_event_id,
+           espn_event_uid,
            scores_by_quarter,
            created_at,
            updated_at
          )
-         VALUES ($1, $2, $3, $4, $5::date, $5::timestamp, 'scheduled', FALSE, '{}'::jsonb, NOW(), NOW())
+         VALUES ($1, $2, $3, $4, $5::date, $5::timestamp, 'scheduled', FALSE, $6, $7, '{}'::jsonb, NOW(), NOW())
          RETURNING id`,
-        [pool.season, entry.weekNum, primarySportTeamId, opponentTeamId, entry.gameDate]
+        [pool.season, entry.weekNum, primarySportTeamId, opponentTeamId, entry.gameDate, entry.espnEventId, entry.espnEventUid]
       );
       gameId = insertResult.rows[0].id;
     }
@@ -483,10 +510,6 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
   }
 
   // Link games to this pool in pool_game
-  let created = 0;
-  let skipped = 0;
-  let updated = 0;
-  const byeWeeks: number[] = [];
   for (const entry of importedSchedule) {
     if (entry.isBye) {
       byeWeeks.push(entry.weekNum);

@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+﻿import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import request from 'supertest'
 import { app } from '../src/app'
 import { db } from '../src/config/db'
@@ -789,6 +789,164 @@ describe('Football Pool API', () => {
       ).toBe(true)
     })
 
+    it('should seed the next bracket game once both feeder games are completed', async () => {
+      const poolName = `Bracket Progression Pool ${Date.now()}`
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName,
+          teamId,
+          season: 2026,
+          poolType: 'tournament',
+          leagueCode: 'NCAAB',
+          structureMode: 'template',
+          templateCode: 'ncaab_march_madness',
+          startDate: '2026-03-17',
+          endDate: '2026-04-06',
+          winnerLoserMode: false,
+          squareCost: 20,
+          q1Payout: 100,
+          q2Payout: 100,
+          q3Payout: 100,
+          q4Payout: 200
+        })
+
+      expect(poolResponse.status).toBe(201)
+      const poolId = Number(poolResponse.body.id)
+
+      const initialGamesResponse = await request(app)
+        .get(`/api/games?poolId=${poolId}`)
+        .set(organizerHeaders)
+
+      expect(initialGamesResponse.status).toBe(200)
+
+      const feederOne = initialGamesResponse.body.find(
+        (game: { round_label: string; bracket_region: string; matchup_order: number }) =>
+          game.round_label === 'Round of 64' && game.bracket_region === 'East' && Number(game.matchup_order) === 1
+      )
+      const feederTwo = initialGamesResponse.body.find(
+        (game: { round_label: string; bracket_region: string; matchup_order: number }) =>
+          game.round_label === 'Round of 64' && game.bracket_region === 'East' && Number(game.matchup_order) === 2
+      )
+      const nextRoundGame = initialGamesResponse.body.find(
+        (game: { round_label: string; bracket_region: string; matchup_order: number }) =>
+          game.round_label === 'Round of 32' && game.bracket_region === 'East' && Number(game.matchup_order) === 1
+      )
+
+      expect(feederOne).toBeTruthy()
+      expect(feederTwo).toBeTruthy()
+      expect(nextRoundGame).toBeTruthy()
+      expect(nextRoundGame?.row_numbers).toBeNull()
+      expect(nextRoundGame?.col_numbers).toBeNull()
+
+      const firstGameDate = String(feederOne?.game_dt ?? '2026-03-19').slice(0, 10)
+      const secondGameDate = String(feederTwo?.game_dt ?? '2026-03-19').slice(0, 10)
+
+      const feederOneUpdateResponse = await request(app)
+        .patch(`/api/games/${Number(feederOne?.id)}`)
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: Number(feederOne?.week_num ?? 2),
+          roundLabel: feederOne?.round_label,
+          roundSequence: Number(feederOne?.round_sequence ?? 2),
+          bracketRegion: feederOne?.bracket_region,
+          matchupOrder: Number(feederOne?.matchup_order ?? 1),
+          opponent: 'Duke vs Houston',
+          gameDate: firstGameDate,
+          isSimulation: false
+        })
+
+      const feederTwoUpdateResponse = await request(app)
+        .patch(`/api/games/${Number(feederTwo?.id)}`)
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: Number(feederTwo?.week_num ?? 2),
+          roundLabel: feederTwo?.round_label,
+          roundSequence: Number(feederTwo?.round_sequence ?? 2),
+          bracketRegion: feederTwo?.bracket_region,
+          matchupOrder: Number(feederTwo?.matchup_order ?? 2),
+          opponent: 'Kansas vs Purdue',
+          gameDate: secondGameDate,
+          isSimulation: false
+        })
+
+      expect(feederOneUpdateResponse.status).toBe(200)
+      expect(feederTwoUpdateResponse.status).toBe(200)
+      expect(feederOneUpdateResponse.body.game.opponent).toBe('Duke vs Houston')
+      expect(feederTwoUpdateResponse.body.game.opponent).toBe('Kansas vs Purdue')
+
+      const firstScoreResponse = await request(app)
+        .patch(`/api/games/${Number(feederOne?.id)}/scores`)
+        .set(organizerHeaders)
+        .send({
+          q1PrimaryScore: null,
+          q1OpponentScore: null,
+          q2PrimaryScore: null,
+          q2OpponentScore: null,
+          q3PrimaryScore: null,
+          q3OpponentScore: null,
+          q4PrimaryScore: 80,
+          q4OpponentScore: 70
+        })
+
+      expect(firstScoreResponse.status).toBe(200)
+
+      const afterFirstFeederResponse = await request(app)
+        .get(`/api/games?poolId=${poolId}`)
+        .set(organizerHeaders)
+
+      const pendingNextRoundGame = afterFirstFeederResponse.body.find(
+        (game: { round_label: string; bracket_region: string; matchup_order: number }) =>
+          game.round_label === 'Round of 32' && game.bracket_region === 'East' && Number(game.matchup_order) === 1
+      )
+
+      expect(pendingNextRoundGame?.row_numbers).toBeNull()
+      expect(pendingNextRoundGame?.col_numbers).toBeNull()
+      expect(String(pendingNextRoundGame?.opponent)).toContain('Winner of')
+
+      const secondScoreResponse = await request(app)
+        .patch(`/api/games/${Number(feederTwo?.id)}/scores`)
+        .set(organizerHeaders)
+        .send({
+          q1PrimaryScore: null,
+          q1OpponentScore: null,
+          q2PrimaryScore: null,
+          q2OpponentScore: null,
+          q3PrimaryScore: null,
+          q3OpponentScore: null,
+          q4PrimaryScore: 68,
+          q4OpponentScore: 72
+        })
+
+      expect(secondScoreResponse.status).toBe(200)
+
+      const completedBracketResponse = await request(app)
+        .get(`/api/games?poolId=${poolId}`)
+        .set(organizerHeaders)
+
+      const resolvedNextRoundGame = completedBracketResponse.body.find(
+        (game: { round_label: string; bracket_region: string; matchup_order: number }) =>
+          game.round_label === 'Round of 32' && game.bracket_region === 'East' && Number(game.matchup_order) === 1
+      )
+
+      expect(Array.isArray(resolvedNextRoundGame?.row_numbers)).toBe(true)
+      expect(resolvedNextRoundGame?.row_numbers?.length).toBe(10)
+      expect(Array.isArray(resolvedNextRoundGame?.col_numbers)).toBe(true)
+      expect(resolvedNextRoundGame?.col_numbers?.length).toBe(10)
+      expect(resolvedNextRoundGame?.opponent).toBe('Duke vs Purdue')
+
+      const boardResponse = await request(app)
+        .get(`/api/landing/pools/${poolId}/board?gameId=${Number(nextRoundGame?.id)}`)
+        .set(organizerHeaders)
+
+      expect(boardResponse.status).toBe(200)
+      expect(Array.isArray(boardResponse.body.board?.rowNumbers)).toBe(true)
+      expect(Array.isArray(boardResponse.body.board?.colNumbers)).toBe(true)
+    })
+
     it('should persist round metadata for tournament schedules', async () => {
       const poolName = `Bracket Pool ${Date.now()}`
       const poolResponse = await request(app)
@@ -1441,6 +1599,164 @@ describe('Football Pool API', () => {
       expect(advanceResponse.body.completedQuarter).toBe(1)
     })
 
+    it('should use actual ESPN results and persist ESPN event ids for historical simulations', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        const url = String(input)
+
+        if (url.includes('/scoreboard?dates=')) {
+          return new Response(
+            JSON.stringify({
+              events: [
+                {
+                  id: '401777001',
+                  uid: 's:20~l:28~e:401777001',
+                  competitions: [
+                    {
+                      competitors: [
+                        {
+                          homeAway: 'home',
+                          score: '27',
+                          linescores: [{ value: 7 }, { value: 6 }, { value: 7 }, { value: 7 }],
+                          team: {
+                            id: '9',
+                            uid: 's:20~l:28~t:9',
+                            displayName: 'Green Bay Packers',
+                            shortDisplayName: 'Packers',
+                            abbreviation: 'GB'
+                          }
+                        },
+                        {
+                          homeAway: 'away',
+                          score: '20',
+                          linescores: [{ value: 3 }, { value: 7 }, { value: 7 }, { value: 3 }],
+                          team: {
+                            id: '3',
+                            uid: 's:20~l:28~t:3',
+                            displayName: 'Chicago Bears',
+                            shortDisplayName: 'Bears',
+                            abbreviation: 'CHI'
+                          }
+                        }
+                      ],
+                      status: {
+                        type: {
+                          completed: true,
+                          state: 'post',
+                          description: 'Final'
+                        },
+                        period: 4,
+                        displayClock: '0:00'
+                      }
+                    }
+                  ]
+                }
+              ]
+            }),
+            {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' }
+            }
+          )
+        }
+
+        return new Response(JSON.stringify({ events: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      })
+
+      try {
+        const teamResponse = await request(app)
+          .post('/api/setup/teams')
+          .set(organizerHeaders)
+          .send({ teamName: `Historical Sim Team ${Date.now()}` })
+
+        const teamId = Number(teamResponse.body.id)
+
+        const poolResponse = await request(app)
+          .post('/api/setup/pools')
+          .set(organizerHeaders)
+          .send({
+            poolName: `Historical Sim Pool ${Date.now()}`,
+            teamId,
+            season: 2024,
+            primaryTeam: 'Green Bay Packers',
+            squareCost: 20,
+            q1Payout: 100,
+            q2Payout: 100,
+            q3Payout: 100,
+            q4Payout: 200
+          })
+
+        const poolId = Number(poolResponse.body.id)
+
+        await request(app)
+          .post('/api/setup/users')
+          .set(organizerHeaders)
+          .send({
+            firstName: 'Historical',
+            lastName: `User${Date.now()}`,
+            email: `historical-sim-${Date.now()}@example.com`,
+            phone: '5551900000',
+            isPlayer: true,
+            playerTeams: [{ teamId, jerseyNum: 12 }]
+          })
+
+        const gameResponse = await request(app)
+          .post('/api/games')
+          .set(organizerHeaders)
+          .send({
+            poolId,
+            weekNum: 1,
+            opponent: 'Chicago Bears',
+            gameDate: '2024-09-08',
+            isSimulation: true
+          })
+
+        expect(gameResponse.status).toBe(200)
+        const gameId = Number(gameResponse.body.game.id)
+
+        const startResponse = await request(app)
+          .post(`/api/setup/pools/${poolId}/simulation`)
+          .set(organizerHeaders)
+          .send({ mode: 'by_quarter' })
+
+        expect(startResponse.status).toBe(201)
+        expect(startResponse.body.result.mode).toBe('by_quarter')
+        expect(startResponse.body.result.currentGameId).toBe(gameId)
+
+        const advanceResponse = await request(app)
+          .post(`/api/setup/pools/${poolId}/simulation/advance`)
+          .set(organizerHeaders)
+          .send({ source: 'espn' })
+
+        expect(advanceResponse.status).toBe(200)
+        expect(advanceResponse.body.completedGameId).toBe(gameId)
+        expect(advanceResponse.body.completedQuarter).toBe(1)
+
+        const gamesResponse = await request(app)
+          .get(`/api/games?poolId=${poolId}`)
+          .set(organizerHeaders)
+
+        const completedGame = gamesResponse.body.find((game: { id: number }) => Number(game.id) === gameId)
+        expect(completedGame.q1_primary_score).toBe(7)
+        expect(completedGame.q1_opponent_score).toBe(3)
+        expect(completedGame.q4_primary_score).toBeNull()
+
+        const sourceIdResult = await db.query<{ espn_event_id: string | null; espn_event_uid: string | null }>(
+          `SELECT espn_event_id, espn_event_uid
+           FROM football_pool.game
+           WHERE id = $1`,
+          [gameId]
+        )
+
+        expect(sourceIdResult.rows[0]?.espn_event_id).toBe('401777001')
+        expect(sourceIdResult.rows[0]?.espn_event_uid).toBe('s:20~l:28~e:401777001')
+      } finally {
+        fetchSpy.mockRestore()
+      }
+    }, 15000)
+
     it('should still allow ending a simulation when simulated games remain after state drift', async () => {
       const teamResponse = await request(app)
         .post('/api/setup/teams')
@@ -1612,6 +1928,89 @@ describe('Football Pool API', () => {
       expect(boardResponse.status).toBe(200)
       expect(boardResponse.body.board.rowNumbers).toHaveLength(10)
       expect(boardResponse.body.board.colNumbers).toHaveLength(10)
+    })
+
+    it('should advance an NCAAB tournament simulation by half instead of quarter', async () => {
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({ teamName: `Half Sim Org ${Date.now()}` })
+
+      const teamId = Number(teamResponse.body.id)
+
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `Half Sim Pool ${Date.now()}`,
+          teamId,
+          season: 2026,
+          poolType: 'tournament',
+          leagueCode: 'NCAAB',
+          winnerLoserMode: true,
+          squareCost: 20,
+          q1Payout: 100,
+          q2Payout: 100,
+          q3Payout: 100,
+          q4Payout: 200
+        })
+
+      const poolId = Number(poolResponse.body.id)
+
+      await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Half',
+          lastName: `User${Date.now()}`,
+          email: `half-sim-${Date.now()}@example.com`,
+          phone: '5552700000',
+          isPlayer: true,
+          playerTeams: [{ teamId, jerseyNum: 14 }]
+        })
+
+      const gameResponse = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: 1,
+          opponent: 'Half Test Opponent',
+          gameDate: '2026-03-20',
+          isSimulation: true
+        })
+
+      expect(gameResponse.status).toBe(200)
+      const gameId = Number(gameResponse.body.game.id)
+
+      const startResponse = await request(app)
+        .post(`/api/setup/pools/${poolId}/simulation`)
+        .set(organizerHeaders)
+        .send({ mode: 'by_quarter' })
+
+      expect(startResponse.status).toBe(201)
+      expect(startResponse.body.result.mode).toBe('by_quarter')
+      expect(startResponse.body.result.nextQuarter).toBe(1)
+
+      const halfOneResponse = await request(app)
+        .post(`/api/setup/pools/${poolId}/simulation/advance`)
+        .set(organizerHeaders)
+        .send({ source: 'mock' })
+
+      expect(halfOneResponse.status).toBe(200)
+      expect(String(halfOneResponse.body.message ?? '')).toMatch(/half/i)
+      expect(halfOneResponse.body.status.currentGameId).toBe(gameId)
+      expect(halfOneResponse.body.status.nextQuarter).toBe(4)
+
+      const gamesResponse = await request(app)
+        .get(`/api/games?poolId=${poolId}`)
+        .set(organizerHeaders)
+
+      const updatedGame = gamesResponse.body.find((game: { id: number }) => game.id === gameId)
+      expect(updatedGame.q1_primary_score).not.toBeNull()
+      expect(updatedGame.q1_opponent_score).not.toBeNull()
+      expect(updatedGame.q2_primary_score).toBeNull()
+      expect(updatedGame.q3_primary_score).toBeNull()
     })
 
     it('should seed a by-quarter simulation with a live mid-quarter board highlight', async () => {
@@ -2469,6 +2868,122 @@ describe('Football Pool API', () => {
       expect(userMessageResult.rows[0]?.subject).toBe(`Quarter 1 winner in ${poolName}`)
       expect(String(userMessageResult.rows[0]?.message_text ?? '')).toContain('Quarter Winner won')
       expect(String(userMessageResult.rows[0]?.message_text ?? '')).toContain('Packers 0 · Email Opponent 0')
+    })
+
+    it('should use half-based wording for NCAAB score-segment notifications', async () => {
+      const winnerEmail = `ncaab-winner-${Date.now()}@example.com`
+
+      const winnerResponse = await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Half',
+          lastName: 'Winner',
+          email: winnerEmail,
+          phone: '5557771111',
+          notificationLevel: 'quarter_win'
+        })
+
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({
+          teamName: `NCAAB Notify Team ${Date.now()}`
+        })
+
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `NCAAB Notify Pool ${Date.now()}`,
+          teamId: Number(teamResponse.body.id),
+          season: 2026,
+          poolType: 'tournament',
+          leagueCode: 'NCAAB',
+          winnerLoserMode: true,
+          squareCost: 25,
+          q1Payout: 100,
+          q2Payout: 0,
+          q3Payout: 0,
+          q4Payout: 200
+        })
+
+      const poolId = Number(poolResponse.body.id)
+
+      await request(app)
+        .post(`/api/setup/pools/${poolId}/squares/init`)
+        .set(organizerHeaders)
+        .send({})
+
+      await request(app)
+        .patch(`/api/setup/pools/${poolId}/squares/1`)
+        .set(organizerHeaders)
+        .send({
+          participantId: Number(winnerResponse.body.id),
+          playerId: null,
+          paidFlg: true,
+          reassign: false
+        })
+
+      const gameResponse = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: 1,
+          opponent: 'NCAAB Opponent',
+          gameDate: '2026-03-19T18:00:00.000Z',
+          isSimulation: true
+        })
+
+      const gameId = Number(gameResponse.body.game.id)
+
+      await db.query(
+        `UPDATE football_pool.pool_game
+         SET row_numbers = $2::jsonb,
+             column_numbers = $3::jsonb
+         WHERE game_id = $1`,
+        [gameId, JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]), JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])]
+      )
+
+      await request(app)
+        .put('/api/setup/notifications/templates/participant/quarter_win')
+        .set(organizerHeaders)
+        .send({
+          subjectTemplate: '{{segmentLabel}} winner in {{poolName}}',
+          bodyTemplate: '{{winnerName}} won {{segmentLabel}} in {{poolName}}.',
+          markupFormat: 'plain_text'
+        })
+
+      const scoreResponse = await request(app)
+        .patch(`/api/games/${gameId}/scores`)
+        .set(organizerHeaders)
+        .send({
+          q1PrimaryScore: 10,
+          q1OpponentScore: 10,
+          q2PrimaryScore: null,
+          q2OpponentScore: null,
+          q3PrimaryScore: null,
+          q3OpponentScore: null,
+          q4PrimaryScore: 60,
+          q4OpponentScore: 60
+        })
+
+      expect(scoreResponse.status).toBe(200)
+
+      const notificationResult = await db.query(
+        `SELECT subject, message_text
+         FROM football_pool.notification_log
+         WHERE game_id = $1
+           AND recipient_scope = 'user'
+           AND recipient_email = $2
+           AND quarter = 1
+         LIMIT 1`,
+        [gameId, winnerEmail]
+      )
+
+      expect(String(notificationResult.rows[0]?.subject ?? '')).toContain('1st half')
+      expect(String(notificationResult.rows[0]?.message_text ?? '')).toContain('1st half')
     })
 
     it('should still log quarter-win emails when the pool payout is zero', async () => {

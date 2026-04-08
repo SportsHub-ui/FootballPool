@@ -9,6 +9,7 @@ import { LandingScheduleMaintenance } from './LandingScheduleMaintenance'
 import { LandingTeamMaintenance } from './LandingTeamMaintenance'
 import { LandingUserMaintenance } from './LandingUserMaintenance'
 import { PayoutSummaryPanel, type BoardPayoutSummary } from './PayoutSummaryPanel'
+import { getScoreSegmentDefinitions, getSimulationStepDescriptor } from './utils/poolLeagues'
 
 type LandingPool = {
   id: number
@@ -972,7 +973,7 @@ export function LandingPage() {
       setPageNotice(
         typeof data?.message === 'string' && data.message.trim()
           ? data.message
-          : `${simulationStatus.progressAction === 'complete_game' ? 'Game' : 'Quarter'} completed.`
+          : `${simulationStatus.progressAction === 'complete_game' ? 'Game' : simulationStepDescriptor.singularLabel} completed.`
       )
 
       await loadPoolContext(selectedPoolId, data?.status?.currentGameId ?? selectedGameId)
@@ -1086,6 +1087,14 @@ export function LandingPage() {
   }, [board, selectedSquare])
 
   const latestScoredQuarter = getLatestScoredQuarter(selectedGame)
+  const scoreSegments = useMemo(
+    () => getScoreSegmentDefinitions({ activeSlots: board?.payoutSummary?.activeSlots, payoutLabels: board?.payoutSummary?.payoutLabels }),
+    [board?.payoutSummary]
+  )
+  const simulationStepDescriptor = useMemo(
+    () => getSimulationStepDescriptor({ activeSlots: board?.payoutSummary?.activeSlots, payoutLabels: board?.payoutSummary?.payoutLabels }),
+    [board?.payoutSummary]
+  )
 
   const quarterSummaries = useMemo(() => {
     if (!board || !selectedGame) {
@@ -1110,7 +1119,8 @@ export function LandingPage() {
 
     const gameComplete = isCompletedGame(selectedGame)
 
-    return [1, 2, 3, 4].map((quarter) => {
+    return scoreSegments.map((segment) => {
+      const quarter = segment.quarter
       const { primaryScore, opponentScore } = getQuarterScores(selectedGame, quarter)
       const displayScores = getDisplayScores(primaryScore, opponentScore, winnerLoserMode)
       const hasScore = primaryScore !== null && opponentScore !== null
@@ -1124,6 +1134,8 @@ export function LandingPage() {
           : !gameComplete && quarter === latestScoredQuarter
 
       return {
+        id: segment.slot,
+        label: segment.shortLabel,
         quarter,
         status: !hasScore ? (isActiveQuarter ? 'active' : 'pending') : !gameComplete && isActiveQuarter ? 'active' : 'completed',
         primaryScore: displayScores.topScore,
@@ -1132,7 +1144,7 @@ export function LandingPage() {
         ownerName: hasScore ? formatQuarterSquareOwner(matchingSquare, squareNum) : isActiveQuarter ? 'Live scoring in progress' : 'Awaiting score'
       }
     })
-  }, [board, latestScoredQuarter, selectedGame, selectedPool, simulationStatus])
+  }, [board, latestScoredQuarter, scoreSegments, selectedGame, selectedPool, simulationStatus])
 
   const showQuarterSummaries = quarterSummaries.length > 0
 
@@ -1149,7 +1161,7 @@ export function LandingPage() {
   const showMemberSelector = poolTracksMembers && playerOptions.length > 0
   const showSimulationAdvance = !displayOnlyMode && SHOW_SIMULATION_CONTROLS && Boolean(simulationStatus?.progressAction)
   const canRefreshLiveQuarter = simulationStatus?.progressAction === 'complete_quarter'
-  const simulationAdvanceLabel = simulationStatus?.progressAction === 'complete_game' ? 'Complete Game' : 'Complete Quarter'
+  const simulationAdvanceLabel = simulationStatus?.progressAction === 'complete_game' ? 'Complete Game' : `Complete ${simulationStepDescriptor.singularLabel}`
   const primaryTeamLabel = board?.primaryTeam ?? selectedPool?.team_name ?? 'Preferred Team'
   const opponentTeamLabel = board?.opponent ?? selectedGame?.opponent ?? 'Opponent'
   const primaryTeamLogo = primaryBrand.logo
@@ -1427,11 +1439,11 @@ export function LandingPage() {
                     </div>
 
                     {showQuarterSummaries ? (
-                      <aside className="board-quarter-summary-panel" aria-label="Quarter winners and leaders">
+                      <aside className="board-quarter-summary-panel" aria-label="Current score winners and leaders">
                         {quarterSummaries.map((summary) => (
-                          <article key={summary.quarter} className={`board-quarter-card is-${summary.status}`}>
+                          <article key={summary.id} className={`board-quarter-card is-${summary.status}`}>
                             <div className="board-quarter-card-header">
-                              <span>{`Q${summary.quarter}`}</span>
+                              <span>{summary.label}</span>
                               <span className="board-quarter-card-square">{summary.squareNum != null ? `Sq ${summary.squareNum}` : '—'}</span>
                             </div>
 

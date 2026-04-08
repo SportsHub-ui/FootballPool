@@ -5,6 +5,7 @@ import { getPoolLeagueDefinition } from '../config/poolLeagues';
 import { loadPoolPayoutConfig, resolvePoolPayoutsForRound } from '../services/poolPayouts';
 import { getPoolSimulationStatus } from '../services/poolSimulation';
 import { resolveWinningSquareNumber } from '../services/scoreProcessing';
+import { buildMatchupDisplayLabel } from '../utils/matchupLabels';
 
 export const participantRouter = Router();
 
@@ -222,6 +223,8 @@ participantRouter.get('/pools/:poolId/games', async (req, res) => {
       const result = await client.query(
         `SELECT pg.id AS pool_game_id,
                 pg.pool_id,
+                pg.round_label,
+                pg.round_sequence,
                 g.id AS game_id,
                 g.season_year,
                 g.week_number,
@@ -268,10 +271,16 @@ participantRouter.get('/pools/:poolId/games', async (req, res) => {
           season_year: row.season_year,
           week_number: row.week_number,
           game_date: row.game_date,
+          round_label: row.round_label ?? null,
+          round_sequence: row.round_sequence ?? null,
           home_team_id: row.home_team_id,
           away_team_id: row.away_team_id,
           home_team_name: row.home_team_name,
           away_team_name: row.away_team_name,
+          opponent: buildMatchupDisplayLabel(row.home_team_name, row.away_team_name, {
+            roundLabel: row.round_label ?? null,
+            fallback: 'Opponent'
+          }),
           state: row.state,
           q1_primary_score: scores['1']?.home ?? null,
           q1_opponent_score: scores['1']?.away ?? null,
@@ -520,7 +529,12 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
           poolId,
           poolName: poolResult.rows[0].pool_name,
           primaryTeam: winnerLoserMode ? 'Winning Score' : poolResult.rows[0].primary_team ?? poolResult.rows[0].team_name ?? 'Preferred Team',
-          opponent: winnerLoserMode ? 'Losing Score' : selectedGame?.away_team_name ?? 'Opponent',
+          opponent: winnerLoserMode
+            ? 'Losing Score'
+            : buildMatchupDisplayLabel(selectedGame?.home_team_name, selectedGame?.away_team_name, {
+                roundLabel: typeof selectedGame?.round_label === 'string' ? selectedGame.round_label : null,
+                fallback: 'Opponent'
+              }),
           gameId: selectedGame?.id ?? null,
           winnerLoserMode,
           poolType: poolResult.rows[0].pool_type ?? 'season',

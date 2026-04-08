@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
 import { PayoutSummaryPanel, type BoardPayoutSummary } from './PayoutSummaryPanel'
+import { getScoreSegmentDefinitions } from './utils/poolLeagues'
 
 type UserPool = {
   id: number
@@ -199,6 +200,27 @@ const resolveTeamBrand = (
   }
 }
 
+const getGameScoreForQuarter = (game: Game, quarter: number): string => {
+  const primaryScore =
+    quarter === 1
+      ? game.q1_primary_score
+      : quarter === 2
+        ? game.q2_primary_score
+        : quarter === 3
+          ? game.q3_primary_score
+          : game.q4_primary_score
+  const opponentScore =
+    quarter === 1
+      ? game.q1_opponent_score
+      : quarter === 2
+        ? game.q2_opponent_score
+        : quarter === 3
+          ? game.q3_opponent_score
+          : game.q4_opponent_score
+
+  return primaryScore !== null && opponentScore !== null ? `${primaryScore}-${opponentScore}` : 'TBD'
+}
+
 export function ParticipantView() {
   const [view, setView] = useState<'login' | 'dashboard'>('login')
   const [token, setToken] = useState<string | null>(localStorage.getItem('auth-token'))
@@ -224,6 +246,11 @@ export function ParticipantView() {
     }
     return h
   }, [token])
+
+  const scoreSegments = useMemo(
+    () => getScoreSegmentDefinitions({ activeSlots: poolBoard?.payoutSummary?.activeSlots, payoutLabels: poolBoard?.payoutSummary?.payoutLabels }),
+    [poolBoard?.payoutSummary]
+  )
 
   const handleLogin = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -620,38 +647,12 @@ export function ParticipantView() {
                         <span className="game-date">{new Date(game.game_dt).toLocaleDateString()}</span>
                       </div>
                       <div className="game-scores">
-                        <div className="quarter">
-                          <label>Q1</label>
-                          <span>
-                            {game.q1_primary_score !== null
-                              ? `${game.q1_primary_score}-${game.q1_opponent_score}`
-                              : 'TBD'}
-                          </span>
-                        </div>
-                        <div className="quarter">
-                          <label>Q2</label>
-                          <span>
-                            {game.q2_primary_score !== null
-                              ? `${game.q2_primary_score}-${game.q2_opponent_score}`
-                              : 'TBD'}
-                          </span>
-                        </div>
-                        <div className="quarter">
-                          <label>Q3</label>
-                          <span>
-                            {game.q3_primary_score !== null
-                              ? `${game.q3_primary_score}-${game.q3_opponent_score}`
-                              : 'TBD'}
-                          </span>
-                        </div>
-                        <div className="quarter">
-                          <label>Q4</label>
-                          <span>
-                            {game.q4_primary_score !== null
-                              ? `${game.q4_primary_score}-${game.q4_opponent_score}`
-                              : 'TBD'}
-                          </span>
-                        </div>
+                        {scoreSegments.map((segment) => (
+                          <div key={`${game.id}-${segment.slot}`} className="quarter">
+                            <label>{segment.shortLabel}</label>
+                            <span>{getGameScoreForQuarter(game, segment.quarter)}</span>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   ))

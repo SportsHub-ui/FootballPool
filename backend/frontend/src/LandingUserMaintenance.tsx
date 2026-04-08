@@ -88,7 +88,7 @@ const formatPlayerTeamLabel = (assignment: LandingPlayerTeam): string =>
   `${assignment.team_name ?? `Organization ${assignment.team_id}`}${assignment.jersey_num != null ? ` #${assignment.jersey_num}` : ''}`
 
 const formatNotificationLevel = (level: NotificationLevel): string => {
-  if (level === 'quarter_win') return 'Quarter win'
+  if (level === 'quarter_win') return 'Score segment win'
   if (level === 'game_total') return 'Total after game ends'
   return 'None'
 }
@@ -625,7 +625,7 @@ export function LandingUserMaintenance({
                 }
               >
                 <option value="none">None</option>
-                <option value="quarter_win">Quarter win</option>
+                <option value="quarter_win">Score segment win</option>
                 <option value="game_total">Total win after game ends</option>
               </select>
             </label>
@@ -636,7 +636,7 @@ export function LandingUserMaintenance({
                 checked={userForm.notifyOnSquareLead}
                 onChange={(event) => setUserForm((current) => ({ ...current, notifyOnSquareLead: event.target.checked }))}
               />
-              <span>Email a live warning when this user's square becomes the current quarter leader</span>
+              <span>Email a live warning when this user's square becomes the current live leader</span>
             </label>
 
             <label className="checkbox-row landing-inline-checkbox landing-field-span">

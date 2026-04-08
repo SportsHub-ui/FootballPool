@@ -39,7 +39,7 @@ const scopeLabel: Record<TemplateScope, string> = {
 }
 
 const kindLabel: Record<NotificationKind, string> = {
-  quarter_win: 'End of quarter',
+  quarter_win: 'End of score segment',
   game_total: 'End of game',
   lead_warning: 'Score change / live lead'
 }
@@ -59,6 +59,7 @@ const sampleValues: Record<NotificationKind, Record<string, string | number>> = 
     opponentName: 'Bears',
     scoreLine: 'Packers 14 · Bears 7',
     quarter: 2,
+    segmentLabel: 'Halftime',
     squareNum: 42,
     payout: '$125'
   },
@@ -77,6 +78,7 @@ const sampleValues: Record<NotificationKind, Record<string, string | number>> = 
     opponentName: 'Bears',
     scoreLine: 'Packers 17 · Bears 14',
     quarter: 3,
+    segmentLabel: 'Q3',
     squareNum: 42
   }
 }
@@ -367,7 +369,7 @@ export function LandingNotificationTemplates({ pools, token, authHeaders, apiBas
           <p className="landing-eyebrow">Message configuration</p>
           <h1>Email Notifications</h1>
           <p>
-            Configure separate participant and pool-contact messages for quarter wins, game totals, and live score-change
+            Configure separate participant and pool-contact messages for score-segment wins, game totals, and live score-change
             alerts. Use variables and optional Markdown formatting so future copy changes do not require code edits.
           </p>
         </div>
