@@ -3,6 +3,14 @@ import type { MouseEvent as ReactMouseEvent } from 'react'
 
 import type { LandingPool } from './LandingMetrics'
 import { getPoolLeagueDefinition, type PayoutSlotKey, type SupportedLeagueCode } from './utils/poolLeagues'
+import {
+  getPoolStructureMode,
+  getPoolTemplateDefinition,
+  listAvailablePoolTemplates,
+  type PoolStructureMode,
+  type PoolTemplateCode
+} from './utils/poolStructures'
+import { getPoolTypeDefinition, type PoolTypeCode } from './utils/poolTypes'
 
 type TeamRecord = {
   id: number
@@ -42,10 +50,16 @@ type PoolRecord = {
   pool_name: string | null
   team_id: number | null
   season: number | null
+  pool_type?: PoolTypeCode | null
+  structure_mode?: PoolStructureMode | null
+  template_code?: PoolTemplateCode | null
+  start_date?: string | null
+  end_date?: string | null
   primary_team: string | null
   primary_sport_team_id?: number | null
   sport_code?: string | null
   league_code?: string | null
+  winner_loser_flg?: boolean
   square_cost: number | null
   q1_payout: number | null
   q2_payout: number | null
@@ -129,6 +143,60 @@ const formatSimulationMode = (mode: SimulationMode | null | undefined): string =
   return 'Full Year'
 }
 
+const formatDisplayDate = (value?: string | null): string => {
+  if (!value) return ''
+
+  const trimmedValue = value.trim()
+  if (!trimmedValue) return ''
+
+  const isoDateMatch = trimmedValue.match(/^(\d{4}-\d{2}-\d{2})/)
+  if (isoDateMatch) {
+    return isoDateMatch[1]
+  }
+
+  const parsedValue = new Date(trimmedValue)
+  if (Number.isNaN(parsedValue.getTime())) {
+    return trimmedValue
+  }
+
+  return parsedValue.toLocaleDateString()
+}
+
+const formatPoolWindow = (startDate?: string | null, endDate?: string | null): string => {
+  const formattedStartDate = formatDisplayDate(startDate)
+  const formattedEndDate = formatDisplayDate(endDate)
+
+  if (!formattedStartDate && !formattedEndDate) return 'Season-long'
+  if (formattedStartDate && formattedEndDate) return `${formattedStartDate} → ${formattedEndDate}`
+  return formattedStartDate || formattedEndDate || 'Season-long'
+}
+
+const formatStructureSummary = (pool: Pick<PoolRecord, 'structure_mode' | 'template_code'>): string => {
+  if (pool.structure_mode === 'template' && pool.template_code) {
+    return getPoolTemplateDefinition(pool.template_code)?.label ?? 'Template'
+  }
+
+  return 'Manual'
+}
+
+const applyTemplateDateDefaults = (
+  season: number,
+  templateCode: string | null | undefined,
+  startDate: string,
+  endDate: string
+): { startDate: string; endDate: string } => {
+  const templateDefinition = getPoolTemplateDefinition(templateCode)
+  if (!templateDefinition) {
+    return { startDate, endDate }
+  }
+
+  const defaults = templateDefinition.getDefaultDateWindow(season)
+  return {
+    startDate: startDate || defaults.startDate,
+    endDate: endDate || defaults.endDate
+  }
+}
+
 const hasRecordedPayoutSlot = (game: GameRecord, slot: PayoutSlotKey): boolean => {
   if (slot === 'q1') return hasRecordedQuarter(game.q1_primary_score, game.q1_opponent_score)
   if (slot === 'q2') return hasRecordedQuarter(game.q2_primary_score, game.q2_opponent_score)
@@ -142,10 +210,16 @@ const buildReadonlyPoolRecords = (pools: LandingPool[]): PoolRecord[] =>
     pool_name: pool.pool_name,
     team_id: null,
     season: pool.season,
+    pool_type: (pool.pool_type as PoolTypeCode | null | undefined) ?? 'season',
+    structure_mode: 'manual',
+    template_code: null,
+    start_date: null,
+    end_date: null,
     primary_team: pool.team_name ?? null,
-    primary_sport_team_id: null,
-    sport_code: 'FOOTBALL',
-    league_code: 'NFL',
+    primary_sport_team_id: pool.primary_sport_team_id ?? null,
+    sport_code: pool.sport_code ?? 'FOOTBALL',
+    league_code: pool.league_code ?? 'NFL',
+    winner_loser_flg: Boolean(pool.winner_loser_flg),
     square_cost: null,
     q1_payout: null,
     q2_payout: null,
@@ -179,10 +253,16 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     poolName: '',
     teamId: '',
     season: new Date().getFullYear(),
+    poolType: 'season' as PoolTypeCode,
+    structureMode: 'manual' as PoolStructureMode,
+    templateCode: '' as PoolTemplateCode | '',
+    startDate: '',
+    endDate: '',
     leagueCode: 'NFL' as SupportedLeagueCode,
     sportCode: 'FOOTBALL',
     primarySportTeamId: '',
     primaryTeam: '',
+    winnerLoserMode: false,
     squareCost: 0,
     q1Payout: 0,
     q2Payout: 0,
@@ -194,6 +274,15 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
 
   const canManagePools = hasOrganizerAccess
   const selectedLeagueDefinition = useMemo(() => getPoolLeagueDefinition(poolForm.leagueCode), [poolForm.leagueCode])
+  const selectedPoolTypeDefinition = useMemo(() => getPoolTypeDefinition(poolForm.poolType), [poolForm.poolType])
+  const availablePoolTemplates = useMemo(
+    () => listAvailablePoolTemplates({ poolType: poolForm.poolType, leagueCode: poolForm.leagueCode }),
+    [poolForm.leagueCode, poolForm.poolType]
+  )
+  const selectedTemplateDefinition = useMemo(
+    () => getPoolTemplateDefinition(poolForm.templateCode || null),
+    [poolForm.templateCode]
+  )
 
   const simulationHeaders = useMemo(() => {
     if (!SHOW_SIMULATION_CONTROLS || token) {
@@ -221,6 +310,8 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
 
   const loadPoolIntoForm = (pool: PoolRecord | null) => {
     const leagueDefinition = getPoolLeagueDefinition(pool?.league_code)
+    const poolTypeDefinition = getPoolTypeDefinition(pool?.pool_type)
+    const structureMode = getPoolStructureMode(pool?.structure_mode)
 
     setSelectedPoolId(pool?.id ?? null)
     setIsCreatingNew(pool == null)
@@ -228,10 +319,16 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
       poolName: pool?.pool_name ?? '',
       teamId: pool?.team_id != null ? String(pool.team_id) : '',
       season: pool?.season ?? new Date().getFullYear(),
+      poolType: poolTypeDefinition.code,
+      structureMode,
+      templateCode: (pool?.template_code as PoolTemplateCode | null | undefined) ?? '',
+      startDate: pool?.start_date?.slice(0, 10) ?? '',
+      endDate: pool?.end_date?.slice(0, 10) ?? '',
       leagueCode: leagueDefinition.leagueCode,
       sportCode: pool?.sport_code?.trim() || leagueDefinition.sportCode,
       primarySportTeamId: pool?.primary_sport_team_id != null ? String(pool.primary_sport_team_id) : '',
       primaryTeam: pool?.primary_team?.trim() || '',
+      winnerLoserMode: Boolean(pool?.winner_loser_flg ?? poolTypeDefinition.defaultWinnerLoserMode),
       squareCost: pool?.square_cost ?? 0,
       q1Payout: pool?.q1_payout ?? 0,
       q2Payout: pool?.q2_payout ?? 0,
@@ -507,7 +604,15 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
 
     const totalRevenue = squareCost * TOTAL_SQUARES
     const totalPayoutPerGame = selectedLeagueDefinition.activePayoutSlots.reduce((sum, slot) => sum + payoutValues[slot], 0)
-    const totalPayout = totalPayoutPerGame * selectedLeagueDefinition.regularSeasonGameCount
+    const estimatedGameCount =
+      selectedPoolTypeDefinition.estimatedGameCountMode === 'single'
+        ? 1
+        : selectedPoolTypeDefinition.estimatedGameCountMode === 'series'
+          ? Math.max(poolGames.length, 7)
+          : selectedPoolTypeDefinition.estimatedGameCountMode === 'manual'
+            ? Math.max(poolGames.length, selectedTemplateDefinition?.expectedGameCount ?? 0)
+            : selectedLeagueDefinition.regularSeasonGameCount
+    const totalPayout = totalPayoutPerGame * estimatedGameCount
 
     const rawPaidOutToDate = poolGames.reduce((sum, game) => {
       return (
@@ -526,9 +631,20 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
       totalPayout,
       totalRaisedForTeam: totalRevenue - totalPayout,
       paidOutToDate,
-      remainingToBePaid: Math.max(0, totalPayout - paidOutToDate)
+      remainingToBePaid: Math.max(0, totalPayout - paidOutToDate),
+      estimatedGameCount
     }
-  }, [poolForm.q1Payout, poolForm.q2Payout, poolForm.q3Payout, poolForm.q4Payout, poolForm.squareCost, poolGames, selectedLeagueDefinition])
+  }, [
+    poolForm.q1Payout,
+    poolForm.q2Payout,
+    poolForm.q3Payout,
+    poolForm.q4Payout,
+    poolForm.squareCost,
+    poolGames,
+    selectedLeagueDefinition,
+    selectedPoolTypeDefinition,
+    selectedTemplateDefinition
+  ])
 
   const onSelectPool = (poolId: number): void => {
     const pool = poolRecords.find((entry) => entry.id === poolId) ?? null
@@ -577,8 +693,28 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   }
 
   const onSavePool = async (): Promise<void> => {
-    if (!poolForm.poolName.trim() || !poolForm.teamId || !poolForm.primaryTeam.trim()) {
-      setError('Pool name, organization, and preferred sport team are required.')
+    if (!poolForm.poolName.trim() || !poolForm.teamId) {
+      setError('Pool name and organization are required.')
+      return
+    }
+
+    if (selectedPoolTypeDefinition.requiresPreferredTeam && !poolForm.primaryTeam.trim()) {
+      setError('A preferred sport team is required for Season, Single Game, and Playoff Series pools.')
+      return
+    }
+
+    if ((poolForm.startDate && !poolForm.endDate) || (!poolForm.startDate && poolForm.endDate)) {
+      setError('Enter both a start date and an end date for a date-bounded pool.')
+      return
+    }
+
+    if (poolForm.startDate && poolForm.endDate && poolForm.endDate < poolForm.startDate) {
+      setError('End date must be on or after the start date.')
+      return
+    }
+
+    if (poolForm.structureMode === 'template' && !poolForm.templateCode) {
+      setError('Choose a template when template mode is selected.')
       return
     }
 
@@ -596,9 +732,15 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
         poolName: poolForm.poolName.trim(),
         teamId: Number(poolForm.teamId),
         season: Number(poolForm.season),
+        poolType: poolForm.poolType,
+        structureMode: poolForm.structureMode,
+        templateCode: poolForm.templateCode || undefined,
+        startDate: poolForm.startDate || undefined,
+        endDate: poolForm.endDate || undefined,
         leagueCode: poolForm.leagueCode,
         primarySportTeamId: poolForm.primarySportTeamId ? Number(poolForm.primarySportTeamId) : undefined,
         primaryTeam: poolForm.primaryTeam.trim() || undefined,
+        winnerLoserMode: poolForm.winnerLoserMode,
         squareCost: Number(poolForm.squareCost),
         q1Payout: Number(poolForm.q1Payout),
         q2Payout: Number(poolForm.q2Payout),
@@ -641,6 +783,11 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   const onFillSchedule = async (): Promise<void> => {
     if (!selectedPoolId) {
       setError('Save or select a pool first before filling its schedule.')
+      return
+    }
+
+    if (!selectedPoolTypeDefinition.supportsScheduleImport) {
+      setError('Fill Schedule currently supports season pools only. Add playoff or tournament matchups manually on the Schedules page.')
       return
     }
 
@@ -892,7 +1039,11 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                   <th>Pool</th>
                   <th>Organization</th>
                   <th>Season</th>
+                  <th>Type</th>
+                  <th>Structure</th>
+                  <th>Window</th>
                   <th>League</th>
+                  <th>Scoring</th>
                   <th>Notifications</th>
                   <th>Cost</th>
                 </tr>
@@ -907,7 +1058,11 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                     <td>{formatPoolName(pool)}</td>
                     <td>{pool.team_name ?? '—'}</td>
                     <td>{pool.season ?? '—'}</td>
+                    <td>{getPoolTypeDefinition(pool.pool_type).label}</td>
+                    <td>{formatStructureSummary(pool)}</td>
+                    <td>{formatPoolWindow(pool.start_date, pool.end_date)}</td>
                     <td>{pool.league_code ?? 'NFL'}</td>
+                    <td>{pool.winner_loser_flg ? 'Winner/Loser' : 'Preferred vs Opponent'}</td>
                     <td>{formatNotificationSummary(pool.contact_notification_level, pool.contact_notify_on_square_lead_flg)}</td>
                     <td>{formatCurrency(pool.square_cost)}</td>
                   </tr>
@@ -943,7 +1098,13 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
               <button type="button" className="secondary compact" onClick={onAddPool} disabled={saving || simulationBusy !== null}>
                 Add
               </button>
-              <button type="button" className="secondary" onClick={onFillSchedule} disabled={saving || simulationBusy !== null || !selectedPoolId}>
+              <button
+                type="button"
+                className="secondary"
+                onClick={onFillSchedule}
+                disabled={saving || simulationBusy !== null || !selectedPoolId || !selectedPoolTypeDefinition.supportsScheduleImport}
+                title={selectedPoolTypeDefinition.supportsScheduleImport ? 'Import the regular-season schedule for the preferred team.' : 'Fill Schedule is currently available for season pools only.'}
+              >
                 {saving ? 'Filling...' : 'Fill Schedule'}
               </button>
               {SHOW_SIMULATION_CONTROLS ? (
@@ -1022,6 +1183,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                     ? 'Update the pool details below or use Fill Schedule to add only the missing weeks.'
                     : 'Enter the pool details below. Save the pool before using Fill Schedule.'}
                 </p>
+                <p className="small landing-readonly-note">{selectedPoolTypeDefinition.description}</p>
                 <p className="small landing-readonly-note">Pool notification emails go to the primary and secondary contacts for the selected organization.</p>
                 {simulationProgressNote ? <p className="small landing-readonly-note">{simulationProgressNote}</p> : null}
                 {selectedPool ? (
@@ -1069,14 +1231,153 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
             </label>
 
             <label className="field-block">
-              <span>Season</span>
+              <span>Pool type</span>
+              <select
+                value={poolForm.poolType}
+                onChange={(event) => {
+                  const nextType = getPoolTypeDefinition(event.target.value as PoolTypeCode)
+                  setPoolForm((current) => {
+                    const nextTemplateOptions = listAvailablePoolTemplates({
+                      poolType: nextType.code,
+                      leagueCode: current.leagueCode
+                    })
+                    const nextTemplateCode = nextType.supportsStructureTemplates
+                      ? (current.templateCode || nextTemplateOptions[0]?.code || '')
+                      : ''
+                    const nextStructureMode: PoolStructureMode = nextType.supportsStructureTemplates && nextTemplateCode ? 'template' : 'manual'
+                    const nextDates =
+                      nextStructureMode === 'template'
+                        ? applyTemplateDateDefaults(current.season, nextTemplateCode, current.startDate, current.endDate)
+                        : { startDate: current.startDate, endDate: current.endDate }
+
+                    return {
+                      ...current,
+                      poolType: nextType.code,
+                      structureMode: nextStructureMode,
+                      templateCode: nextTemplateCode,
+                      startDate: nextType.supportsDateWindow ? nextDates.startDate : '',
+                      endDate: nextType.supportsDateWindow ? nextDates.endDate : '',
+                      winnerLoserMode: current.winnerLoserMode || nextType.defaultWinnerLoserMode
+                    }
+                  })
+                }}
+                disabled={saving}
+              >
+                <option value="season">Season</option>
+                <option value="single_game">Single Game</option>
+                <option value="playoff_series">Playoff Series</option>
+                <option value="tournament">Tournament</option>
+              </select>
+            </label>
+
+            <label className="field-block">
+              <span>Season / year</span>
               <input
                 type="number"
                 value={poolForm.season}
-                onChange={(event) => setPoolForm((current) => ({ ...current, season: Number(event.target.value) }))}
+                onChange={(event) =>
+                  setPoolForm((current) => {
+                    const nextSeason = Number(event.target.value)
+                    const nextDates =
+                      current.structureMode === 'template'
+                        ? applyTemplateDateDefaults(nextSeason, current.templateCode, current.startDate, current.endDate)
+                        : { startDate: current.startDate, endDate: current.endDate }
+
+                    return {
+                      ...current,
+                      season: nextSeason,
+                      startDate: nextDates.startDate,
+                      endDate: nextDates.endDate
+                    }
+                  })
+                }
                 disabled={saving}
               />
             </label>
+
+            {selectedPoolTypeDefinition.supportsStructureTemplates ? (
+              <label className="field-block">
+                <span>Schedule setup</span>
+                <select
+                  value={poolForm.structureMode}
+                  onChange={(event) => {
+                    const nextMode = event.target.value as PoolStructureMode
+                    setPoolForm((current) => {
+                      const nextTemplateCode = nextMode === 'template' ? (current.templateCode || availablePoolTemplates[0]?.code || '') : ''
+                      const nextDates =
+                        nextMode === 'template'
+                          ? applyTemplateDateDefaults(current.season, nextTemplateCode, current.startDate, current.endDate)
+                          : { startDate: current.startDate, endDate: current.endDate }
+
+                      return {
+                        ...current,
+                        structureMode: nextMode,
+                        templateCode: nextTemplateCode,
+                        startDate: nextDates.startDate,
+                        endDate: nextDates.endDate
+                      }
+                    })
+                  }}
+                  disabled={saving}
+                >
+                  <option value="manual">Manual / custom bracket</option>
+                  <option value="template">Template-guided</option>
+                </select>
+              </label>
+            ) : null}
+
+            {poolForm.structureMode === 'template' && availablePoolTemplates.length > 0 ? (
+              <label className="field-block">
+                <span>Template</span>
+                <select
+                  value={poolForm.templateCode}
+                  onChange={(event) => {
+                    const nextTemplateCode = event.target.value as PoolTemplateCode | ''
+                    setPoolForm((current) => {
+                      const nextDates = applyTemplateDateDefaults(current.season, nextTemplateCode, current.startDate, current.endDate)
+                      return {
+                        ...current,
+                        templateCode: nextTemplateCode,
+                        startDate: nextDates.startDate,
+                        endDate: nextDates.endDate
+                      }
+                    })
+                  }}
+                  disabled={saving}
+                >
+                  <option value="">Select template</option>
+                  {availablePoolTemplates.map((template) => (
+                    <option key={template.code} value={template.code}>
+                      {template.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+
+            {selectedPoolTypeDefinition.supportsDateWindow ? (
+              <>
+                <label className="field-block">
+                  <span>Start date</span>
+                  <input
+                    type="date"
+                    value={poolForm.startDate}
+                    onChange={(event) => setPoolForm((current) => ({ ...current, startDate: event.target.value }))}
+                    disabled={saving}
+                  />
+                </label>
+
+                <label className="field-block">
+                  <span>End date</span>
+                  <input
+                    type="date"
+                    value={poolForm.endDate}
+                    onChange={(event) => setPoolForm((current) => ({ ...current, endDate: event.target.value }))}
+                    disabled={saving}
+                  />
+                </label>
+              </>
+            ) : null}
 
             <label className="field-block">
               <span>League</span>
@@ -1084,17 +1385,37 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                 value={poolForm.leagueCode}
                 onChange={(event) => {
                   const nextLeague = getPoolLeagueDefinition(event.target.value as SupportedLeagueCode)
-                  setPoolForm((current) => ({
-                    ...current,
-                    leagueCode: nextLeague.leagueCode,
-                    sportCode: nextLeague.sportCode,
-                    primarySportTeamId: '',
-                    primaryTeam: '',
-                    q1Payout: nextLeague.activePayoutSlots.includes('q1') ? current.q1Payout : 0,
-                    q2Payout: nextLeague.activePayoutSlots.includes('q2') ? current.q2Payout : 0,
-                    q3Payout: nextLeague.activePayoutSlots.includes('q3') ? current.q3Payout : 0,
-                    q4Payout: nextLeague.activePayoutSlots.includes('q4') ? current.q4Payout : 0
-                  }))
+                  setPoolForm((current) => {
+                    const nextTemplateOptions = listAvailablePoolTemplates({
+                      poolType: current.poolType,
+                      leagueCode: nextLeague.leagueCode
+                    })
+                    const nextTemplateCode = nextTemplateOptions.some((template) => template.code === current.templateCode)
+                      ? current.templateCode
+                      : (nextTemplateOptions[0]?.code ?? '')
+                    const nextStructureMode: PoolStructureMode =
+                      current.poolType === 'tournament' && nextTemplateCode ? 'template' : current.structureMode === 'template' ? 'manual' : current.structureMode
+                    const nextDates =
+                      nextStructureMode === 'template'
+                        ? applyTemplateDateDefaults(current.season, nextTemplateCode, current.startDate, current.endDate)
+                        : { startDate: current.startDate, endDate: current.endDate }
+
+                    return {
+                      ...current,
+                      leagueCode: nextLeague.leagueCode,
+                      sportCode: nextLeague.sportCode,
+                      structureMode: nextStructureMode,
+                      templateCode: nextStructureMode === 'template' ? nextTemplateCode : '',
+                      startDate: nextDates.startDate,
+                      endDate: nextDates.endDate,
+                      primarySportTeamId: '',
+                      primaryTeam: '',
+                      q1Payout: nextLeague.activePayoutSlots.includes('q1') ? current.q1Payout : 0,
+                      q2Payout: nextLeague.activePayoutSlots.includes('q2') ? current.q2Payout : 0,
+                      q3Payout: nextLeague.activePayoutSlots.includes('q3') ? current.q3Payout : 0,
+                      q4Payout: nextLeague.activePayoutSlots.includes('q4') ? current.q4Payout : 0
+                    }
+                  })
                 }}
                 disabled={saving}
               >
@@ -1113,7 +1434,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
             </label>
 
             <label className="field-block">
-              <span>Preferred sport team</span>
+              <span>{selectedPoolTypeDefinition.requiresPreferredTeam ? 'Preferred sport team' : 'Preferred sport team (optional)'}</span>
               <select
                 value={poolForm.primarySportTeamId}
                 onChange={(event) => {
@@ -1136,6 +1457,32 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                 ))}
               </select>
             </label>
+
+            <label className="checkbox-row landing-inline-checkbox landing-field-span">
+              <input
+                type="checkbox"
+                checked={poolForm.winnerLoserMode}
+                onChange={(event) => setPoolForm((current) => ({ ...current, winnerLoserMode: event.target.checked }))}
+                disabled={saving}
+              />
+              <span>Use winner/loser scoring so the winning score is shown across the top and the losing score is shown on the side.</span>
+            </label>
+
+            <p className="small landing-readonly-note landing-field-span">
+              {selectedPoolTypeDefinition.requiresPreferredTeam
+                ? 'Season, single-game, and playoff-series pools follow a preferred team. Tournament pools can leave the preferred team blank and use manual matchup entries.'
+                : 'Tournament pools can be kept generic and scored as winner vs loser for brackets, playoff rounds, or championship games.'}
+            </p>
+
+            <p className="small landing-readonly-note landing-field-span">
+              {selectedPoolTypeDefinition.supportsDateWindow
+                ? 'Use the start and end dates to bound non-season pools. Template mode can prefill the event window for common formats like March Madness.'
+                : 'Season pools stay open-ended and can keep using Fill Schedule for the regular season.'}
+            </p>
+
+            {selectedTemplateDefinition ? (
+              <p className="small landing-readonly-note landing-field-span">{selectedTemplateDefinition.description}</p>
+            ) : null}
 
             <label className="field-block">
               <span>Square cost</span>
@@ -1167,7 +1514,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
             })}
 
             <p className="small landing-readonly-note landing-field-span">
-              Payout checkpoints follow the selected league. NCAA basketball uses 1st half and final, and MLB uses final only.
+              Payout checkpoints follow the selected league. NCAA basketball uses 1st half and final, MLB uses final only, and playoff/tournament pools are estimated from the games you add.
             </p>
 
             <label className="field-block">
@@ -1216,6 +1563,11 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
               <div className="landing-payout-summary-line">
                 <span>Total Payout:</span>
                 <strong>{formatCurrency(payoutSummary.totalPayout)}</strong>
+              </div>
+
+              <div className="landing-payout-summary-line">
+                <span>Estimated Games:</span>
+                <strong>{payoutSummary.estimatedGameCount}</strong>
               </div>
 
               <div className="landing-payout-summary-divider" />

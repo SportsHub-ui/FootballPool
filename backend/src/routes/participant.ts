@@ -280,8 +280,15 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
     const client = await db.connect();
     try {
       const poolResult = await client.query(
-        `SELECT p.id, p.pool_name, p.primary_team,
-                t.team_name, t.primary_color, t.secondary_color, t.logo_file
+        `SELECT p.id,
+                p.pool_name,
+                COALESCE(p.pool_type, 'season') AS pool_type,
+                p.primary_team,
+                COALESCE(p.winner_loser_flg, FALSE) AS winner_loser_flg,
+                t.team_name,
+                t.primary_color,
+                t.secondary_color,
+                t.logo_file
          FROM football_pool.pool p
          LEFT JOIN football_pool.organization t ON t.id = p.team_id
          WHERE p.id = $1`,
@@ -380,6 +387,7 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
       };
 
       const simulationStatus = await getPoolSimulationStatus(client, poolId).catch(() => null);
+      const winnerLoserMode = Boolean(poolResult.rows[0]?.winner_loser_flg);
       const currentGameTotals = new Map<number, number>();
       const seasonTotals = new Map<number, number>();
       const parseScores = (row: any): QuarterScoreMap => toQuarterScoreMap(row.scores_by_quarter);
@@ -414,7 +422,8 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
               selectedGame.row_numbers,
               selectedGame.col_numbers,
               getQuarterScores(selectedGame, latestScoredQuarter).opponentScore,
-              getQuarterScores(selectedGame, latestScoredQuarter).primaryScore
+              getQuarterScores(selectedGame, latestScoredQuarter).primaryScore,
+              winnerLoserMode
             )
           : null;
 
@@ -428,22 +437,22 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
         const entries = [
           {
             quarter: 1,
-            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, getQuarterScore(scores, '1', 'away'), getQuarterScore(scores, '1', 'home')),
+            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, getQuarterScore(scores, '1', 'away'), getQuarterScore(scores, '1', 'home'), winnerLoserMode),
             amount: Number(payouts.q1_payout ?? 0)
           },
           {
             quarter: 2,
-            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, getQuarterScore(scores, '2', 'away'), getQuarterScore(scores, '2', 'home')),
+            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, getQuarterScore(scores, '2', 'away'), getQuarterScore(scores, '2', 'home'), winnerLoserMode),
             amount: Number(payouts.q2_payout ?? 0)
           },
           {
             quarter: 3,
-            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, getQuarterScore(scores, '3', 'away'), getQuarterScore(scores, '3', 'home')),
+            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, getQuarterScore(scores, '3', 'away'), getQuarterScore(scores, '3', 'home'), winnerLoserMode),
             amount: Number(payouts.q3_payout ?? 0)
           },
           {
             quarter: 4,
-            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, getQuarterScore(scores, '4', 'away'), getQuarterScore(scores, '4', 'home')),
+            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, getQuarterScore(scores, '4', 'away'), getQuarterScore(scores, '4', 'home'), winnerLoserMode),
             amount: Number(payouts.q4_payout ?? 0)
           }
         ];
@@ -473,9 +482,11 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
         board: {
           poolId,
           poolName: poolResult.rows[0].pool_name,
-          primaryTeam: poolResult.rows[0].primary_team,
-          opponent: selectedGame?.away_team_name ?? 'Opponent',
+          primaryTeam: winnerLoserMode ? 'Winning Score' : poolResult.rows[0].primary_team ?? poolResult.rows[0].team_name ?? 'Preferred Team',
+          opponent: winnerLoserMode ? 'Losing Score' : selectedGame?.away_team_name ?? 'Opponent',
           gameId: selectedGame?.id ?? null,
+          winnerLoserMode,
+          poolType: poolResult.rows[0].pool_type ?? 'season',
           gameDate: selectedGame?.game_date ?? null,
           teamName: poolResult.rows[0].team_name,
           teamPrimaryColor: poolResult.rows[0].primary_color ?? '#fbbc04',

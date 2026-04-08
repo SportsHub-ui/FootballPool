@@ -1,9 +1,11 @@
 ﻿import type { PoolClient } from 'pg';
 import { getPoolLeagueDefinition } from '../config/poolLeagues';
+import { getPoolTypeDefinition } from '../config/poolTypes';
 
 type PoolScheduleContext = {
   id: number;
   season: number | null;
+  pool_type: string | null;
   primary_team: string | null;
   team_name: string | null;
   team_id: number | null;
@@ -352,6 +354,7 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
   const poolResult = await client.query<PoolScheduleContext>(
     `SELECT p.id,
             p.season,
+            p.pool_type,
             p.primary_team,
             p.primary_sport_team_id,
             p.sport_code,
@@ -376,6 +379,10 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
   }
   if (!pool.season) {
     throw new Error('This pool does not have a season year configured.');
+  }
+
+  if (getPoolTypeDefinition(pool.pool_type).code !== 'season') {
+    throw new Error('Fill Schedule currently supports season pools only. Add playoff or tournament matchups manually on the Schedules page.');
   }
 
   const team = await findEspnTeam(pool);

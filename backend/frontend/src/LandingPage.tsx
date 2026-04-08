@@ -14,6 +14,8 @@ type LandingPool = {
   pool_name: string | null
   season: number | null
   primary_team_id: number | null // references sport_team.id
+  pool_type?: string | null
+  winner_loser_flg?: boolean
   default_flg: boolean
   sign_in_req_flg: boolean
   display_token: string | null
@@ -65,6 +67,8 @@ type LandingBoard = {
   primaryTeamId: number | null // references nfl_team.id
   primaryTeam: string
   opponent: string
+  winnerLoserMode?: boolean
+  poolType?: string | null
   gameId: number | null
   gameDate: string | null
   teamName: string | null
@@ -244,11 +248,27 @@ const getQuarterScores = (
   return { primaryScore: game.q4_primary_score, opponentScore: game.q4_opponent_score }
 }
 
+const getDisplayScores = (
+  primaryScore: number | null,
+  opponentScore: number | null,
+  winnerLoserMode: boolean
+): { topScore: number | null; sideScore: number | null } => {
+  if (!winnerLoserMode || primaryScore == null || opponentScore == null) {
+    return { topScore: primaryScore, sideScore: opponentScore }
+  }
+
+  return {
+    topScore: Math.max(Number(primaryScore), Number(opponentScore)),
+    sideScore: Math.min(Number(primaryScore), Number(opponentScore))
+  }
+}
+
 const resolveWinningSquareNumber = (
   rowNumbers: Array<number | string> | null | undefined,
   colNumbers: Array<number | string> | null | undefined,
   opponentScore: number | null,
-  primaryScore: number | null
+  primaryScore: number | null,
+  winnerLoserMode = false
 ): number | null => {
   if (opponentScore == null || primaryScore == null) {
     return null
@@ -256,6 +276,8 @@ const resolveWinningSquareNumber = (
 
   const normalizedRows = (rowNumbers ?? []).map((entry) => Number(entry))
   const normalizedCols = (colNumbers ?? []).map((entry) => Number(entry))
+  const resolvedTopScore = winnerLoserMode ? Math.max(Number(primaryScore), Number(opponentScore)) : Number(primaryScore)
+  const resolvedSideScore = winnerLoserMode ? Math.min(Number(primaryScore), Number(opponentScore)) : Number(opponentScore)
 
   if (
     normalizedRows.length !== 10 ||
@@ -266,8 +288,8 @@ const resolveWinningSquareNumber = (
     return null
   }
 
-  const opponentDigit = Number(opponentScore) % 10
-  const primaryDigit = Number(primaryScore) % 10
+  const opponentDigit = resolvedSideScore % 10
+  const primaryDigit = resolvedTopScore % 10
   const rowIndex = normalizedRows.findIndex((digit) => digit === opponentDigit)
   const colIndex = normalizedCols.findIndex((digit) => digit === primaryDigit)
 
@@ -987,6 +1009,15 @@ export function LandingPage() {
   )
 
   const primaryBrand = useMemo(() => {
+    if (board?.winnerLoserMode) {
+      return {
+        key: 'winner-score',
+        color: board?.teamPrimaryColor ?? selectedPool?.primary_color ?? '#8a8f98',
+        accent: board?.teamSecondaryColor ?? selectedPool?.secondary_color ?? '#233042',
+        logo: ''
+      }
+    }
+
     const teamName = board?.primaryTeam ?? selectedPool?.team_name ?? 'Preferred Team'
     const fallbackLogo = selectedPool?.logo_file ? resolveImageUrl(selectedPool.logo_file) : null
 
@@ -999,7 +1030,16 @@ export function LandingPage() {
   }, [board, selectedPool])
 
   const opponentBrand = useMemo(() => {
-    const opponentName = selectedGame?.opponent ?? board?.opponent ?? 'Opponent'
+    if (board?.winnerLoserMode) {
+      return {
+        key: 'losing-score',
+        color: '#5f6368',
+        accent: '#ffffff',
+        logo: ''
+      }
+    }
+
+    const opponentName = board?.opponent ?? selectedGame?.opponent ?? 'Opponent'
     return resolveTeamBrand(opponentName, '#5f6368', '#ffffff', null)
   }, [board, selectedGame])
 
@@ -1050,6 +1090,7 @@ export function LandingPage() {
       return []
     }
 
+    const winnerLoserMode = Boolean(board?.winnerLoserMode ?? selectedPool?.winner_loser_flg)
     const activeSimulationQuarter =
       simulationStatus?.mode === 'by_quarter' && Number(simulationStatus.currentGameId ?? 0) === Number(selectedGame.id)
         ? Number(simulationStatus.nextQuarter ?? 1)
@@ -1069,9 +1110,10 @@ export function LandingPage() {
 
     return [1, 2, 3, 4].map((quarter) => {
       const { primaryScore, opponentScore } = getQuarterScores(selectedGame, quarter)
+      const displayScores = getDisplayScores(primaryScore, opponentScore, winnerLoserMode)
       const hasScore = primaryScore !== null && opponentScore !== null
       const squareNum = hasScore
-        ? resolveWinningSquareNumber(board.rowNumbers, board.colNumbers, opponentScore, primaryScore)
+        ? resolveWinningSquareNumber(board.rowNumbers, board.colNumbers, opponentScore, primaryScore, winnerLoserMode)
         : null
       const matchingSquare = squareNum != null ? squaresByNumber.get(squareNum) ?? null : null
       const isActiveQuarter =
@@ -1082,13 +1124,13 @@ export function LandingPage() {
       return {
         quarter,
         status: !hasScore ? (isActiveQuarter ? 'active' : 'pending') : !gameComplete && isActiveQuarter ? 'active' : 'completed',
-        primaryScore,
-        opponentScore,
+        primaryScore: displayScores.topScore,
+        opponentScore: displayScores.sideScore,
         squareNum,
         ownerName: hasScore ? formatQuarterSquareOwner(matchingSquare, squareNum) : isActiveQuarter ? 'Live scoring in progress' : 'Awaiting score'
       }
     })
-  }, [board, latestScoredQuarter, selectedGame, simulationStatus])
+  }, [board, latestScoredQuarter, selectedGame, selectedPool, simulationStatus])
 
   const showQuarterSummaries = quarterSummaries.length > 0
 
@@ -1107,7 +1149,7 @@ export function LandingPage() {
   const canRefreshLiveQuarter = simulationStatus?.progressAction === 'complete_quarter'
   const simulationAdvanceLabel = simulationStatus?.progressAction === 'complete_game' ? 'Complete Game' : 'Complete Quarter'
   const primaryTeamLabel = board?.primaryTeam ?? selectedPool?.team_name ?? 'Preferred Team'
-  const opponentTeamLabel = selectedGame?.opponent ?? board?.opponent ?? 'Opponent'
+  const opponentTeamLabel = board?.opponent ?? selectedGame?.opponent ?? 'Opponent'
   const primaryTeamLogo = primaryBrand.logo
   const opponentTeamLogo = opponentBrand.logo
 

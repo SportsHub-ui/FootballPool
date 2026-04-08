@@ -88,6 +88,8 @@ type PoolBoard = {
   primaryTeamId: number | null // references nfl_team.id
   primaryTeam: string
   opponent: string
+  winnerLoserMode?: boolean
+  poolType?: string | null
   gameId: number | null
   gameDate: string | null
   teamName: string | null
@@ -441,6 +443,15 @@ export function ParticipantView() {
 
   const primaryBrand = useMemo(() => {
     if (!poolBoard) return null
+    if (poolBoard.winnerLoserMode) {
+      return {
+        key: 'winner-score',
+        color: poolBoard.teamPrimaryColor,
+        accent: poolBoard.teamSecondaryColor,
+        logo: ''
+      }
+    }
+
     return resolveTeamBrand(
       poolBoard.primaryTeam,
       poolBoard.teamPrimaryColor,
@@ -451,6 +462,14 @@ export function ParticipantView() {
 
   const opponentBrand = useMemo(() => {
     if (!poolBoard) return null
+    if (poolBoard.winnerLoserMode) {
+      return {
+        key: 'losing-score',
+        color: '#5f6368',
+        accent: '#ffffff',
+        logo: ''
+      }
+    }
     return resolveTeamBrand(poolBoard.opponent, '#0076b6', '#b0b7bc', null)
   }, [poolBoard])
 

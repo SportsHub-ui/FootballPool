@@ -541,6 +541,182 @@ describe('Football Pool API', () => {
       expect(createdPool?.q3_payout).toBe(0)
     })
 
+    it('should allow tournament pools without a preferred team and persist winner/loser scoring', async () => {
+      const poolName = `Tournament Pool ${Date.now()}`
+      const createResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName,
+          teamId,
+          season: 2026,
+          poolType: 'tournament',
+          leagueCode: 'NCAAB',
+          winnerLoserMode: true,
+          squareCost: 20,
+          q1Payout: 100,
+          q2Payout: 100,
+          q3Payout: 100,
+          q4Payout: 200
+        })
+
+      expect(createResponse.status).toBe(201)
+
+      const listResponse = await request(app)
+        .get('/api/setup/pools')
+        .set(organizerHeaders)
+
+      const createdPool = listResponse.body.pools.find((pool: { pool_name: string }) => pool.pool_name === poolName)
+      expect(createdPool?.pool_type).toBe('tournament')
+      expect(createdPool?.winner_loser_flg).toBe(true)
+      expect(createdPool?.primary_sport_team_id ?? null).toBeNull()
+      expect(createdPool?.primary_team ?? null).toBeNull()
+
+      const gamesResponse = await request(app)
+        .get(`/api/games?poolId=${createResponse.body.id}`)
+        .set(organizerHeaders)
+
+      expect(gamesResponse.status).toBe(200)
+      expect(gamesResponse.body.some((game: { opponent: string }) => game.opponent === 'Championship Game')).toBe(true)
+    })
+
+    it('should persist date windows and template metadata for tournament pools', async () => {
+      const poolName = `March Madness Pool ${Date.now()}`
+      const createResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName,
+          teamId,
+          season: 2026,
+          poolType: 'tournament',
+          leagueCode: 'NCAAB',
+          structureMode: 'template',
+          templateCode: 'ncaab_march_madness',
+          startDate: '2026-03-17',
+          endDate: '2026-04-06',
+          winnerLoserMode: true,
+          squareCost: 20,
+          q1Payout: 100,
+          q2Payout: 100,
+          q3Payout: 100,
+          q4Payout: 200
+        })
+
+      expect(createResponse.status).toBe(201)
+
+      const listResponse = await request(app)
+        .get('/api/setup/pools')
+        .set(organizerHeaders)
+
+      const createdPool = listResponse.body.pools.find((pool: { pool_name: string }) => pool.pool_name === poolName)
+      expect(createdPool?.structure_mode).toBe('template')
+      expect(createdPool?.template_code).toBe('ncaab_march_madness')
+      expect(createdPool?.start_date).toContain('2026-03-17')
+      expect(createdPool?.end_date).toContain('2026-04-06')
+    })
+
+    it('should preload the full bracket scaffold for NCAAB tournament templates', async () => {
+      const poolName = `Bracket Scaffold Pool ${Date.now()}`
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName,
+          teamId,
+          season: 2026,
+          poolType: 'tournament',
+          leagueCode: 'NCAAB',
+          structureMode: 'template',
+          templateCode: 'ncaab_march_madness',
+          startDate: '2026-03-17',
+          endDate: '2026-04-06',
+          winnerLoserMode: true,
+          squareCost: 20,
+          q1Payout: 100,
+          q2Payout: 100,
+          q3Payout: 100,
+          q4Payout: 200
+        })
+
+      expect(poolResponse.status).toBe(201)
+
+      const gamesResponse = await request(app)
+        .get(`/api/games?poolId=${poolResponse.body.id}`)
+        .set(organizerHeaders)
+
+      expect(gamesResponse.status).toBe(200)
+      expect(gamesResponse.body.length).toBeGreaterThanOrEqual(67)
+      expect(gamesResponse.body.some((game: { round_label: string }) => game.round_label === 'Round of 64')).toBe(true)
+      expect(gamesResponse.body.some((game: { round_label: string }) => game.round_label === 'Sweet 16')).toBe(true)
+      expect(gamesResponse.body.some((game: { championship_flg: boolean }) => game.championship_flg)).toBe(true)
+      expect(
+        gamesResponse.body.some(
+          (game: { round_label: string; opponent: string }) =>
+            game.round_label === 'Sweet 16' && String(game.opponent).includes('Winner of')
+        )
+      ).toBe(true)
+    })
+
+    it('should persist round metadata for tournament schedules', async () => {
+      const poolName = `Bracket Pool ${Date.now()}`
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName,
+          teamId,
+          season: 2026,
+          poolType: 'tournament',
+          leagueCode: 'NCAAB',
+          structureMode: 'template',
+          templateCode: 'ncaab_march_madness',
+          startDate: '2026-03-17',
+          endDate: '2026-04-06',
+          winnerLoserMode: true,
+          squareCost: 20,
+          q1Payout: 100,
+          q2Payout: 100,
+          q3Payout: 100,
+          q4Payout: 200
+        })
+
+      expect(poolResponse.status).toBe(201)
+      const poolId = Number(poolResponse.body.id)
+
+      const gameResponse = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: 4,
+          roundLabel: 'Sweet 16',
+          roundSequence: 4,
+          bracketRegion: 'Midwest',
+          matchupOrder: 2,
+          opponent: 'Duke vs Houston',
+          gameDate: '2026-03-27'
+        })
+
+      expect(gameResponse.status).toBe(200)
+      expect(gameResponse.body.game.round_label).toBe('Sweet 16')
+      expect(gameResponse.body.game.round_sequence).toBe(4)
+      expect(gameResponse.body.game.bracket_region).toBe('Midwest')
+      expect(gameResponse.body.game.matchup_order).toBe(2)
+      expect(gameResponse.body.game.championship_flg).toBe(false)
+
+      const gamesResponse = await request(app)
+        .get(`/api/games?poolId=${poolId}`)
+        .set(organizerHeaders)
+
+      expect(gamesResponse.status).toBe(200)
+      const seededRoundGame = gamesResponse.body.find(
+        (game: { round_label: string; bracket_region: string; opponent: string }) =>
+          game.round_label === 'Sweet 16' && game.opponent === 'Duke vs Houston'
+      )
+      expect(seededRoundGame?.bracket_region).toBe('Midwest')
+    })
+
     it('should initialize 100 squares in a pool', async () => {
       const response = await request(app)
         .post(`/api/setup/pools/${createdPoolId}/squares/init`)
@@ -786,6 +962,112 @@ describe('Football Pool API', () => {
 
       expect(response.status).toBe(200)
       expect(response.body.game).toHaveProperty('q1_primary_score', 3)
+    })
+
+    it('should use winner and loser digits when a pool is configured for winner/loser scoring', async () => {
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({ teamName: `Winner Loser Team ${Date.now()}` })
+
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `Winner Loser Pool ${Date.now()}`,
+          teamId: teamResponse.body.id,
+          season: 2026,
+          poolType: 'single_game',
+          primaryTeam: 'Packers',
+          winnerLoserMode: true,
+          squareCost: 20,
+          q1Payout: 0,
+          q2Payout: 0,
+          q3Payout: 0,
+          q4Payout: 400
+        })
+
+      expect(poolResponse.status).toBe(201)
+      const winnerLoserPoolId = Number(poolResponse.body.id)
+
+      const participantResponse = await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Winner',
+          lastName: 'Loser',
+          email: `winner-loser-${Date.now()}@example.com`,
+          phone: '5554400000'
+        })
+
+      expect(participantResponse.status).toBe(201)
+      const participantId = Number(participantResponse.body.id)
+
+      await request(app)
+        .post(`/api/setup/pools/${winnerLoserPoolId}/squares/init`)
+        .set(organizerHeaders)
+        .send({})
+
+      const assignResponse = await request(app)
+        .patch(`/api/setup/pools/${winnerLoserPoolId}/squares/48`)
+        .set(organizerHeaders)
+        .send({ participantId, playerId: null, paidFlg: true })
+
+      expect(assignResponse.status).toBe(200)
+
+      const winnerLoserGameResponse = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId: winnerLoserPoolId,
+          weekNum: 1,
+          opponent: 'Winner Loser Opponent',
+          gameDate: '2026-02-01'
+        })
+
+      expect(winnerLoserGameResponse.status).toBe(200)
+      const winnerLoserGameId = Number(winnerLoserGameResponse.body.game.id)
+
+      await db.query(
+        `UPDATE football_pool.pool_game
+         SET row_numbers = $2::jsonb,
+             column_numbers = $3::jsonb
+         WHERE pool_id = $1
+           AND game_id = $4`,
+        [
+          winnerLoserPoolId,
+          JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+          JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+          winnerLoserGameId
+        ]
+      )
+
+      const scoreResponse = await request(app)
+        .patch(`/api/games/${winnerLoserGameId}/scores`)
+        .set(organizerHeaders)
+        .send({
+          q1PrimaryScore: null,
+          q1OpponentScore: null,
+          q2PrimaryScore: null,
+          q2OpponentScore: null,
+          q3PrimaryScore: null,
+          q3OpponentScore: null,
+          q4PrimaryScore: 14,
+          q4OpponentScore: 27
+        })
+
+      expect(scoreResponse.status).toBe(200)
+
+      const boardResponse = await request(app)
+        .get(`/api/landing/pools/${winnerLoserPoolId}/board?gameId=${winnerLoserGameId}`)
+        .set(organizerHeaders)
+
+      expect(boardResponse.status).toBe(200)
+      expect(boardResponse.body.board.primaryTeam).toBe('Winning Score')
+      expect(boardResponse.body.board.opponent).toBe('Losing Score')
+
+      const winningSquare = boardResponse.body.board.squares.find((square: { square_num: number }) => square.square_num === 48)
+      expect(winningSquare?.current_game_won).toBe(400)
     })
   })
 

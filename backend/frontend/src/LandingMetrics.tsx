@@ -5,6 +5,11 @@ export type LandingPool = {
   pool_name: string | null
   season: number | null
   primary_team_id: number | null // references sport_team.id
+  primary_sport_team_id?: number | null
+  pool_type?: string | null
+  sport_code?: string | null
+  league_code?: string | null
+  winner_loser_flg?: boolean
   square_cost?: number | null
   default_flg: boolean
   sign_in_req_flg: boolean

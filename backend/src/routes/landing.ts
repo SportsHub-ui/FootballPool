@@ -151,7 +151,12 @@ const loadAccessiblePools = async (client: PoolClient, userId: number | null, ca
     `SELECT p.id,
             p.pool_name,
             p.season,
+            COALESCE(p.pool_type, 'season') AS pool_type,
             p.primary_team,
+            p.primary_sport_team_id,
+            p.sport_code,
+            p.league_code,
+            COALESCE(p.winner_loser_flg, FALSE) AS winner_loser_flg,
             p.square_cost,
             COALESCE(p.default_flg, FALSE) AS default_flg,
             COALESCE(p.sign_in_req_flg, FALSE) AS sign_in_req_flg,
@@ -186,7 +191,12 @@ const loadAccessiblePool = async (client: PoolClient, poolId: number, userId: nu
     `SELECT p.id,
             p.pool_name,
             p.season,
+            COALESCE(p.pool_type, 'season') AS pool_type,
             p.primary_team,
+            p.primary_sport_team_id,
+            p.sport_code,
+            p.league_code,
+            COALESCE(p.winner_loser_flg, FALSE) AS winner_loser_flg,
             p.square_cost,
             COALESCE(p.default_flg, FALSE) AS default_flg,
             COALESCE(p.sign_in_req_flg, FALSE) AS sign_in_req_flg,
@@ -270,7 +280,12 @@ const loadPoolByDisplayToken = async (client: PoolClient, displayToken: string) 
     `SELECT p.id,
             p.pool_name,
             p.season,
+            COALESCE(p.pool_type, 'season') AS pool_type,
             p.primary_team,
+            p.primary_sport_team_id,
+            p.sport_code,
+            p.league_code,
+            COALESCE(p.winner_loser_flg, FALSE) AS winner_loser_flg,
             p.square_cost,
             COALESCE(p.default_flg, FALSE) AS default_flg,
             COALESCE(p.sign_in_req_flg, FALSE) AS sign_in_req_flg,
@@ -406,6 +421,7 @@ const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, g
   };
 
   const simulationStatus = await getPoolSimulationStatus(client, poolId).catch(() => null);
+  const winnerLoserMode = Boolean(pool?.winner_loser_flg);
   const currentGameTotals = new Map<number, number>();
   const seasonTotals = new Map<number, number>();
   const selectedGameIsLiveSimulationQuarter =
@@ -422,7 +438,8 @@ const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, g
           selectedGame.row_numbers,
           selectedGame.col_numbers,
           getQuarterScores(selectedGame, latestScoredQuarter).opponentScore,
-          getQuarterScores(selectedGame, latestScoredQuarter).primaryScore
+          getQuarterScores(selectedGame, latestScoredQuarter).primaryScore,
+          winnerLoserMode
         )
       : null;
 
@@ -451,22 +468,22 @@ const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, g
     const entries = [
       {
         quarter: 1,
-        squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, game.q1_opponent_score, game.q1_primary_score),
+        squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, game.q1_opponent_score, game.q1_primary_score, winnerLoserMode),
         amount: Number(payouts.q1_payout ?? 0)
       },
       {
         quarter: 2,
-        squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, game.q2_opponent_score, game.q2_primary_score),
+        squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, game.q2_opponent_score, game.q2_primary_score, winnerLoserMode),
         amount: Number(payouts.q2_payout ?? 0)
       },
       {
         quarter: 3,
-        squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, game.q3_opponent_score, game.q3_primary_score),
+        squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, game.q3_opponent_score, game.q3_primary_score, winnerLoserMode),
         amount: Number(payouts.q3_payout ?? 0)
       },
       {
         quarter: 4,
-        squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, game.q4_opponent_score, game.q4_primary_score),
+        squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, game.q4_opponent_score, game.q4_primary_score, winnerLoserMode),
         amount: Number(payouts.q4_payout ?? 0)
       }
     ];
@@ -500,9 +517,11 @@ const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, g
     board: {
       poolId,
       poolName: pool.pool_name,
-      primaryTeam: pool.primary_team ?? pool.team_name ?? 'Preferred Team',
-      opponent: selectedGame?.opponent ?? 'Opponent',
+      primaryTeam: winnerLoserMode ? 'Winning Score' : pool.primary_team ?? pool.team_name ?? 'Preferred Team',
+      opponent: winnerLoserMode ? 'Losing Score' : selectedGame?.opponent ?? 'Opponent',
       gameId: selectedGame?.id ?? null,
+      winnerLoserMode,
+      poolType: pool.pool_type ?? 'season',
       gameDate: selectedGame?.game_dt ?? null,
       teamName: pool.team_name,
       teamPrimaryColor: pool.primary_color ?? '#8a8f98',

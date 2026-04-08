@@ -2,7 +2,9 @@
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { db } from '../config/db';
+import { resolveTemplateRoundSequence } from '../config/poolStructures';
 import { requireRole } from '../middleware/auth';
+import { ensurePoolGameStructureSupport } from '../services/poolGameStructureSupport';
 import { importPoolScheduleFromEspn } from '../services/scheduleImport';
 import { ingestGameScores } from '../services/scoreIngestion';
 
@@ -14,6 +16,11 @@ gamesRouter.use(requireRole('organizer'));
 const createGameSchema = z.object({
   poolId: z.number().int().positive(),
   weekNum: z.number().int().min(1).max(400).nullable().optional(),
+  roundLabel: z.string().trim().max(80).optional().or(z.literal('')),
+  roundSequence: z.number().int().min(1).max(50).nullable().optional(),
+  bracketRegion: z.string().trim().max(64).optional().or(z.literal('')),
+  matchupOrder: z.number().int().min(1).max(100).nullable().optional(),
+  isChampionship: z.boolean().optional().default(false),
   homeTeamId: z.number().int().positive().optional(),
   awayTeamId: z.number().int().positive().optional(),
   opponent: z.string().trim().min(1).optional(),
@@ -93,6 +100,11 @@ const buildGameResponse = (row: Record<string, unknown>) => {
       : Array.isArray(row.col_numbers)
         ? row.col_numbers
         : null,
+    round_label: typeof row.round_label === 'string' ? row.round_label : null,
+    round_sequence: toNullableNumber(row.round_sequence),
+    bracket_region: typeof row.bracket_region === 'string' ? row.bracket_region : null,
+    matchup_order: toNullableNumber(row.matchup_order),
+    championship_flg: Boolean(row.championship_flg ?? false),
     q1_primary_score: toNullableNumber(scores['1']?.home),
     q1_opponent_score: toNullableNumber(scores['1']?.away),
     q2_primary_score: toNullableNumber(scores['2']?.home),
@@ -110,6 +122,11 @@ const loadPoolGameRecord = async (client: PoolClient, gameId: number, poolId?: n
             pg.pool_id,
             pg.row_numbers,
             pg.column_numbers,
+            pg.round_label,
+            pg.round_sequence,
+            pg.bracket_region,
+            pg.matchup_order,
+            COALESCE(pg.championship_flg, FALSE) AS championship_flg,
             g.id AS game_id,
             g.season_year,
             g.week_number,
@@ -141,19 +158,25 @@ const loadPoolGameRecord = async (client: PoolClient, gameId: number, poolId?: n
 const resolveGameTeams = async (
   client: PoolClient,
   input: z.infer<typeof createGameSchema>
-): Promise<{ seasonYear: number; homeTeamId: number; awayTeamId: number }> => {
+): Promise<{ seasonYear: number; homeTeamId: number; awayTeamId: number; templateCode: string | null }> => {
   const poolResult = await client.query<{
     season: number | null
+    pool_type: string | null
     primary_team: string | null
     primary_sport_team_id: number | null
     sport_code: string | null
     league_code: string | null
+    template_code: string | null
+    winner_loser_flg: boolean | null
   }>(
     `SELECT season,
+            COALESCE(pool_type, 'season') AS pool_type,
             primary_team,
             primary_sport_team_id,
             COALESCE(sport_code, 'FOOTBALL') AS sport_code,
-            COALESCE(league_code, 'NFL') AS league_code
+            COALESCE(league_code, 'NFL') AS league_code,
+            template_code,
+            COALESCE(winner_loser_flg, FALSE) AS winner_loser_flg
      FROM football_pool.pool
      WHERE id = $1
      LIMIT 1`,
@@ -239,6 +262,18 @@ const resolveGameTeams = async (
     throw new Error('Pool season is required before creating games')
   }
 
+  if (resolvedHomeTeamId == null && String(pool.pool_type ?? 'season') === 'tournament') {
+    const genericHomeName = pool.primary_team?.trim() || (pool.winner_loser_flg ? 'Winning Score' : 'Home Team')
+    const createdHomeResult = await client.query<{ id: number }>(
+      `INSERT INTO football_pool.sport_team (name, sport_code, league_code)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (sport_code, league_code, name) DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`,
+      [genericHomeName, sportCode, leagueCode]
+    )
+    resolvedHomeTeamId = createdHomeResult.rows[0]?.id ?? null
+  }
+
   if (resolvedHomeTeamId == null) {
     throw new Error('Pool primary team could not be resolved in sport_team')
   }
@@ -250,7 +285,31 @@ const resolveGameTeams = async (
   return {
     seasonYear: Number(pool.season),
     homeTeamId: Number(resolvedHomeTeamId),
-    awayTeamId: Number(resolvedAwayTeamId)
+    awayTeamId: Number(resolvedAwayTeamId),
+    templateCode: pool.template_code ?? null
+  }
+}
+
+const resolvePoolGameRoundMetadata = (
+  input: z.infer<typeof createGameSchema>,
+  templateCode?: string | null
+): {
+  roundLabel: string | null
+  roundSequence: number | null
+  bracketRegion: string | null
+  matchupOrder: number | null
+  championshipFlg: boolean
+} => {
+  const roundLabel = input.roundLabel?.trim() || null
+  const derivedSequence = resolveTemplateRoundSequence(templateCode ?? null, roundLabel)
+  const championshipFlg = Boolean(input.isChampionship || (roundLabel && /championship/i.test(roundLabel)))
+
+  return {
+    roundLabel: championshipFlg && !roundLabel ? 'Championship' : roundLabel,
+    roundSequence: input.roundSequence ?? derivedSequence ?? input.weekNum ?? null,
+    bracketRegion: input.bracketRegion?.trim() || null,
+    matchupOrder: input.matchupOrder ?? null,
+    championshipFlg
   }
 }
 
@@ -297,9 +356,11 @@ gamesRouter.post('/', async (req, res) => {
     const client = await db.connect()
 
     try {
+      await ensurePoolGameStructureSupport(client)
       await client.query('BEGIN')
       const resolved = await resolveGameTeams(client, input)
       const resolvedWeekNum = await resolveWeekNumber(client, input.poolId, input.weekNum)
+      const roundMetadata = resolvePoolGameRoundMetadata(input, resolved.templateCode)
 
       const gameResult = await client.query<{ id: number }>(
         `INSERT INTO football_pool.game (
@@ -328,15 +389,42 @@ gamesRouter.post('/', async (req, res) => {
       const gameId = Number(gameResult.rows[0]?.id)
 
       const poolGameResult = await client.query(
-        `INSERT INTO football_pool.pool_game (pool_id, game_id, row_numbers, column_numbers, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, NOW(), NOW())
+        `INSERT INTO football_pool.pool_game (
+           pool_id,
+           game_id,
+           row_numbers,
+           column_numbers,
+           round_label,
+           round_sequence,
+           bracket_region,
+           matchup_order,
+           championship_flg,
+           created_at,
+           updated_at
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
          ON CONFLICT (pool_id, game_id)
          DO UPDATE SET
            row_numbers = EXCLUDED.row_numbers,
            column_numbers = EXCLUDED.column_numbers,
+           round_label = EXCLUDED.round_label,
+           round_sequence = EXCLUDED.round_sequence,
+           bracket_region = EXCLUDED.bracket_region,
+           matchup_order = EXCLUDED.matchup_order,
+           championship_flg = EXCLUDED.championship_flg,
            updated_at = NOW()
          RETURNING *`,
-        [input.poolId, gameId, input.rowNumbers ?? null, input.columnNumbers ?? null]
+        [
+          input.poolId,
+          gameId,
+          input.rowNumbers ?? null,
+          input.columnNumbers ?? null,
+          roundMetadata.roundLabel,
+          roundMetadata.roundSequence,
+          roundMetadata.bracketRegion,
+          roundMetadata.matchupOrder,
+          roundMetadata.championshipFlg
+        ]
       )
 
       const game = await loadPoolGameRecord(client, gameId, input.poolId)
@@ -400,9 +488,11 @@ gamesRouter.patch('/:gameId', async (req, res) => {
     const client = await db.connect()
 
     try {
+      await ensurePoolGameStructureSupport(client)
       await client.query('BEGIN')
       const resolved = await resolveGameTeams(client, input)
       const resolvedWeekNum = await resolveWeekNumber(client, input.poolId, input.weekNum, gameId)
+      const roundMetadata = resolvePoolGameRoundMetadata(input, resolved.templateCode)
 
       await client.query(
         `UPDATE football_pool.game
@@ -421,11 +511,26 @@ gamesRouter.patch('/:gameId', async (req, res) => {
         `UPDATE football_pool.pool_game
          SET row_numbers = $1,
              column_numbers = $2,
+             round_label = $3,
+             round_sequence = $4,
+             bracket_region = $5,
+             matchup_order = $6,
+             championship_flg = $7,
              updated_at = NOW()
-         WHERE game_id = $3
-           AND pool_id = $4
+         WHERE game_id = $8
+           AND pool_id = $9
          RETURNING *`,
-        [input.rowNumbers ?? null, input.columnNumbers ?? null, gameId, input.poolId]
+        [
+          input.rowNumbers ?? null,
+          input.columnNumbers ?? null,
+          roundMetadata.roundLabel,
+          roundMetadata.roundSequence,
+          roundMetadata.bracketRegion,
+          roundMetadata.matchupOrder,
+          roundMetadata.championshipFlg,
+          gameId,
+          input.poolId
+        ]
       )
 
       await client.query('COMMIT')
@@ -545,11 +650,17 @@ gamesRouter.get('/', async (req, res) => {
     const { poolId } = z.object({ poolId: z.coerce.number().int().positive() }).parse(req.query);
     const client = await db.connect();
     try {
+      await ensurePoolGameStructureSupport(client)
       const result = await client.query(
         `SELECT pg.id AS pool_game_id,
                 pg.pool_id,
                 pg.row_numbers,
                 pg.column_numbers,
+                pg.round_label,
+                pg.round_sequence,
+                pg.bracket_region,
+                pg.matchup_order,
+                COALESCE(pg.championship_flg, FALSE) AS championship_flg,
                 g.id AS game_id,
                 g.season_year,
                 g.week_number,
@@ -569,7 +680,10 @@ gamesRouter.get('/', async (req, res) => {
          JOIN football_pool.sport_team home ON g.home_team_id = home.id
          JOIN football_pool.sport_team away ON g.away_team_id = away.id
          WHERE pg.pool_id = $1
-         ORDER BY g.week_number, COALESCE(g.kickoff_at, g.game_date::timestamp), g.id`,
+         ORDER BY COALESCE(pg.round_sequence, g.week_number, 9999),
+                  COALESCE(pg.matchup_order, 9999),
+                  COALESCE(g.kickoff_at, g.game_date::timestamp),
+                  g.id`,
         [poolId]
       )
       res.json(result.rows.map((row) => buildGameResponse(row as Record<string, unknown>)))
@@ -592,11 +706,17 @@ gamesRouter.get('/:gameId', async (req, res) => {
     const { gameId } = z.object({ gameId: z.coerce.number().int().positive() }).parse(req.params);
     const client = await db.connect();
     try {
+      await ensurePoolGameStructureSupport(client)
       const result = await client.query(
         `SELECT pg.id AS pool_game_id,
                 pg.pool_id,
                 pg.row_numbers,
                 pg.column_numbers,
+                pg.round_label,
+                pg.round_sequence,
+                pg.bracket_region,
+                pg.matchup_order,
+                COALESCE(pg.championship_flg, FALSE) AS championship_flg,
                 g.id AS game_id,
                 g.season_year,
                 g.week_number,

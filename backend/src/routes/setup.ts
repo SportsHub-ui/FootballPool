@@ -7,6 +7,14 @@ import { z } from 'zod';
 import { db } from '../config/db';
 import { env } from '../config/env';
 import { getPoolLeagueDefinition, normalizePayoutsForLeague, supportedLeagueCodes } from '../config/poolLeagues';
+import {
+  getPoolStructureMode,
+  getPoolTemplateDefinition,
+  poolStructureModeValues,
+  poolTemplateValues,
+  resolveTemplateRoundSequence
+} from '../config/poolStructures';
+import { getPoolTypeDefinition, poolTypeValues } from '../config/poolTypes';
 import { requireRole } from '../middleware/auth';
 import {
   advancePoolSeasonSimulation,
@@ -17,6 +25,8 @@ import {
 import { ensurePoolSquaresInitialized } from '../services/poolSquares';
 import { ensurePoolDisplayTokenSupport, generateUniquePoolDisplayToken } from '../services/poolDisplay';
 import { ensureNotificationSupport } from '../services/notifications';
+import { ensurePoolGameStructureSupport } from '../services/poolGameStructureSupport';
+import { ensurePoolStructureSupport } from '../services/poolStructureSupport';
 import {
   availableNotificationVariables,
   notificationMarkupFormatValues,
@@ -74,6 +84,15 @@ const optionalVenmoAcctSchema = z
 
 const notificationLevelSchema = z.enum(['none', 'quarter_win', 'game_total']).optional();
 const leagueCodeSchema = z.enum(supportedLeagueCodes).optional();
+const poolTypeSchema = z.enum(poolTypeValues).optional().default('season');
+const poolStructureModeSchema = z.enum(poolStructureModeValues).optional().default('manual');
+const poolTemplateCodeSchema = z.enum(poolTemplateValues).optional().or(z.literal(''));
+const optionalDateSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must use YYYY-MM-DD format')
+  .optional()
+  .or(z.literal(''));
 
 const memberAssignmentSchema = z
   .object({
@@ -119,21 +138,76 @@ const createTeamSchema = z.object({
 
 const updateTeamSchema = createTeamSchema;
 
-const createPoolSchema = z.object({
-  poolName: z.string().min(1),
-  teamId: z.number().int().positive(),
-  season: z.number().int().min(2000).max(2100),
-  leagueCode: leagueCodeSchema,
-  primarySportTeamId: z.number().int().positive().optional(),
-  primaryTeam: z.string().trim().optional().or(z.literal('')),
-  squareCost: z.number().int().nonnegative(),
-  q1Payout: z.number().int().nonnegative(),
-  q2Payout: z.number().int().nonnegative(),
-  q3Payout: z.number().int().nonnegative(),
-  q4Payout: z.number().int().nonnegative(),
-  contactNotificationLevel: notificationLevelSchema,
-  contactNotifyOnSquareLead: z.boolean().optional()
-});
+const createPoolSchema = z
+  .object({
+    poolName: z.string().min(1),
+    teamId: z.number().int().positive(),
+    season: z.number().int().min(2000).max(2100),
+    poolType: poolTypeSchema,
+    leagueCode: leagueCodeSchema,
+    structureMode: poolStructureModeSchema,
+    templateCode: poolTemplateCodeSchema,
+    startDate: optionalDateSchema,
+    endDate: optionalDateSchema,
+    primarySportTeamId: z.number().int().positive().optional(),
+    primaryTeam: z.string().trim().optional().or(z.literal('')),
+    winnerLoserMode: z.boolean().optional().default(false),
+    squareCost: z.number().int().nonnegative(),
+    q1Payout: z.number().int().nonnegative(),
+    q2Payout: z.number().int().nonnegative(),
+    q3Payout: z.number().int().nonnegative(),
+    q4Payout: z.number().int().nonnegative(),
+    contactNotificationLevel: notificationLevelSchema,
+    contactNotifyOnSquareLead: z.boolean().optional()
+  })
+  .superRefine((value, context) => {
+    const startDate = value.startDate?.trim() || '';
+    const endDate = value.endDate?.trim() || '';
+    const structureMode = getPoolStructureMode(value.structureMode);
+    const poolType = getPoolTypeDefinition(value.poolType);
+    const templateDefinition = getPoolTemplateDefinition(value.templateCode || null);
+    const leagueCode = String(value.leagueCode ?? 'NFL').trim().toUpperCase();
+
+    if ((startDate && !endDate) || (!startDate && endDate)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['startDate'],
+        message: 'Provide both a start date and an end date for date-bounded pools.'
+      });
+    }
+
+    if (startDate && endDate && endDate < startDate) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['endDate'],
+        message: 'End date must be on or after the start date.'
+      });
+    }
+
+    if (structureMode === 'template' && !templateDefinition) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['templateCode'],
+        message: 'Choose a supported template when template mode is selected.'
+      });
+    }
+
+    if (templateDefinition && !templateDefinition.supportedPoolTypes.includes(poolType.code)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['templateCode'],
+        message: `${templateDefinition.label} is only available for ${templateDefinition.supportedPoolTypes.join(', ')} pools.`
+      });
+    }
+
+    if (templateDefinition && !templateDefinition.supportedLeagueCodes.includes(leagueCode)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['templateCode'],
+        message: `${templateDefinition.label} is only available for ${templateDefinition.supportedLeagueCodes.join(', ')} pools.`
+      });
+    }
+  });
 
 const updatePoolSchema = createPoolSchema;
 
@@ -533,6 +607,333 @@ const resolvePrimarySportTeamContext = async (
     primarySportTeamId: null,
     primaryTeamName: null
   };
+};
+
+const resolveOrCreateNamedSportTeam = async (
+  client: PoolClient,
+  name: string,
+  sportCode: string,
+  leagueCode: string
+): Promise<number> => {
+  const normalizedName = name.trim();
+  const result = await client.query<{ id: number }>(
+    `INSERT INTO football_pool.sport_team (name, sport_code, league_code)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (sport_code, league_code, name) DO UPDATE SET name = EXCLUDED.name
+     RETURNING id`,
+    [normalizedName, sportCode, leagueCode]
+  );
+
+  return Number(result.rows[0].id);
+};
+
+const normalizeOptionalDateValue = (value?: string | null): string | null => {
+  const normalized = value?.trim() ?? '';
+  return normalized.length > 0 ? normalized : null;
+};
+
+const resolvePoolStructureSettings = (value: {
+  season: number;
+  poolType?: string | null;
+  structureMode?: string | null;
+  templateCode?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+}) => {
+  const poolType = getPoolTypeDefinition(value.poolType);
+
+  if (poolType.code === 'season') {
+    return {
+      structureMode: 'manual' as const,
+      templateCode: null,
+      startDate: null,
+      endDate: null
+    };
+  }
+
+  const structureMode = getPoolStructureMode(value.structureMode ?? (value.templateCode ? 'template' : 'manual'));
+  const templateDefinition = structureMode === 'template' ? getPoolTemplateDefinition(value.templateCode ?? null) : null;
+  const defaultWindow = templateDefinition?.getDefaultDateWindow(value.season);
+  let startDate = normalizeOptionalDateValue(value.startDate) ?? defaultWindow?.startDate ?? null;
+  let endDate = normalizeOptionalDateValue(value.endDate) ?? defaultWindow?.endDate ?? null;
+
+  if (poolType.code === 'single_game') {
+    if (startDate && !endDate) {
+      endDate = startDate;
+    }
+
+    if (endDate && !startDate) {
+      startDate = endDate;
+    }
+  }
+
+  return {
+    structureMode,
+    templateCode: templateDefinition?.code ?? null,
+    startDate,
+    endDate
+  };
+};
+
+const addDaysToDateString = (baseDate: string, offsetDays: number): string => {
+  const date = new Date(`${baseDate}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + Math.max(0, offsetDays));
+  return date.toISOString().slice(0, 10);
+};
+
+const getTournamentChampionshipDate = (leagueCode: string, season: number, endDate?: string | null, templateCode?: string | null): string => {
+  const explicitEndDate = normalizeOptionalDateValue(endDate);
+  if (explicitEndDate) {
+    return explicitEndDate;
+  }
+
+  const templateDefinition = getPoolTemplateDefinition(templateCode ?? null);
+  if (templateDefinition) {
+    return templateDefinition.getDefaultDateWindow(season).endDate;
+  }
+  const normalizedLeague = leagueCode.trim().toUpperCase();
+
+  if (normalizedLeague === 'NFL' || normalizedLeague === 'NCAAF') {
+    return `${season + 1}-02-15`;
+  }
+
+  if (normalizedLeague === 'NCAAB') {
+    return `${season}-04-07`;
+  }
+
+  if (normalizedLeague === 'NBA' || normalizedLeague === 'NHL') {
+    return `${season}-06-20`;
+  }
+
+  if (normalizedLeague === 'MLB') {
+    return `${season}-11-01`;
+  }
+
+  return `${season}-12-31`;
+};
+
+const buildTournamentTemplateScaffold = (options: {
+  season: number;
+  leagueCode: string;
+  templateCode?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+}): Array<{
+  roundLabel: string;
+  roundSequence: number;
+  bracketRegion: string | null;
+  matchupOrder: number;
+  championshipFlg: boolean;
+  opponentLabel: string;
+  gameDate: string;
+}> => {
+  const templateDefinition = getPoolTemplateDefinition(options.templateCode ?? null);
+  if (!templateDefinition) {
+    return [];
+  }
+
+  const defaultWindow = templateDefinition.getDefaultDateWindow(options.season);
+  const scaffoldStartDate = normalizeOptionalDateValue(options.startDate) ?? defaultWindow.startDate;
+  const scaffoldEndDate = getTournamentChampionshipDate(
+    options.leagueCode,
+    options.season,
+    options.endDate ?? defaultWindow.endDate,
+    options.templateCode
+  );
+
+  const scaffoldEntries: Array<{
+    roundLabel: string;
+    roundSequence: number;
+    bracketRegion: string | null;
+    matchupOrder: number;
+    championshipFlg: boolean;
+    opponentLabel: string;
+    gameDate: string;
+  }> = [];
+
+  for (let roundIndex = 0; roundIndex < templateDefinition.rounds.length; roundIndex += 1) {
+    const round = templateDefinition.rounds[roundIndex];
+    const previousRound = roundIndex > 0 ? templateDefinition.rounds[roundIndex - 1] : null;
+    const regions = round.regions?.length ? round.regions : [null];
+    const gamesPerRegion = Math.max(1, Math.ceil(round.gameCount / regions.length));
+
+    for (let index = 0; index < round.gameCount; index += 1) {
+      const region = regions[Math.min(Math.floor(index / gamesPerRegion), regions.length - 1)];
+      const matchupOrder = (index % gamesPerRegion) + 1;
+
+      let opponentLabel: string;
+      if (round.championship) {
+        opponentLabel = 'Winner of Final Four Game 1 vs Winner of Final Four Game 2';
+      } else if (previousRound) {
+        const priorRoundLabel = previousRound.label;
+        const firstSource = Math.max(1, matchupOrder * 2 - 1);
+        const secondSource = matchupOrder * 2;
+        const regionPrefix = region ? `${region} ` : '';
+        opponentLabel = `${regionPrefix}Winner of ${priorRoundLabel} Game ${firstSource} vs Winner of ${priorRoundLabel} Game ${secondSource}`;
+      } else if (region) {
+        opponentLabel = `${region} ${round.label} Game ${matchupOrder}`;
+      } else {
+        opponentLabel = `${round.label} Game ${index + 1}`;
+      }
+
+      scaffoldEntries.push({
+        roundLabel: round.label,
+        roundSequence: round.sequence,
+        bracketRegion: region,
+        matchupOrder,
+        championshipFlg: Boolean(round.championship),
+        opponentLabel,
+        gameDate: round.championship
+          ? scaffoldEndDate
+          : addDaysToDateString(scaffoldStartDate, round.dateOffsetDays ?? Math.max(0, (round.sequence - 1) * 3))
+      });
+    }
+  }
+
+  return scaffoldEntries;
+};
+
+const ensureTournamentChampionshipPlaceholder = async (
+  client: PoolClient,
+  options: {
+    poolId: number;
+    season: number;
+    sportCode: string;
+    leagueCode: string;
+    primaryTeamName: string | null;
+    winnerLoserMode: boolean;
+    startDate?: string | null;
+    endDate?: string | null;
+    templateCode?: string | null;
+  }
+): Promise<void> => {
+  await ensurePoolGameStructureSupport(client);
+
+  const homeTeamId = await resolveOrCreateNamedSportTeam(
+    client,
+    options.primaryTeamName?.trim() || (options.winnerLoserMode ? 'Winning Score' : 'Home Team'),
+    options.sportCode,
+    options.leagueCode
+  );
+
+  const scaffoldEntries = buildTournamentTemplateScaffold(options);
+  if (scaffoldEntries.length > 0) {
+    for (const entry of scaffoldEntries) {
+      const awayTeamId = await resolveOrCreateNamedSportTeam(client, entry.opponentLabel, options.sportCode, options.leagueCode);
+      const gameResult = await client.query<{ id: number }>(
+        `INSERT INTO football_pool.game (
+           season_year,
+           week_number,
+           home_team_id,
+           away_team_id,
+           game_date,
+           kickoff_at,
+           state,
+           is_simulation,
+           scores_by_quarter,
+           created_at,
+           updated_at
+         )
+         VALUES ($1, $2, $3, $4, $5::date, $5::timestamp, 'scheduled', FALSE, '{}'::jsonb, NOW(), NOW())
+         ON CONFLICT (season_year, week_number, home_team_id, away_team_id, game_date)
+         DO UPDATE SET updated_at = NOW()
+         RETURNING id`,
+        [options.season, entry.roundSequence, homeTeamId, awayTeamId, entry.gameDate]
+      );
+
+      const gameId = Number(gameResult.rows[0]?.id);
+      await client.query(
+        `INSERT INTO football_pool.pool_game (
+           pool_id,
+           game_id,
+           row_numbers,
+           column_numbers,
+           round_label,
+           round_sequence,
+           bracket_region,
+           matchup_order,
+           championship_flg,
+           created_at,
+           updated_at
+         )
+         VALUES ($1, $2, NULL, NULL, $3, $4, $5, $6, $7, NOW(), NOW())
+         ON CONFLICT (pool_id, game_id)
+         DO UPDATE SET
+           round_label = EXCLUDED.round_label,
+           round_sequence = EXCLUDED.round_sequence,
+           bracket_region = EXCLUDED.bracket_region,
+           matchup_order = EXCLUDED.matchup_order,
+           championship_flg = EXCLUDED.championship_flg,
+           updated_at = NOW()`,
+        [
+          options.poolId,
+          gameId,
+          entry.roundLabel,
+          entry.roundSequence,
+          entry.bracketRegion,
+          entry.matchupOrder,
+          entry.championshipFlg
+        ]
+      );
+    }
+
+    return;
+  }
+
+  const existing = await client.query<{ has_game: number }>(
+    `SELECT 1 AS has_game
+     FROM football_pool.pool_game
+     WHERE pool_id = $1
+     LIMIT 1`,
+    [options.poolId]
+  );
+
+  if ((existing.rowCount ?? 0) > 0) {
+    return;
+  }
+
+  const awayTeamId = await resolveOrCreateNamedSportTeam(client, 'Championship Game', options.sportCode, options.leagueCode);
+  const gameDate = getTournamentChampionshipDate(options.leagueCode, options.season, options.endDate, options.templateCode);
+
+  const gameResult = await client.query<{ id: number }>(
+    `INSERT INTO football_pool.game (
+       season_year,
+       week_number,
+       home_team_id,
+       away_team_id,
+       game_date,
+       kickoff_at,
+       state,
+       is_simulation,
+       scores_by_quarter,
+       created_at,
+       updated_at
+     )
+     VALUES ($1, 1, $2, $3, $4::date, $4::timestamp, 'scheduled', FALSE, '{}'::jsonb, NOW(), NOW())
+     ON CONFLICT (season_year, week_number, home_team_id, away_team_id, game_date)
+     DO UPDATE SET updated_at = NOW()
+     RETURNING id`,
+    [options.season, homeTeamId, awayTeamId, gameDate]
+  );
+
+  const gameId = Number(gameResult.rows[0]?.id);
+
+  await client.query(
+    `INSERT INTO football_pool.pool_game (
+       pool_id,
+       game_id,
+       row_numbers,
+       column_numbers,
+       round_label,
+       round_sequence,
+       championship_flg,
+       created_at,
+       updated_at
+     )
+     VALUES ($1, $2, NULL, NULL, 'Championship', $3, TRUE, NOW(), NOW())
+     ON CONFLICT (pool_id, game_id) DO NOTHING`,
+    [options.poolId, gameId, resolveTemplateRoundSequence(options.templateCode ?? null, 'Championship') ?? 1]
+  );
 };
 
 setupRouter.get('/notifications/templates', async (req, res) => {
@@ -1100,9 +1501,12 @@ setupRouter.post('/pools', async (req, res) => {
   try {
     await ensurePoolDisplayTokenSupport(client);
     await ensureNotificationSupport(client);
+    await ensurePoolStructureSupport(client);
     await client.query('BEGIN');
     const id = await nextId(client, 'pool');
     const displayToken = await generateUniquePoolDisplayToken(client);
+    const poolType = getPoolTypeDefinition(parsed.data.poolType);
+    const structureSettings = resolvePoolStructureSettings(parsed.data);
     const primarySportTeam = await resolvePrimarySportTeamContext(client, parsed.data);
     const normalizedPayouts = normalizePayoutsForLeague(primarySportTeam.leagueCode, {
       q1Payout: parsed.data.q1Payout,
@@ -1112,7 +1516,13 @@ setupRouter.post('/pools', async (req, res) => {
     });
     const primaryTeamName =
       primarySportTeam.primaryTeamName ??
-      (await resolvePrimaryTeamName(client, parsed.data.teamId, parsed.data.primaryTeam ?? null));
+      (poolType.requiresPreferredTeam || Boolean(parsed.data.primaryTeam?.trim())
+        ? await resolvePrimaryTeamName(client, parsed.data.teamId, parsed.data.primaryTeam ?? null)
+        : null);
+
+    if (poolType.requiresPreferredTeam && !primaryTeamName?.trim()) {
+      throw new Error(`A preferred team is required for ${poolType.label.toLowerCase()} pools.`);
+    }
 
     await client.query(
       `
@@ -1121,10 +1531,16 @@ setupRouter.post('/pools', async (req, res) => {
           pool_name,
           team_id,
           season,
+          pool_type,
           primary_team,
           primary_sport_team_id,
           sport_code,
           league_code,
+          winner_loser_flg,
+          start_date,
+          end_date,
+          structure_mode,
+          template_code,
           square_cost,
           q1_payout,
           q2_payout,
@@ -1136,17 +1552,27 @@ setupRouter.post('/pools', async (req, res) => {
           contact_notify_on_square_lead_flg,
           created_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, FALSE, $15, $16, NOW())
+        VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+          $11::date, $12::date, $13, $14, $15, $16,
+          $17, $18, $19, $20, FALSE, $21, $22, NOW()
+        )
       `,
       [
         id,
         parsed.data.poolName,
         parsed.data.teamId,
         parsed.data.season,
+        poolType.code,
         primaryTeamName,
         primarySportTeam.primarySportTeamId,
         primarySportTeam.sportCode,
         primarySportTeam.leagueCode,
+        parsed.data.winnerLoserMode ?? poolType.defaultWinnerLoserMode,
+        structureSettings.startDate,
+        structureSettings.endDate,
+        structureSettings.structureMode,
+        structureSettings.templateCode,
         parsed.data.squareCost,
         normalizedPayouts.q1Payout,
         normalizedPayouts.q2Payout,
@@ -1159,6 +1585,20 @@ setupRouter.post('/pools', async (req, res) => {
     );
 
     await ensurePoolSquaresInitialized(client, id);
+
+    if (poolType.code === 'tournament') {
+      await ensureTournamentChampionshipPlaceholder(client, {
+        poolId: id,
+        season: parsed.data.season,
+        sportCode: primarySportTeam.sportCode,
+        leagueCode: primarySportTeam.leagueCode,
+        primaryTeamName,
+        winnerLoserMode: parsed.data.winnerLoserMode ?? poolType.defaultWinnerLoserMode,
+        startDate: structureSettings.startDate,
+        endDate: structureSettings.endDate,
+        templateCode: structureSettings.templateCode
+      });
+    }
 
     await client.query('COMMIT');
     res.status(201).json({ id, displayToken });
@@ -1907,6 +2347,7 @@ setupRouter.get('/pools', async (_req, res) => {
   try {
     await ensurePoolDisplayTokenSupport(client);
     await ensureNotificationSupport(client);
+    await ensurePoolStructureSupport(client);
 
     const result = await client.query(
       `
@@ -1915,10 +2356,16 @@ setupRouter.get('/pools', async (_req, res) => {
           p.pool_name,
           p.team_id,
           p.season,
+          p.pool_type,
           p.primary_team,
           p.primary_sport_team_id,
           p.sport_code,
           p.league_code,
+          COALESCE(p.winner_loser_flg, FALSE) AS winner_loser_flg,
+          p.start_date,
+          p.end_date,
+          COALESCE(p.structure_mode, 'manual') AS structure_mode,
+          p.template_code,
           p.square_cost,
           p.q1_payout,
           p.q2_payout,
@@ -1965,7 +2412,10 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
 
   try {
     await ensureNotificationSupport(client);
+    await ensurePoolStructureSupport(client);
 
+    const poolType = getPoolTypeDefinition(parsedBody.data.poolType);
+    const structureSettings = resolvePoolStructureSettings(parsedBody.data);
     const primarySportTeam = await resolvePrimarySportTeamContext(client, parsedBody.data);
     const normalizedPayouts = normalizePayoutsForLeague(primarySportTeam.leagueCode, {
       q1Payout: parsedBody.data.q1Payout,
@@ -1975,7 +2425,13 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
     });
     const primaryTeamName =
       primarySportTeam.primaryTeamName ??
-      (await resolvePrimaryTeamName(client, parsedBody.data.teamId, parsedBody.data.primaryTeam ?? null));
+      (poolType.requiresPreferredTeam || Boolean(parsedBody.data.primaryTeam?.trim())
+        ? await resolvePrimaryTeamName(client, parsedBody.data.teamId, parsedBody.data.primaryTeam ?? null)
+        : null);
+
+    if (poolType.requiresPreferredTeam && !primaryTeamName?.trim()) {
+      throw new Error(`A preferred team is required for ${poolType.label.toLowerCase()} pools.`);
+    }
 
     const result = await client.query(
       `
@@ -1984,17 +2440,23 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
           pool_name = $2,
           team_id = $3,
           season = $4,
-          primary_team = $5,
-          primary_sport_team_id = $6,
-          sport_code = $7,
-          league_code = $8,
-          square_cost = $9,
-          q1_payout = $10,
-          q2_payout = $11,
-          q3_payout = $12,
-          q4_payout = $13,
-          contact_notification_level = COALESCE($14, contact_notification_level),
-          contact_notify_on_square_lead_flg = COALESCE($15, contact_notify_on_square_lead_flg)
+          pool_type = $5,
+          primary_team = $6,
+          primary_sport_team_id = $7,
+          sport_code = $8,
+          league_code = $9,
+          winner_loser_flg = $10,
+          start_date = $11::date,
+          end_date = $12::date,
+          structure_mode = $13,
+          template_code = $14,
+          square_cost = $15,
+          q1_payout = $16,
+          q2_payout = $17,
+          q3_payout = $18,
+          q4_payout = $19,
+          contact_notification_level = COALESCE($20, contact_notification_level),
+          contact_notify_on_square_lead_flg = COALESCE($21, contact_notify_on_square_lead_flg)
         WHERE id = $1
         RETURNING id
       `,
@@ -2003,10 +2465,16 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
         parsedBody.data.poolName,
         parsedBody.data.teamId,
         parsedBody.data.season,
+        poolType.code,
         primaryTeamName,
         primarySportTeam.primarySportTeamId,
         primarySportTeam.sportCode,
         primarySportTeam.leagueCode,
+        parsedBody.data.winnerLoserMode ?? poolType.defaultWinnerLoserMode,
+        structureSettings.startDate,
+        structureSettings.endDate,
+        structureSettings.structureMode,
+        structureSettings.templateCode,
         parsedBody.data.squareCost,
         normalizedPayouts.q1Payout,
         normalizedPayouts.q2Payout,
@@ -2020,6 +2488,20 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
     if (result.rowCount === 0) {
       res.status(404).json({ error: 'Pool not found' });
       return;
+    }
+
+    if (poolType.code === 'tournament') {
+      await ensureTournamentChampionshipPlaceholder(client, {
+        poolId: parsedParams.data.poolId,
+        season: parsedBody.data.season,
+        sportCode: primarySportTeam.sportCode,
+        leagueCode: primarySportTeam.leagueCode,
+        primaryTeamName,
+        winnerLoserMode: parsedBody.data.winnerLoserMode ?? poolType.defaultWinnerLoserMode,
+        startDate: structureSettings.startDate,
+        endDate: structureSettings.endDate,
+        templateCode: structureSettings.templateCode
+      });
     }
 
     res.json({ id: parsedParams.data.poolId, message: 'Pool updated' });

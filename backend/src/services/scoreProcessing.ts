@@ -77,7 +77,8 @@ export const resolveWinningSquareNumber = (
   rowNumbers: unknown,
   colNumbers: unknown,
   opponentScore: number | null | undefined,
-  primaryScore: number | null | undefined
+  primaryScore: number | null | undefined,
+  winnerLoserMode = false
 ): number | null => {
   if (opponentScore == null || primaryScore == null) {
     return null;
@@ -85,8 +86,10 @@ export const resolveWinningSquareNumber = (
 
   const rowDigits = toDigitOrder(rowNumbers);
   const colDigits = toDigitOrder(colNumbers);
-  const opponentDigit = Number(opponentScore) % 10;
-  const primaryDigit = Number(primaryScore) % 10;
+  const resolvedTopScore = winnerLoserMode ? Math.max(Number(primaryScore), Number(opponentScore)) : Number(primaryScore);
+  const resolvedSideScore = winnerLoserMode ? Math.min(Number(primaryScore), Number(opponentScore)) : Number(opponentScore);
+  const opponentDigit = resolvedSideScore % 10;
+  const primaryDigit = resolvedTopScore % 10;
   const rowIndex = rowDigits.findIndex((digit) => digit === opponentDigit);
   const colIndex = colDigits.findIndex((digit) => digit === primaryDigit);
 
@@ -146,7 +149,11 @@ const buildLiveLeaderState = (game: GameScoreSnapshot): LiveLeaderState | null =
 
 const ensurePoolPayouts = async (client: PoolClient, poolId: number) => {
   const result = await client.query(
-    `SELECT q1_payout, q2_payout, q3_payout, q4_payout
+    `SELECT q1_payout,
+            q2_payout,
+            q3_payout,
+            q4_payout,
+            COALESCE(winner_loser_flg, FALSE) AS winner_loser_flg
      FROM football_pool.pool
      WHERE id = $1`,
     [poolId]
@@ -161,6 +168,7 @@ const ensurePoolPayouts = async (client: PoolClient, poolId: number) => {
     q2_payout: number;
     q3_payout: number;
     q4_payout: number;
+    winner_loser_flg: boolean;
   };
 };
 
@@ -203,22 +211,46 @@ export const processGameScoresWithClient = async (
       {
         num: 1,
         payout: payouts.q1_payout,
-        squareNum: resolveWinningSquareNumber(pg.row_numbers, pg.column_numbers, scores.q1OpponentScore, scores.q1PrimaryScore)
+        squareNum: resolveWinningSquareNumber(
+          pg.row_numbers,
+          pg.column_numbers,
+          scores.q1OpponentScore,
+          scores.q1PrimaryScore,
+          Boolean(payouts.winner_loser_flg)
+        )
       },
       {
         num: 2,
         payout: payouts.q2_payout,
-        squareNum: resolveWinningSquareNumber(pg.row_numbers, pg.column_numbers, scores.q2OpponentScore, scores.q2PrimaryScore)
+        squareNum: resolveWinningSquareNumber(
+          pg.row_numbers,
+          pg.column_numbers,
+          scores.q2OpponentScore,
+          scores.q2PrimaryScore,
+          Boolean(payouts.winner_loser_flg)
+        )
       },
       {
         num: 3,
         payout: payouts.q3_payout,
-        squareNum: resolveWinningSquareNumber(pg.row_numbers, pg.column_numbers, scores.q3OpponentScore, scores.q3PrimaryScore)
+        squareNum: resolveWinningSquareNumber(
+          pg.row_numbers,
+          pg.column_numbers,
+          scores.q3OpponentScore,
+          scores.q3PrimaryScore,
+          Boolean(payouts.winner_loser_flg)
+        )
       },
       {
         num: 4,
         payout: payouts.q4_payout,
-        squareNum: resolveWinningSquareNumber(pg.row_numbers, pg.column_numbers, scores.q4OpponentScore, scores.q4PrimaryScore)
+        squareNum: resolveWinningSquareNumber(
+          pg.row_numbers,
+          pg.column_numbers,
+          scores.q4OpponentScore,
+          scores.q4PrimaryScore,
+          Boolean(payouts.winner_loser_flg)
+        )
       }
     ];
     let winnersWritten = 0;
