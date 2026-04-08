@@ -33,6 +33,7 @@ import { ensurePoolGameStructureSupport } from '../services/poolGameStructureSup
 import { ensurePoolPayoutStructureSupport } from '../services/poolPayoutStructureSupport';
 import { replacePoolRoundPayouts } from '../services/poolPayouts';
 import { ensurePoolStructureSupport } from '../services/poolStructureSupport';
+import { poolBoardNumberModeValues, syncPoolGameBoardNumbers } from '../services/poolBoardNumbers';
 import {
   availableNotificationVariables,
   notificationMarkupFormatValues,
@@ -94,6 +95,7 @@ const poolTypeSchema = z.enum(poolTypeValues).optional().default('season');
 const poolStructureModeSchema = z.enum(poolStructureModeValues).optional().default('manual');
 const poolTemplateCodeSchema = z.enum(poolTemplateValues).optional().or(z.literal(''));
 const poolPayoutScheduleModeSchema = z.enum(poolPayoutScheduleModeValues).optional().default('uniform');
+const poolBoardNumberModeSchema = z.enum(poolBoardNumberModeValues).optional().default('per_game');
 const optionalDateSchema = z
   .string()
   .trim()
@@ -168,6 +170,7 @@ const createPoolSchema = z
     primaryTeam: z.string().trim().optional().or(z.literal('')),
     payoutScheduleMode: poolPayoutScheduleModeSchema,
     roundPayouts: z.array(roundPayoutSchema).optional().default([]),
+    boardNumberMode: poolBoardNumberModeSchema,
     winnerLoserMode: z.boolean().optional().default(false),
     squareCost: z.number().int().nonnegative(),
     q1Payout: z.number().int().nonnegative(),
@@ -1606,6 +1609,9 @@ setupRouter.post('/pools', async (req, res) => {
           structure_mode,
           template_code,
           payout_schedule_mode,
+          board_number_mode,
+          tournament_row_numbers,
+          tournament_column_numbers,
           square_cost,
           q1_payout,
           q2_payout,
@@ -1619,8 +1625,8 @@ setupRouter.post('/pools', async (req, res) => {
         )
         VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-          $11::date, $12::date, $13, $14, $15, $16,
-          $17, $18, $19, $20, $21, FALSE, $22, $23, NOW()
+          $11::date, $12::date, $13, $14, $15, $16, NULL, NULL,
+          $17, $18, $19, $20, $21, $22, FALSE, $23, $24, NOW()
         )
       `,
       [
@@ -1639,6 +1645,7 @@ setupRouter.post('/pools', async (req, res) => {
         structureSettings.structureMode,
         structureSettings.templateCode,
         getPoolPayoutScheduleMode(parsed.data.payoutScheduleMode),
+        parsed.data.boardNumberMode,
         parsed.data.squareCost,
         normalizedPayouts.q1Payout,
         normalizedPayouts.q2Payout,
@@ -1671,6 +1678,7 @@ setupRouter.post('/pools', async (req, res) => {
         endDate: structureSettings.endDate,
         templateCode: structureSettings.templateCode
       });
+
     }
 
     await client.query('COMMIT');
@@ -2441,6 +2449,7 @@ setupRouter.get('/pools', async (_req, res) => {
           COALESCE(p.structure_mode, 'manual') AS structure_mode,
           p.template_code,
           COALESCE(p.payout_schedule_mode, 'uniform') AS payout_schedule_mode,
+          COALESCE(p.board_number_mode, 'per_game') AS board_number_mode,
           COALESCE(payout_rules.round_payouts, '[]'::json) AS round_payouts,
           p.square_cost,
           p.q1_payout,
@@ -2544,13 +2553,16 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
           structure_mode = $13,
           template_code = $14,
           payout_schedule_mode = $15,
-          square_cost = $16,
-          q1_payout = $17,
-          q2_payout = $18,
-          q3_payout = $19,
-          q4_payout = $20,
-          contact_notification_level = COALESCE($21, contact_notification_level),
-          contact_notify_on_square_lead_flg = COALESCE($22, contact_notify_on_square_lead_flg)
+          board_number_mode = $16::varchar,
+          tournament_row_numbers = CASE WHEN $16::text = 'same_for_tournament' THEN tournament_row_numbers ELSE NULL END,
+          tournament_column_numbers = CASE WHEN $16::text = 'same_for_tournament' THEN tournament_column_numbers ELSE NULL END,
+          square_cost = $17,
+          q1_payout = $18,
+          q2_payout = $19,
+          q3_payout = $20,
+          q4_payout = $21,
+          contact_notification_level = COALESCE($22, contact_notification_level),
+          contact_notify_on_square_lead_flg = COALESCE($23, contact_notify_on_square_lead_flg)
         WHERE id = $1
         RETURNING id
       `,
@@ -2570,6 +2582,7 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
         structureSettings.structureMode,
         structureSettings.templateCode,
         getPoolPayoutScheduleMode(parsedBody.data.payoutScheduleMode),
+        parsedBody.data.boardNumberMode,
         parsedBody.data.squareCost,
         normalizedPayouts.q1Payout,
         normalizedPayouts.q2Payout,
@@ -2604,6 +2617,10 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
         startDate: structureSettings.startDate,
         endDate: structureSettings.endDate,
         templateCode: structureSettings.templateCode
+      });
+
+      await syncPoolGameBoardNumbers(client, parsedParams.data.poolId, {
+        overwriteExisting: parsedBody.data.boardNumberMode === 'same_for_tournament'
       });
     }
 

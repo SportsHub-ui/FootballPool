@@ -555,6 +555,7 @@ describe('Football Pool API', () => {
           season: 2026,
           poolType: 'tournament',
           leagueCode: 'NCAAB',
+          boardNumberMode: 'same_for_tournament',
           winnerLoserMode: true,
           squareCost: 20,
           q1Payout: 100,
@@ -571,6 +572,7 @@ describe('Football Pool API', () => {
 
       const createdPool = listResponse.body.pools.find((pool: { pool_name: string }) => pool.pool_name === poolName)
       expect(createdPool?.pool_type).toBe('tournament')
+      expect(createdPool?.board_number_mode).toBe('same_for_tournament')
       expect(createdPool?.winner_loser_flg).toBe(true)
       expect(createdPool?.primary_sport_team_id ?? null).toBeNull()
       expect(createdPool?.primary_team ?? null).toBeNull()
@@ -945,6 +947,133 @@ describe('Football Pool API', () => {
       expect(boardResponse.status).toBe(200)
       expect(Array.isArray(boardResponse.body.board?.rowNumbers)).toBe(true)
       expect(Array.isArray(boardResponse.body.board?.colNumbers)).toBe(true)
+    })
+
+    it('should keep the same board numbers across tournament games when configured', async () => {
+      const poolName = `Fixed Tournament Board Pool ${Date.now()}`
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName,
+          teamId,
+          season: 2026,
+          poolType: 'tournament',
+          leagueCode: 'NCAAB',
+          structureMode: 'template',
+          templateCode: 'ncaab_march_madness',
+          boardNumberMode: 'same_for_tournament',
+          startDate: '2026-03-17',
+          endDate: '2026-04-06',
+          winnerLoserMode: true,
+          squareCost: 20,
+          q1Payout: 100,
+          q2Payout: 100,
+          q3Payout: 100,
+          q4Payout: 200
+        })
+
+      expect(poolResponse.status).toBe(201)
+      const poolId = Number(poolResponse.body.id)
+      const matchupSeed = Date.now()
+      const feederOneLabel = `Board Alpha ${matchupSeed} vs Board Beta ${matchupSeed}`
+      const feederTwoLabel = `Board Gamma ${matchupSeed} vs Board Delta ${matchupSeed}`
+
+      const initialGamesResponse = await request(app)
+        .get(`/api/games?poolId=${poolId}`)
+        .set(organizerHeaders)
+
+      expect(initialGamesResponse.status).toBe(200)
+
+      const feederOne = initialGamesResponse.body.find(
+        (game: { round_label: string; bracket_region: string; matchup_order: number }) =>
+          game.round_label === 'Round of 64' && game.bracket_region === 'East' && Number(game.matchup_order) === 1
+      )
+      const feederTwo = initialGamesResponse.body.find(
+        (game: { round_label: string; bracket_region: string; matchup_order: number }) =>
+          game.round_label === 'Round of 64' && game.bracket_region === 'East' && Number(game.matchup_order) === 2
+      )
+
+      expect(feederOne).toBeTruthy()
+      expect(feederTwo).toBeTruthy()
+
+      const feederOneUpdateResponse = await request(app)
+        .patch(`/api/games/${Number(feederOne?.id)}`)
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: Number(feederOne?.week_num ?? 2),
+          roundLabel: feederOne?.round_label,
+          roundSequence: Number(feederOne?.round_sequence ?? 2),
+          bracketRegion: feederOne?.bracket_region,
+          matchupOrder: Number(feederOne?.matchup_order ?? 1),
+          opponent: feederOneLabel,
+          gameDate: String(feederOne?.game_dt ?? '2026-03-19').slice(0, 10),
+          isSimulation: false
+        })
+
+      const feederTwoUpdateResponse = await request(app)
+        .patch(`/api/games/${Number(feederTwo?.id)}`)
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: Number(feederTwo?.week_num ?? 2),
+          roundLabel: feederTwo?.round_label,
+          roundSequence: Number(feederTwo?.round_sequence ?? 2),
+          bracketRegion: feederTwo?.bracket_region,
+          matchupOrder: Number(feederTwo?.matchup_order ?? 2),
+          opponent: feederTwoLabel,
+          gameDate: String(feederTwo?.game_dt ?? '2026-03-19').slice(0, 10),
+          isSimulation: false
+        })
+
+      expect(feederOneUpdateResponse.status).toBe(200)
+      expect(feederTwoUpdateResponse.status).toBe(200)
+      expect(feederOneUpdateResponse.body.game.row_numbers).toEqual(feederTwoUpdateResponse.body.game.row_numbers)
+      expect(feederOneUpdateResponse.body.game.col_numbers).toEqual(feederTwoUpdateResponse.body.game.col_numbers)
+
+      const firstScoreResponse = await request(app)
+        .patch(`/api/games/${Number(feederOne?.id)}/scores`)
+        .set(organizerHeaders)
+        .send({
+          q1PrimaryScore: null,
+          q1OpponentScore: null,
+          q2PrimaryScore: null,
+          q2OpponentScore: null,
+          q3PrimaryScore: null,
+          q3OpponentScore: null,
+          q4PrimaryScore: 81,
+          q4OpponentScore: 70
+        })
+
+      const secondScoreResponse = await request(app)
+        .patch(`/api/games/${Number(feederTwo?.id)}/scores`)
+        .set(organizerHeaders)
+        .send({
+          q1PrimaryScore: null,
+          q1OpponentScore: null,
+          q2PrimaryScore: null,
+          q2OpponentScore: null,
+          q3PrimaryScore: null,
+          q3OpponentScore: null,
+          q4PrimaryScore: 69,
+          q4OpponentScore: 74
+        })
+
+      expect(firstScoreResponse.status).toBe(200)
+      expect(secondScoreResponse.status).toBe(200)
+
+      const completedGamesResponse = await request(app)
+        .get(`/api/games?poolId=${poolId}`)
+        .set(organizerHeaders)
+
+      const resolvedNextRoundGame = completedGamesResponse.body.find(
+        (game: { round_label: string; bracket_region: string; matchup_order: number }) =>
+          game.round_label === 'Round of 32' && game.bracket_region === 'East' && Number(game.matchup_order) === 1
+      )
+
+      expect(resolvedNextRoundGame?.row_numbers).toEqual(feederOneUpdateResponse.body.game.row_numbers)
+      expect(resolvedNextRoundGame?.col_numbers).toEqual(feederOneUpdateResponse.body.game.col_numbers)
     })
 
     it('should persist round metadata for tournament schedules', async () => {

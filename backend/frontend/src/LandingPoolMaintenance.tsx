@@ -53,6 +53,7 @@ type GameRecord = {
 }
 
 type NotificationLevel = 'none' | 'quarter_win' | 'game_total'
+type PoolBoardNumberMode = 'per_game' | 'same_for_tournament'
 
 type PoolRecord = {
   id: number
@@ -63,6 +64,7 @@ type PoolRecord = {
   structure_mode?: PoolStructureMode | null
   template_code?: PoolTemplateCode | null
   payout_schedule_mode?: PoolPayoutScheduleMode | null
+  board_number_mode?: PoolBoardNumberMode | null
   round_payouts?: RoundPayoutConfig[] | null
   start_date?: string | null
   end_date?: string | null
@@ -262,6 +264,7 @@ const buildReadonlyPoolRecords = (pools: LandingPool[]): PoolRecord[] =>
     structure_mode: 'manual',
     template_code: null,
     payout_schedule_mode: 'uniform',
+    board_number_mode: 'per_game',
     round_payouts: [],
     start_date: null,
     end_date: null,
@@ -307,6 +310,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     structureMode: 'manual' as PoolStructureMode,
     templateCode: '' as PoolTemplateCode | '',
     payoutScheduleMode: 'uniform' as PoolPayoutScheduleMode,
+    boardNumberMode: 'per_game' as PoolBoardNumberMode,
     roundPayouts: [] as RoundPayoutConfig[],
     startDate: '',
     endDate: '',
@@ -378,6 +382,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
       structureMode,
       templateCode: (pool?.template_code as PoolTemplateCode | null | undefined) ?? '',
       payoutScheduleMode,
+      boardNumberMode: pool?.board_number_mode === 'same_for_tournament' ? 'same_for_tournament' : 'per_game',
       roundPayouts: normalizeRoundPayouts(
         leagueDefinition.leagueCode,
         rawRoundPayouts.map((entry) => ({
@@ -900,6 +905,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
         structureMode: poolForm.structureMode,
         templateCode: poolForm.templateCode || undefined,
         payoutScheduleMode: poolForm.payoutScheduleMode,
+        boardNumberMode: poolForm.boardNumberMode,
         roundPayouts: poolForm.payoutScheduleMode === 'by_round' ? normalizedRoundPayoutEntries : [],
         startDate: poolForm.startDate || undefined,
         endDate: poolForm.endDate || undefined,
@@ -1422,6 +1428,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                       structureMode: nextStructureMode,
                       templateCode: nextTemplateCode,
                       payoutScheduleMode: nextType.code === 'tournament' ? current.payoutScheduleMode : 'uniform',
+                      boardNumberMode: nextType.code === 'tournament' ? current.boardNumberMode : 'per_game',
                       roundPayouts:
                         nextType.code === 'tournament'
                           ? current.payoutScheduleMode === 'by_round'
@@ -1587,6 +1594,25 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                       {template.label}
                     </option>
                   ))}
+                </select>
+              </label>
+            ) : null}
+
+            {poolForm.poolType === 'tournament' ? (
+              <label className="field-block">
+                <span>Board numbers</span>
+                <select
+                  value={poolForm.boardNumberMode}
+                  onChange={(event) =>
+                    setPoolForm((current) => ({
+                      ...current,
+                      boardNumberMode: event.target.value as PoolBoardNumberMode
+                    }))
+                  }
+                  disabled={saving}
+                >
+                  <option value="per_game">Change for each game</option>
+                  <option value="same_for_tournament">Keep the same for the whole tournament</option>
                 </select>
               </label>
             ) : null}

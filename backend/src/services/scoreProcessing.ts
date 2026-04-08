@@ -2,6 +2,7 @@ import type { PoolClient } from 'pg';
 import { db } from '../config/db';
 import { buildMatchupDisplayLabel, isGenericMatchupName, normalizeMatchupName, parseMatchupLabel } from '../utils/matchupLabels';
 import { emitScoreNotifications, type QuarterNotificationResult, type LiveLeaderState } from './notifications';
+import { resolvePoolGameBoardNumbers } from './poolBoardNumbers';
 import { loadPoolPayoutConfig, resolvePoolPayoutsForRound } from './poolPayouts';
 
 export interface QuarterScoresInput {
@@ -175,21 +176,6 @@ const buildLiveLeaderState = (game: GameScoreSnapshot): LiveLeaderState | null =
     opponentScore: quarterScores.opponentScore
   };
 };
-
-const randomInt = (maxExclusive: number): number => Math.floor(Math.random() * maxExclusive);
-
-const shuffle = <T,>(values: T[]): T[] => {
-  const next = [...values];
-
-  for (let index = next.length - 1; index > 0; index -= 1) {
-    const swapIndex = randomInt(index + 1);
-    [next[index], next[swapIndex]] = [next[swapIndex], next[index]];
-  }
-
-  return next;
-};
-
-const buildRandomDigitOrder = (): number[] => shuffle([...defaultDigitOrder]);
 
 const parseBracketFeedLabel = (
   value: string | null | undefined
@@ -552,6 +538,8 @@ const advanceTournamentBracketForPoolGame = async (
   }
 
   if (targetGame.row_numbers == null || targetGame.column_numbers == null) {
+    const boardNumbers = await resolvePoolGameBoardNumbers(client, poolId);
+
     await client.query(
       `UPDATE football_pool.pool_game
        SET row_numbers = COALESCE(row_numbers, $2::jsonb),
@@ -560,8 +548,8 @@ const advanceTournamentBracketForPoolGame = async (
        WHERE id = $1`,
       [
         targetGame.pool_game_id,
-        JSON.stringify(buildRandomDigitOrder()),
-        JSON.stringify(buildRandomDigitOrder())
+        JSON.stringify(boardNumbers.rowNumbers),
+        JSON.stringify(boardNumbers.columnNumbers)
       ]
     );
   }

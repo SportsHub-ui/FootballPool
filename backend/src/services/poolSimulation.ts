@@ -2,6 +2,7 @@
 import { env } from '../config/env';
 import { getActiveScoreSegmentNumbers, getSimulationStepDescriptor, getSimulationStepLabel } from '../config/poolLeagues';
 import { ensurePoolSquaresInitialized, TOTAL_POOL_SQUARES } from './poolSquares';
+import { resolvePoolGameBoardNumbers } from './poolBoardNumbers';
 import { importPoolScheduleFromEspn } from './scheduleImport';
 import { getGameIngestionUpdate, type IngestionSource } from './scoreIngestion';
 import { processGameScoresWithClient, type QuarterScoresInput } from './scoreProcessing';
@@ -218,8 +219,6 @@ const normalize = (value: string | null | undefined): string =>
   (value ?? '').trim().toUpperCase();
 
 const isByeOpponent = (value: string | null | undefined): boolean => normalize(value) === 'BYE';
-
-const buildRandomDigitOrder = (): number[] => shuffle(Array.from({ length: 10 }, (_, index) => index));
 
 const buildBalancedAssignments = (ids: number[], total: number): number[] => {
   const assignments: number[] = [];
@@ -688,6 +687,8 @@ const persistGameSourceIdentifiers = async (
 };
 
 const prepareGameForSimulation = async (client: PoolClient, poolId: number, gameId: number): Promise<void> => {
+  const boardNumbers = await resolvePoolGameBoardNumbers(client, poolId);
+
   await client.query(
     `UPDATE football_pool.pool_game
      SET row_numbers = $3::jsonb,
@@ -695,7 +696,7 @@ const prepareGameForSimulation = async (client: PoolClient, poolId: number, game
          updated_at = NOW()
      WHERE pool_id = $1
        AND game_id = $2`,
-    [poolId, gameId, JSON.stringify(buildRandomDigitOrder()), JSON.stringify(buildRandomDigitOrder())]
+    [poolId, gameId, JSON.stringify(boardNumbers.rowNumbers), JSON.stringify(boardNumbers.columnNumbers)]
   );
 
   await client.query(

@@ -5,6 +5,7 @@ import { db } from '../config/db';
 import { resolveTemplateRoundSequence } from '../config/poolStructures';
 import { requireRole } from '../middleware/auth';
 import { ensurePoolGameStructureSupport } from '../services/poolGameStructureSupport';
+import { syncPoolGameBoardNumbers } from '../services/poolBoardNumbers';
 import { importPoolScheduleFromEspn } from '../services/scheduleImport';
 import { ingestGameScores } from '../services/scoreIngestion';
 import { buildMatchupDisplayLabel, parseMatchupLabel } from '../utils/matchupLabels';
@@ -484,6 +485,7 @@ gamesRouter.post('/', async (req, res) => {
         ]
       )
 
+      await syncPoolGameBoardNumbers(client, input.poolId, { onlyGameId: gameId })
       const game = await loadPoolGameRecord(client, gameId, input.poolId)
 
       await client.query('COMMIT')
@@ -590,6 +592,7 @@ gamesRouter.patch('/:gameId', async (req, res) => {
         ]
       )
 
+      await syncPoolGameBoardNumbers(client, input.poolId, { onlyGameId: gameId })
       await client.query('COMMIT')
 
       if (poolGameResult.rows.length === 0) {
