@@ -54,6 +54,17 @@ UPDATE football_pool.game_new
 SET kickoff_at = COALESCE(kickoff_at, game_date::timestamp)
 WHERE kickoff_at IS NULL;
 
+ALTER TABLE IF EXISTS football_pool.winnings_ledger
+  DROP CONSTRAINT IF EXISTS winnings_ledger_game_id_fkey;
+ALTER TABLE IF EXISTS football_pool.notification_log
+  DROP CONSTRAINT IF EXISTS notification_log_game_id_fkey;
+ALTER TABLE IF EXISTS football_pool.pool_simulation_state
+  DROP CONSTRAINT IF EXISTS pool_simulation_state_current_game_id_fkey;
+ALTER TABLE IF EXISTS football_pool.game_square_numbers
+  DROP CONSTRAINT IF EXISTS game_square_numbers_game_id_fkey;
+ALTER TABLE IF EXISTS football_pool.game
+  DROP CONSTRAINT IF EXISTS game_pool_id_fkey;
+
 WITH legacy_map AS (
   SELECT DISTINCT
     legacy.id AS legacy_game_id,
@@ -140,17 +151,6 @@ SET game_id = legacy_map.normalized_game_id
 FROM legacy_map
 WHERE gsn.game_id = legacy_map.legacy_game_id;
 
-ALTER TABLE IF EXISTS football_pool.winnings_ledger
-  DROP CONSTRAINT IF EXISTS winnings_ledger_game_id_fkey;
-ALTER TABLE IF EXISTS football_pool.notification_log
-  DROP CONSTRAINT IF EXISTS notification_log_game_id_fkey;
-ALTER TABLE IF EXISTS football_pool.pool_simulation_state
-  DROP CONSTRAINT IF EXISTS pool_simulation_state_current_game_id_fkey;
-ALTER TABLE IF EXISTS football_pool.game_square_numbers
-  DROP CONSTRAINT IF EXISTS game_square_numbers_game_id_fkey;
-ALTER TABLE IF EXISTS football_pool.game
-  DROP CONSTRAINT IF EXISTS game_pool_id_fkey;
-
 DROP TABLE IF EXISTS football_pool.game_legacy CASCADE;
 
 DO $$
@@ -176,6 +176,40 @@ END $$;
 
 CREATE INDEX IF NOT EXISTS idx_game_game_date
   ON football_pool.game (game_date);
+
+UPDATE football_pool.winnings_ledger AS wl
+SET game_id = NULL
+WHERE wl.game_id IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1
+    FROM football_pool.game AS g
+    WHERE g.id = wl.game_id
+  );
+
+DELETE FROM football_pool.notification_log AS nl
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM football_pool.game AS g
+  WHERE g.id = nl.game_id
+);
+
+UPDATE football_pool.pool_simulation_state AS pss
+SET current_game_id = NULL
+WHERE pss.current_game_id IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1
+    FROM football_pool.game AS g
+    WHERE g.id = pss.current_game_id
+  );
+
+UPDATE football_pool.game_square_numbers AS gsn
+SET game_id = NULL
+WHERE gsn.game_id IS NOT NULL
+  AND NOT EXISTS (
+    SELECT 1
+    FROM football_pool.game AS g
+    WHERE g.id = gsn.game_id
+  );
 
 ALTER TABLE IF EXISTS football_pool.winnings_ledger
   ADD CONSTRAINT winnings_ledger_game_id_fkey

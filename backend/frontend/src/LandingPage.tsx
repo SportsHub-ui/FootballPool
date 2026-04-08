@@ -269,8 +269,7 @@ const formatDate = (value: string | null | undefined, options?: { timeZone?: str
 const formatClockTime = (value: Date, timeZone?: string | null): string => new Intl.DateTimeFormat(undefined, {
   hour: 'numeric',
   minute: '2-digit',
-  timeZone: timeZone ?? undefined,
-  timeZoneName: 'short'
+  timeZone: timeZone ?? undefined
 }).format(value)
 
 const isCompletedGame = (game: LandingGame | null): boolean => {
@@ -1464,7 +1463,7 @@ export function LandingPage() {
                   <span className="pool-board-header-title">{`${heroTitle} • ${heroDate}`}</span>
                   {displayOnlyMode ? (
                     <span className="pool-board-header-meta">
-                      Auto-refresh every {displayRefreshSeconds}s • {displayTimeZone}{lastDisplayRefreshAt ? ` • Updated ${lastDisplayRefreshAt}` : ''}
+                      Auto-refresh every {displayRefreshSeconds}s{lastDisplayRefreshAt ? ` • Updated ${lastDisplayRefreshAt}` : ''}
                     </span>
                   ) : null}
                 </div>
