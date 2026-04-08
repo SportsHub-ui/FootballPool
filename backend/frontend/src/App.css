@@ -518,6 +518,122 @@ button:disabled {
   text-align: center;
 }
 
+.board-payout-summary-card {
+  margin-top: 1rem;
+  padding: 1rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid #e3d7c7;
+  box-shadow: 0 8px 20px rgba(35, 48, 66, 0.08);
+}
+
+.board-payout-summary-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.board-payout-summary-header h3 {
+  margin: 0;
+}
+
+.board-payout-summary-header .small {
+  margin: 0.25rem 0 0;
+}
+
+.board-payout-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.2rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.board-payout-mode-badge.is-by_round {
+  background: #fff2d8;
+  color: #8a4b07;
+}
+
+.board-payout-mode-badge.is-uniform {
+  background: #e8f0ff;
+  color: #234c8a;
+}
+
+.board-payout-chip-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.65rem;
+}
+
+.board-payout-chip {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: 12px;
+  background: #f7f4ef;
+  border: 1px solid #eadfce;
+}
+
+.board-payout-chip span {
+  font-size: 0.78rem;
+  color: #6f5c49;
+}
+
+.board-payout-chip strong {
+  font-size: 1rem;
+}
+
+.board-payout-round-list {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+}
+
+.board-payout-round-row {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 12px;
+  border: 1px solid #eadfce;
+  background: #fffaf2;
+}
+
+.board-payout-round-row.is-current {
+  border-color: #efb170;
+  background: #fff3df;
+}
+
+.board-payout-round-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.board-payout-current-tag {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  background: #c85b2a;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.board-payout-round-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem 1rem;
+  font-size: 0.82rem;
+  color: #4f4335;
+}
+
 .summary-label {
   font-size: 0.85rem;
   color: #666;
@@ -2044,6 +2160,38 @@ button:disabled {
 
 .landing-field-span {
   grid-column: 1 / -1;
+}
+
+.landing-round-payout-editor {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.landing-round-payout-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.landing-round-payout-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.landing-round-payout-card {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.85rem;
+  border: 1px solid #e4d6c3;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.landing-round-payout-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
 }
 
 .landing-maintenance-actions {

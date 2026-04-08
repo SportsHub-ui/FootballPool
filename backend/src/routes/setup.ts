@@ -14,6 +14,10 @@ import {
   poolTemplateValues,
   resolveTemplateRoundSequence
 } from '../config/poolStructures';
+import {
+  getPoolPayoutScheduleMode,
+  poolPayoutScheduleModeValues
+} from '../config/poolPayoutSchedules';
 import { getPoolTypeDefinition, poolTypeValues } from '../config/poolTypes';
 import { requireRole } from '../middleware/auth';
 import {
@@ -26,6 +30,8 @@ import { ensurePoolSquaresInitialized } from '../services/poolSquares';
 import { ensurePoolDisplayTokenSupport, generateUniquePoolDisplayToken } from '../services/poolDisplay';
 import { ensureNotificationSupport } from '../services/notifications';
 import { ensurePoolGameStructureSupport } from '../services/poolGameStructureSupport';
+import { ensurePoolPayoutStructureSupport } from '../services/poolPayoutStructureSupport';
+import { replacePoolRoundPayouts } from '../services/poolPayouts';
 import { ensurePoolStructureSupport } from '../services/poolStructureSupport';
 import {
   availableNotificationVariables,
@@ -87,12 +93,21 @@ const leagueCodeSchema = z.enum(supportedLeagueCodes).optional();
 const poolTypeSchema = z.enum(poolTypeValues).optional().default('season');
 const poolStructureModeSchema = z.enum(poolStructureModeValues).optional().default('manual');
 const poolTemplateCodeSchema = z.enum(poolTemplateValues).optional().or(z.literal(''));
+const poolPayoutScheduleModeSchema = z.enum(poolPayoutScheduleModeValues).optional().default('uniform');
 const optionalDateSchema = z
   .string()
   .trim()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must use YYYY-MM-DD format')
   .optional()
   .or(z.literal(''));
+const roundPayoutSchema = z.object({
+  roundLabel: z.string().trim().min(1).max(80),
+  roundSequence: z.number().int().min(1).max(99).nullable().optional(),
+  q1Payout: z.number().int().nonnegative().optional().default(0),
+  q2Payout: z.number().int().nonnegative().optional().default(0),
+  q3Payout: z.number().int().nonnegative().optional().default(0),
+  q4Payout: z.number().int().nonnegative().optional().default(0)
+});
 
 const memberAssignmentSchema = z
   .object({
@@ -151,6 +166,8 @@ const createPoolSchema = z
     endDate: optionalDateSchema,
     primarySportTeamId: z.number().int().positive().optional(),
     primaryTeam: z.string().trim().optional().or(z.literal('')),
+    payoutScheduleMode: poolPayoutScheduleModeSchema,
+    roundPayouts: z.array(roundPayoutSchema).optional().default([]),
     winnerLoserMode: z.boolean().optional().default(false),
     squareCost: z.number().int().nonnegative(),
     q1Payout: z.number().int().nonnegative(),
@@ -164,6 +181,7 @@ const createPoolSchema = z
     const startDate = value.startDate?.trim() || '';
     const endDate = value.endDate?.trim() || '';
     const structureMode = getPoolStructureMode(value.structureMode);
+    const payoutScheduleMode = getPoolPayoutScheduleMode(value.payoutScheduleMode);
     const poolType = getPoolTypeDefinition(value.poolType);
     const templateDefinition = getPoolTemplateDefinition(value.templateCode || null);
     const leagueCode = String(value.leagueCode ?? 'NFL').trim().toUpperCase();
@@ -206,6 +224,51 @@ const createPoolSchema = z
         path: ['templateCode'],
         message: `${templateDefinition.label} is only available for ${templateDefinition.supportedLeagueCodes.join(', ')} pools.`
       });
+    }
+
+    if (payoutScheduleMode === 'by_round' && poolType.code !== 'tournament') {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['payoutScheduleMode'],
+        message: 'Round-based payout schedules are currently only supported for tournament pools.'
+      });
+    }
+
+    if (payoutScheduleMode === 'by_round' && (value.roundPayouts?.length ?? 0) === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['roundPayouts'],
+        message: 'Add at least one round payout when using a by-round payout schedule.'
+      });
+    }
+
+    const seenRoundLabels = new Set<string>();
+    const seenRoundSequences = new Set<number>();
+    for (const [index, roundPayout] of (value.roundPayouts ?? []).entries()) {
+      const normalizedRoundLabel = String(roundPayout.roundLabel ?? '').trim().toLowerCase();
+      if (normalizedRoundLabel) {
+        if (seenRoundLabels.has(normalizedRoundLabel)) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['roundPayouts', index, 'roundLabel'],
+            message: 'Each round can only have one payout rule. Use a unique round name.'
+          });
+        } else {
+          seenRoundLabels.add(normalizedRoundLabel);
+        }
+      }
+
+      if (roundPayout.roundSequence != null) {
+        if (seenRoundSequences.has(roundPayout.roundSequence)) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['roundPayouts', index, 'roundSequence'],
+            message: 'Each round order can only be used once in the payout schedule.'
+          });
+        } else {
+          seenRoundSequences.add(roundPayout.roundSequence);
+        }
+      }
     }
   });
 
@@ -1502,6 +1565,7 @@ setupRouter.post('/pools', async (req, res) => {
     await ensurePoolDisplayTokenSupport(client);
     await ensureNotificationSupport(client);
     await ensurePoolStructureSupport(client);
+    await ensurePoolPayoutStructureSupport(client);
     await client.query('BEGIN');
     const id = await nextId(client, 'pool');
     const displayToken = await generateUniquePoolDisplayToken(client);
@@ -1541,6 +1605,7 @@ setupRouter.post('/pools', async (req, res) => {
           end_date,
           structure_mode,
           template_code,
+          payout_schedule_mode,
           square_cost,
           q1_payout,
           q2_payout,
@@ -1555,7 +1620,7 @@ setupRouter.post('/pools', async (req, res) => {
         VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
           $11::date, $12::date, $13, $14, $15, $16,
-          $17, $18, $19, $20, FALSE, $21, $22, NOW()
+          $17, $18, $19, $20, $21, FALSE, $22, $23, NOW()
         )
       `,
       [
@@ -1573,6 +1638,7 @@ setupRouter.post('/pools', async (req, res) => {
         structureSettings.endDate,
         structureSettings.structureMode,
         structureSettings.templateCode,
+        getPoolPayoutScheduleMode(parsed.data.payoutScheduleMode),
         parsed.data.squareCost,
         normalizedPayouts.q1Payout,
         normalizedPayouts.q2Payout,
@@ -1583,6 +1649,13 @@ setupRouter.post('/pools', async (req, res) => {
         parsed.data.contactNotifyOnSquareLead ?? false
       ]
     );
+
+    await replacePoolRoundPayouts(client, {
+      poolId: id,
+      leagueCode: primarySportTeam.leagueCode,
+      payoutScheduleMode: parsed.data.payoutScheduleMode,
+      roundPayouts: parsed.data.roundPayouts
+    });
 
     await ensurePoolSquaresInitialized(client, id);
 
@@ -2348,6 +2421,7 @@ setupRouter.get('/pools', async (_req, res) => {
     await ensurePoolDisplayTokenSupport(client);
     await ensureNotificationSupport(client);
     await ensurePoolStructureSupport(client);
+    await ensurePoolPayoutStructureSupport(client);
 
     const result = await client.query(
       `
@@ -2366,6 +2440,8 @@ setupRouter.get('/pools', async (_req, res) => {
           p.end_date,
           COALESCE(p.structure_mode, 'manual') AS structure_mode,
           p.template_code,
+          COALESCE(p.payout_schedule_mode, 'uniform') AS payout_schedule_mode,
+          COALESCE(payout_rules.round_payouts, '[]'::json) AS round_payouts,
           p.square_cost,
           p.q1_payout,
           p.q2_payout,
@@ -2378,6 +2454,21 @@ setupRouter.get('/pools', async (_req, res) => {
           COALESCE(t.has_members_flg, TRUE) AS has_members_flg
         FROM football_pool.pool p
         LEFT JOIN football_pool.organization t ON t.id = p.team_id
+        LEFT JOIN LATERAL (
+          SELECT json_agg(
+                   json_build_object(
+                     'roundLabel', pr.round_label,
+                     'roundSequence', pr.round_sequence,
+                     'q1Payout', pr.q1_payout,
+                     'q2Payout', pr.q2_payout,
+                     'q3Payout', pr.q3_payout,
+                     'q4Payout', pr.q4_payout
+                   )
+                   ORDER BY COALESCE(pr.round_sequence, 32767), LOWER(pr.round_label), pr.id
+                 ) AS round_payouts
+          FROM football_pool.pool_payout_rule pr
+          WHERE pr.pool_id = p.id
+        ) payout_rules ON TRUE
         ORDER BY p.id DESC
         LIMIT 500
       `
@@ -2413,6 +2504,8 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
   try {
     await ensureNotificationSupport(client);
     await ensurePoolStructureSupport(client);
+    await ensurePoolPayoutStructureSupport(client);
+    await client.query('BEGIN');
 
     const poolType = getPoolTypeDefinition(parsedBody.data.poolType);
     const structureSettings = resolvePoolStructureSettings(parsedBody.data);
@@ -2450,13 +2543,14 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
           end_date = $12::date,
           structure_mode = $13,
           template_code = $14,
-          square_cost = $15,
-          q1_payout = $16,
-          q2_payout = $17,
-          q3_payout = $18,
-          q4_payout = $19,
-          contact_notification_level = COALESCE($20, contact_notification_level),
-          contact_notify_on_square_lead_flg = COALESCE($21, contact_notify_on_square_lead_flg)
+          payout_schedule_mode = $15,
+          square_cost = $16,
+          q1_payout = $17,
+          q2_payout = $18,
+          q3_payout = $19,
+          q4_payout = $20,
+          contact_notification_level = COALESCE($21, contact_notification_level),
+          contact_notify_on_square_lead_flg = COALESCE($22, contact_notify_on_square_lead_flg)
         WHERE id = $1
         RETURNING id
       `,
@@ -2475,6 +2569,7 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
         structureSettings.endDate,
         structureSettings.structureMode,
         structureSettings.templateCode,
+        getPoolPayoutScheduleMode(parsedBody.data.payoutScheduleMode),
         parsedBody.data.squareCost,
         normalizedPayouts.q1Payout,
         normalizedPayouts.q2Payout,
@@ -2486,9 +2581,17 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
     );
 
     if (result.rowCount === 0) {
+      await client.query('ROLLBACK');
       res.status(404).json({ error: 'Pool not found' });
       return;
     }
+
+    await replacePoolRoundPayouts(client, {
+      poolId: parsedParams.data.poolId,
+      leagueCode: primarySportTeam.leagueCode,
+      payoutScheduleMode: parsedBody.data.payoutScheduleMode,
+      roundPayouts: parsedBody.data.roundPayouts
+    });
 
     if (poolType.code === 'tournament') {
       await ensureTournamentChampionshipPlaceholder(client, {
@@ -2504,8 +2607,10 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
       });
     }
 
+    await client.query('COMMIT');
     res.json({ id: parsedParams.data.poolId, message: 'Pool updated' });
   } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
     res.status(500).json({
       error: 'Failed to update pool',
       detail: error instanceof Error ? error.message : 'Unknown error'

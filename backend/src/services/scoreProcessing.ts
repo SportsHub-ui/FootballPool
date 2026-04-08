@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg';
 import { db } from '../config/db';
 import { emitScoreNotifications, type QuarterNotificationResult, type LiveLeaderState } from './notifications';
+import { loadPoolPayoutConfig, resolvePoolPayoutsForRound } from './poolPayouts';
 
 export interface QuarterScoresInput {
   q1PrimaryScore: number | null;
@@ -147,31 +148,6 @@ const buildLiveLeaderState = (game: GameScoreSnapshot): LiveLeaderState | null =
   };
 };
 
-const ensurePoolPayouts = async (client: PoolClient, poolId: number) => {
-  const result = await client.query(
-    `SELECT q1_payout,
-            q2_payout,
-            q3_payout,
-            q4_payout,
-            COALESCE(winner_loser_flg, FALSE) AS winner_loser_flg
-     FROM football_pool.pool
-     WHERE id = $1`,
-    [poolId]
-  );
-
-  if (result.rows.length === 0) {
-    throw new Error('Pool not found');
-  }
-
-  return result.rows[0] as {
-    q1_payout: number;
-    q2_payout: number;
-    q3_payout: number;
-    q4_payout: number;
-    winner_loser_flg: boolean;
-  };
-};
-
 // Refactored for normalized schema: process scores for each pool_game
 export const processGameScoresWithClient = async (
   client: PoolClient,
@@ -180,7 +156,13 @@ export const processGameScoresWithClient = async (
 ): Promise<ScoreProcessingResult[]> => {
   // Find all pool_game entries for this game
   const poolGames = await client.query(
-    `SELECT pool_id, row_numbers, column_numbers FROM football_pool.pool_game WHERE game_id = $1`,
+    `SELECT pool_id,
+            row_numbers,
+            column_numbers,
+            round_label,
+            round_sequence
+     FROM football_pool.pool_game
+     WHERE game_id = $1`,
     [gameId]
   );
   const results: ScoreProcessingResult[] = [];
@@ -205,51 +187,55 @@ export const processGameScoresWithClient = async (
         }
       ])
     );
-    // Get pool payouts
-    const payouts = await ensurePoolPayouts(client, pg.pool_id);
+    const payoutConfig = await loadPoolPayoutConfig(client, Number(pg.pool_id));
+    const payouts = resolvePoolPayoutsForRound(
+      payoutConfig,
+      typeof pg.round_label === 'string' ? pg.round_label : null,
+      pg.round_sequence != null ? Number(pg.round_sequence) : null
+    );
     const quarters: QuarterSpec[] = [
       {
         num: 1,
-        payout: payouts.q1_payout,
+        payout: payouts.q1Payout,
         squareNum: resolveWinningSquareNumber(
           pg.row_numbers,
           pg.column_numbers,
           scores.q1OpponentScore,
           scores.q1PrimaryScore,
-          Boolean(payouts.winner_loser_flg)
+          Boolean(payouts.winnerLoserMode)
         )
       },
       {
         num: 2,
-        payout: payouts.q2_payout,
+        payout: payouts.q2Payout,
         squareNum: resolveWinningSquareNumber(
           pg.row_numbers,
           pg.column_numbers,
           scores.q2OpponentScore,
           scores.q2PrimaryScore,
-          Boolean(payouts.winner_loser_flg)
+          Boolean(payouts.winnerLoserMode)
         )
       },
       {
         num: 3,
-        payout: payouts.q3_payout,
+        payout: payouts.q3Payout,
         squareNum: resolveWinningSquareNumber(
           pg.row_numbers,
           pg.column_numbers,
           scores.q3OpponentScore,
           scores.q3PrimaryScore,
-          Boolean(payouts.winner_loser_flg)
+          Boolean(payouts.winnerLoserMode)
         )
       },
       {
         num: 4,
-        payout: payouts.q4_payout,
+        payout: payouts.q4Payout,
         squareNum: resolveWinningSquareNumber(
           pg.row_numbers,
           pg.column_numbers,
           scores.q4OpponentScore,
           scores.q4PrimaryScore,
-          Boolean(payouts.winner_loser_flg)
+          Boolean(payouts.winnerLoserMode)
         )
       }
     ];

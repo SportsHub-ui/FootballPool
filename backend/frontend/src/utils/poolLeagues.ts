@@ -68,3 +68,17 @@ export const getPoolLeagueDefinition = (leagueCode?: string | null): PoolLeagueD
   const normalized = String(leagueCode ?? 'NFL').trim().toUpperCase() as SupportedLeagueCode
   return poolLeagueDefinitions[normalized] ?? poolLeagueDefinitions.NFL
 }
+
+export const normalizePayoutsForLeague = (
+  leagueCode: string | null | undefined,
+  payouts: { q1Payout: number; q2Payout: number; q3Payout: number; q4Payout: number }
+): { q1Payout: number; q2Payout: number; q3Payout: number; q4Payout: number } => {
+  const activeSlots = new Set(getPoolLeagueDefinition(leagueCode).activePayoutSlots)
+
+  return {
+    q1Payout: activeSlots.has('q1') ? Math.max(0, Number(payouts.q1Payout) || 0) : 0,
+    q2Payout: activeSlots.has('q2') ? Math.max(0, Number(payouts.q2Payout) || 0) : 0,
+    q3Payout: activeSlots.has('q3') ? Math.max(0, Number(payouts.q3Payout) || 0) : 0,
+    q4Payout: activeSlots.has('q4') ? Math.max(0, Number(payouts.q4Payout) || 0) : 0
+  }
+}

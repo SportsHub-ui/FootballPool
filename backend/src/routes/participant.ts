@@ -1,6 +1,8 @@
 ﻿import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../config/db';
+import { getPoolLeagueDefinition } from '../config/poolLeagues';
+import { loadPoolPayoutConfig, resolvePoolPayoutsForRound } from '../services/poolPayouts';
 import { getPoolSimulationStatus } from '../services/poolSimulation';
 import { resolveWinningSquareNumber } from '../services/scoreProcessing';
 
@@ -58,6 +60,32 @@ const toQuarterScoreMap = (value: unknown): QuarterScoreMap => {
     return value as QuarterScoreMap;
   }
   return {};
+};
+
+const buildBoardPayoutSummary = (
+  leagueCode: string | null | undefined,
+  payoutConfig: Awaited<ReturnType<typeof loadPoolPayoutConfig>>,
+  roundLabel?: string | null,
+  roundSequence?: number | null
+) => {
+  const leagueDefinition = getPoolLeagueDefinition(leagueCode);
+  const activePayouts = resolvePoolPayoutsForRound(payoutConfig, roundLabel, roundSequence);
+
+  return {
+    payoutScheduleMode: payoutConfig.payoutScheduleMode,
+    currentRoundLabel: roundLabel ?? null,
+    currentRoundSequence: roundSequence ?? null,
+    activeSlots: leagueDefinition.activePayoutSlots,
+    payoutLabels: leagueDefinition.payoutLabels,
+    defaultPayouts: payoutConfig.defaultPayouts,
+    activePayouts: {
+      q1Payout: activePayouts.q1Payout,
+      q2Payout: activePayouts.q2Payout,
+      q3Payout: activePayouts.q3Payout,
+      q4Payout: activePayouts.q4Payout
+    },
+    roundPayouts: payoutConfig.roundPayouts
+  };
 };
 
 // Any authenticated user can access these endpoints
@@ -285,6 +313,7 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
                 COALESCE(p.pool_type, 'season') AS pool_type,
                 p.primary_team,
                 COALESCE(p.winner_loser_flg, FALSE) AS winner_loser_flg,
+                p.league_code,
                 t.team_name,
                 t.primary_color,
                 t.secondary_color,
@@ -304,6 +333,8 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
         const result = await client.query(
           `SELECT pg.id AS pool_game_id,
                   g.*,
+                  pg.round_label,
+                  pg.round_sequence,
                   nth.name AS home_team_name,
                   nta.name AS away_team_name,
                   pg.row_numbers,
@@ -321,6 +352,8 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
         const result = await client.query(
           `SELECT pg.id AS pool_game_id,
                   g.*,
+                  pg.round_label,
+                  pg.round_sequence,
                   nth.name AS home_team_name,
                   nta.name AS away_team_name,
                   pg.row_numbers,
@@ -341,7 +374,12 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
       }
 
       const gamesUpToSelectionResult = await client.query(
-        `SELECT pg.id AS pool_game_id, g.*, pg.row_numbers, pg.column_numbers AS col_numbers
+        `SELECT pg.id AS pool_game_id,
+                g.*,
+                pg.round_label,
+                pg.round_sequence,
+                pg.row_numbers,
+                pg.column_numbers AS col_numbers
          FROM football_pool.pool_game pg
          JOIN football_pool.game g ON g.id = pg.game_id
          WHERE pg.pool_id = $1
@@ -354,13 +392,7 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
         [poolId, selectedGameRow?.week_number ?? null, selectedGameRow?.game_date ?? null]
       );
 
-      const payoutsResult = await client.query(
-        `SELECT q1_payout, q2_payout, q3_payout, q4_payout
-         FROM football_pool.pool
-         WHERE id = $1
-         LIMIT 1`,
-        [poolId]
-      );
+      const payoutConfig = await loadPoolPayoutConfig(client, poolId);
 
       const squaresResult = await client.query(
         `SELECT s.id,
@@ -379,15 +411,8 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
         [poolId]
       );
 
-      const payouts = payoutsResult.rows[0] ?? {
-        q1_payout: 0,
-        q2_payout: 0,
-        q3_payout: 0,
-        q4_payout: 0
-      };
-
       const simulationStatus = await getPoolSimulationStatus(client, poolId).catch(() => null);
-      const winnerLoserMode = Boolean(poolResult.rows[0]?.winner_loser_flg);
+      const winnerLoserMode = Boolean(payoutConfig.winnerLoserMode);
       const currentGameTotals = new Map<number, number>();
       const seasonTotals = new Map<number, number>();
       const parseScores = (row: any): QuarterScoreMap => toQuarterScoreMap(row.scores_by_quarter);
@@ -434,26 +459,31 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
             ? Number(simulationStatus?.nextQuarter ?? 0)
             : null;
 
+        const gamePayouts = resolvePoolPayoutsForRound(
+          payoutConfig,
+          typeof game.round_label === 'string' ? game.round_label : null,
+          game.round_sequence != null ? Number(game.round_sequence) : null
+        );
         const entries = [
           {
             quarter: 1,
             squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, getQuarterScore(scores, '1', 'away'), getQuarterScore(scores, '1', 'home'), winnerLoserMode),
-            amount: Number(payouts.q1_payout ?? 0)
+            amount: Number(gamePayouts.q1Payout ?? 0)
           },
           {
             quarter: 2,
             squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, getQuarterScore(scores, '2', 'away'), getQuarterScore(scores, '2', 'home'), winnerLoserMode),
-            amount: Number(payouts.q2_payout ?? 0)
+            amount: Number(gamePayouts.q2Payout ?? 0)
           },
           {
             quarter: 3,
             squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, getQuarterScore(scores, '3', 'away'), getQuarterScore(scores, '3', 'home'), winnerLoserMode),
-            amount: Number(payouts.q3_payout ?? 0)
+            amount: Number(gamePayouts.q3Payout ?? 0)
           },
           {
             quarter: 4,
             squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, getQuarterScore(scores, '4', 'away'), getQuarterScore(scores, '4', 'home'), winnerLoserMode),
-            amount: Number(payouts.q4_payout ?? 0)
+            amount: Number(gamePayouts.q4Payout ?? 0)
           }
         ];
 
@@ -478,6 +508,13 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
         is_current_score_leader: currentLeaderSquare != null && Number(square.square_num) === Number(currentLeaderSquare)
       }));
 
+      const payoutSummary = buildBoardPayoutSummary(
+        poolResult.rows[0]?.league_code,
+        payoutConfig,
+        typeof selectedGame?.round_label === 'string' ? selectedGame.round_label : null,
+        selectedGame?.round_sequence != null ? Number(selectedGame.round_sequence) : null
+      );
+
       return res.json({
         board: {
           poolId,
@@ -494,6 +531,7 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
           teamLogo: poolResult.rows[0].logo_file ?? null,
           rowNumbers: Array.isArray(selectedGame?.row_numbers) ? selectedGame.row_numbers : null,
           colNumbers: Array.isArray(selectedGame?.col_numbers) ? selectedGame.col_numbers : null,
+          payoutSummary,
           squares
         }
       });

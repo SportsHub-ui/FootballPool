@@ -17,6 +17,10 @@ const canSafelyResetTestDatabase = async (): Promise<boolean> => {
     return true
   }
 
+  if (/dev/i.test(databaseName) && process.env.FOOTBALL_POOL_ALLOW_DEV_TEST_RESET === 'true') {
+    return true
+  }
+
   if (process.env.FOOTBALL_POOL_DISABLE_TEST_RESET === 'true') {
     return false
   }
@@ -39,6 +43,7 @@ const resetTestDatabase = async (): Promise<void> => {
         football_pool.notification_log,
         football_pool.notification_template,
         football_pool.pool_game,
+        football_pool.pool_payout_rule,
         football_pool.pool_simulation_state,
         football_pool.square,
         football_pool.uploaded_image,
@@ -474,15 +479,10 @@ describe('Football Pool API', () => {
     })
 
     it('should persist pool league selection and filter primary sport teams by league', async () => {
-      const idResult = await db.query<{ next_id: number }>(
-        `SELECT COALESCE(MAX(id), 0) + 1 AS next_id
-         FROM football_pool.sport_team`
-      )
-      const sportTeamId = Number(idResult.rows[0]?.next_id ?? 1)
-
-      await db.query(
+      const sportTeamKey = `test-ncaab-${Date.now()}`
+      const sportTeamName = `Test College Hoops ${sportTeamKey}`
+      const sportTeamResult = await db.query<{ id: number }>(
         `INSERT INTO football_pool.sport_team (
-           id,
            name,
            abbreviation,
            sport_code,
@@ -490,10 +490,13 @@ describe('Football Pool API', () => {
            espn_team_id,
            espn_team_uid
          )
-         VALUES ($1, $2, $3, 'BASKETBALL', 'NCAAB', $4, $5)
-         ON CONFLICT (id) DO NOTHING`,
-        [sportTeamId, `Test College Hoops ${sportTeamId}`, 'TCH', `test-${sportTeamId}`, `test:ncaab:${sportTeamId}`]
+         VALUES ($1, $2, 'BASKETBALL', 'NCAAB', $3, $4)
+         ON CONFLICT (sport_code, league_code, name)
+         DO UPDATE SET abbreviation = EXCLUDED.abbreviation
+         RETURNING id`,
+        [sportTeamName, 'TCH', `test-${sportTeamKey}`, `test:ncaab:${sportTeamKey}`]
       )
+      const sportTeamId = Number(sportTeamResult.rows[0]?.id)
 
       const sportTeamsResponse = await request(app)
         .get('/api/setup/sport-teams?leagueCode=NCAAB')
@@ -536,7 +539,7 @@ describe('Football Pool API', () => {
       expect(createdPool?.league_code).toBe('NCAAB')
       expect(createdPool?.sport_code).toBe('BASKETBALL')
       expect(createdPool?.primary_sport_team_id).toBe(sportTeamId)
-      expect(createdPool?.primary_team).toBe(`Test College Hoops ${sportTeamId}`)
+      expect(createdPool?.primary_team).toBe(sportTeamName)
       expect(createdPool?.q2_payout).toBe(0)
       expect(createdPool?.q3_payout).toBe(0)
     })
@@ -614,6 +617,134 @@ describe('Football Pool API', () => {
       expect(createdPool?.template_code).toBe('ncaab_march_madness')
       expect(createdPool?.start_date).toContain('2026-03-17')
       expect(createdPool?.end_date).toContain('2026-04-06')
+    })
+
+    it('should persist round-based tournament payouts and use them for championship winnings', async () => {
+      const poolName = `Escalating Tournament Pool ${Date.now()}`
+      const createResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName,
+          teamId,
+          season: 2026,
+          poolType: 'tournament',
+          leagueCode: 'NCAAB',
+          structureMode: 'template',
+          templateCode: 'ncaab_march_madness',
+          payoutScheduleMode: 'by_round',
+          roundPayouts: [
+            {
+              roundLabel: 'Round of 64',
+              roundSequence: 2,
+              q1Payout: 0,
+              q2Payout: 0,
+              q3Payout: 0,
+              q4Payout: 10
+            },
+            {
+              roundLabel: 'Championship',
+              roundSequence: 7,
+              q1Payout: 0,
+              q2Payout: 0,
+              q3Payout: 0,
+              q4Payout: 500
+            }
+          ],
+          winnerLoserMode: true,
+          squareCost: 20,
+          q1Payout: 0,
+          q2Payout: 0,
+          q3Payout: 0,
+          q4Payout: 25
+        })
+
+      expect(createResponse.status).toBe(201)
+      const poolId = Number(createResponse.body.id)
+
+      const listResponse = await request(app)
+        .get('/api/setup/pools')
+        .set(organizerHeaders)
+
+      const createdPool = listResponse.body.pools.find((pool: { pool_name: string }) => pool.pool_name === poolName)
+      expect(createdPool?.payout_schedule_mode).toBe('by_round')
+      expect(Array.isArray(createdPool?.round_payouts)).toBe(true)
+      const championshipRule = createdPool?.round_payouts?.find(
+        (rule: { roundSequence?: number; roundLabel?: string; q4Payout?: number }) =>
+          Number(rule.roundSequence ?? 0) === 7 || rule.roundLabel === 'Championship'
+      )
+      expect(championshipRule?.q4Payout).toBe(500)
+
+      const participantResponse = await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Bracket',
+          lastName: 'Winner',
+          email: `bracket-winner-${Date.now()}@example.com`,
+          phone: '5552221111'
+        })
+
+      expect(participantResponse.status).toBe(201)
+      const participantId = Number(participantResponse.body.id)
+
+      const assignResponse = await request(app)
+        .patch(`/api/setup/pools/${poolId}/squares/49`)
+        .set(organizerHeaders)
+        .send({ participantId, playerId: null, paidFlg: true })
+
+      expect(assignResponse.status).toBe(200)
+
+      const gameResponse = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: 7,
+          roundLabel: 'Championship',
+          roundSequence: 7,
+          matchupOrder: 1,
+          opponent: 'Title Game',
+          gameDate: '2026-04-07'
+        })
+
+      expect(gameResponse.status).toBe(200)
+      const gameId = Number(gameResponse.body.game.id)
+
+      const scoreResponse = await request(app)
+        .patch(`/api/games/${gameId}/scores`)
+        .set(organizerHeaders)
+        .send({
+          q1PrimaryScore: null,
+          q1OpponentScore: null,
+          q2PrimaryScore: null,
+          q2OpponentScore: null,
+          q3PrimaryScore: null,
+          q3OpponentScore: null,
+          q4PrimaryScore: 78,
+          q4OpponentScore: 74
+        })
+
+      expect(scoreResponse.status).toBe(200)
+
+      const winningsResponse = await request(app)
+        .get(`/api/winnings/pool/${poolId}`)
+        .set(organizerHeaders)
+
+      expect(winningsResponse.status).toBe(200)
+      const championshipWinning = winningsResponse.body.find(
+        (entry: { game_id: number; amount_won: number }) => Number(entry.game_id) === gameId
+      )
+      expect(championshipWinning?.amount_won).toBe(500)
+
+      const boardResponse = await request(app)
+        .get(`/api/landing/pools/${poolId}/board?gameId=${gameId}`)
+        .set(organizerHeaders)
+
+      expect(boardResponse.status).toBe(200)
+      expect(boardResponse.body.board?.payoutSummary?.payoutScheduleMode).toBe('by_round')
+      expect(boardResponse.body.board?.payoutSummary?.activePayouts?.q4Payout).toBe(500)
+      expect(boardResponse.body.board?.payoutSummary?.currentRoundLabel).toBe('Championship')
     })
 
     it('should preload the full bracket scaffold for NCAAB tournament templates', async () => {

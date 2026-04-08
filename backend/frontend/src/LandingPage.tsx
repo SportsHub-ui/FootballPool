@@ -8,6 +8,7 @@ import { LandingPoolMaintenance } from './LandingPoolMaintenance'
 import { LandingScheduleMaintenance } from './LandingScheduleMaintenance'
 import { LandingTeamMaintenance } from './LandingTeamMaintenance'
 import { LandingUserMaintenance } from './LandingUserMaintenance'
+import { PayoutSummaryPanel, type BoardPayoutSummary } from './PayoutSummaryPanel'
 
 type LandingPool = {
   id: number
@@ -77,6 +78,7 @@ type LandingBoard = {
   teamLogo: string | null
   rowNumbers: Array<number | string> | null
   colNumbers: Array<number | string> | null
+  payoutSummary?: BoardPayoutSummary | null
   squares: LandingBoardSquare[]
 }
 
@@ -1314,8 +1316,9 @@ export function LandingPage() {
           ) : null}
 
           {selectedPool && board ? (
-            <div
-              className="pool-board"
+            <>
+              <div
+                className="pool-board"
               style={{
                 ['--team-primary' as string]: board.teamPrimaryColor ?? primaryBrand.color,
                 ['--team-secondary' as string]: board.teamSecondaryColor ?? '#111'
@@ -1461,6 +1464,9 @@ export function LandingPage() {
                 </div>
               </div>
             </div>
+
+              {board?.payoutSummary ? <PayoutSummaryPanel summary={board.payoutSummary} title="Pool payout schedule" /> : null}
+            </>
           ) : (
             <article className="panel">
               <h2>{pools.length > 0 ? 'Select Pool' : 'No Pools Available'}</h2>

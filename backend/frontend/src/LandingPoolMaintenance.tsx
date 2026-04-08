@@ -10,6 +10,13 @@ import {
   type PoolStructureMode,
   type PoolTemplateCode
 } from './utils/poolStructures'
+import {
+  findMatchingRoundPayout,
+  getPoolPayoutScheduleMode,
+  normalizeRoundPayouts,
+  type PoolPayoutScheduleMode,
+  type RoundPayoutConfig
+} from './utils/poolPayoutSchedules'
 import { getPoolTypeDefinition, type PoolTypeCode } from './utils/poolTypes'
 
 type TeamRecord = {
@@ -33,6 +40,8 @@ type GameRecord = {
   opponent: string
   game_dt: string
   is_simulation: boolean
+  round_label?: string | null
+  round_sequence?: number | null
   q1_primary_score: number | null
   q1_opponent_score: number | null
   q2_primary_score: number | null
@@ -53,6 +62,8 @@ type PoolRecord = {
   pool_type?: PoolTypeCode | null
   structure_mode?: PoolStructureMode | null
   template_code?: PoolTemplateCode | null
+  payout_schedule_mode?: PoolPayoutScheduleMode | null
+  round_payouts?: RoundPayoutConfig[] | null
   start_date?: string | null
   end_date?: string | null
   primary_team: string | null
@@ -197,6 +208,43 @@ const applyTemplateDateDefaults = (
   }
 }
 
+const createEmptyRoundPayout = (roundLabel = '', roundSequence: number | null = null): RoundPayoutConfig => ({
+  roundLabel,
+  roundSequence,
+  q1Payout: 0,
+  q2Payout: 0,
+  q3Payout: 0,
+  q4Payout: 0
+})
+
+const buildTemplateRoundPayouts = (
+  leagueCode: string,
+  templateCode: string | null | undefined,
+  currentRoundPayouts: RoundPayoutConfig[]
+): RoundPayoutConfig[] => {
+  const templateDefinition = getPoolTemplateDefinition(templateCode)
+  const normalizedCurrentRoundPayouts = normalizeRoundPayouts(leagueCode, currentRoundPayouts)
+
+  if (!templateDefinition) {
+    return normalizedCurrentRoundPayouts
+  }
+
+  return templateDefinition.rounds.map((round) => {
+    const matchedRound =
+      normalizedCurrentRoundPayouts.find(
+        (entry) =>
+          Number(entry.roundSequence ?? 0) === Number(round.sequence) ||
+          entry.roundLabel.trim().toLowerCase() === round.label.trim().toLowerCase()
+      ) ?? createEmptyRoundPayout(round.label, round.sequence)
+
+    return {
+      ...matchedRound,
+      roundLabel: round.label,
+      roundSequence: round.sequence
+    }
+  })
+}
+
 const hasRecordedPayoutSlot = (game: GameRecord, slot: PayoutSlotKey): boolean => {
   if (slot === 'q1') return hasRecordedQuarter(game.q1_primary_score, game.q1_opponent_score)
   if (slot === 'q2') return hasRecordedQuarter(game.q2_primary_score, game.q2_opponent_score)
@@ -213,6 +261,8 @@ const buildReadonlyPoolRecords = (pools: LandingPool[]): PoolRecord[] =>
     pool_type: (pool.pool_type as PoolTypeCode | null | undefined) ?? 'season',
     structure_mode: 'manual',
     template_code: null,
+    payout_schedule_mode: 'uniform',
+    round_payouts: [],
     start_date: null,
     end_date: null,
     primary_team: pool.team_name ?? null,
@@ -256,6 +306,8 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     poolType: 'season' as PoolTypeCode,
     structureMode: 'manual' as PoolStructureMode,
     templateCode: '' as PoolTemplateCode | '',
+    payoutScheduleMode: 'uniform' as PoolPayoutScheduleMode,
+    roundPayouts: [] as RoundPayoutConfig[],
     startDate: '',
     endDate: '',
     leagueCode: 'NFL' as SupportedLeagueCode,
@@ -312,6 +364,8 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     const leagueDefinition = getPoolLeagueDefinition(pool?.league_code)
     const poolTypeDefinition = getPoolTypeDefinition(pool?.pool_type)
     const structureMode = getPoolStructureMode(pool?.structure_mode)
+    const payoutScheduleMode = getPoolPayoutScheduleMode(pool?.payout_schedule_mode)
+    const rawRoundPayouts = Array.isArray(pool?.round_payouts) ? pool.round_payouts : []
 
     setSelectedPoolId(pool?.id ?? null)
     setIsCreatingNew(pool == null)
@@ -322,6 +376,18 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
       poolType: poolTypeDefinition.code,
       structureMode,
       templateCode: (pool?.template_code as PoolTemplateCode | null | undefined) ?? '',
+      payoutScheduleMode,
+      roundPayouts: normalizeRoundPayouts(
+        leagueDefinition.leagueCode,
+        rawRoundPayouts.map((entry) => ({
+          roundLabel: String(entry?.roundLabel ?? ''),
+          roundSequence: entry?.roundSequence != null ? Number(entry.roundSequence) : null,
+          q1Payout: Number(entry?.q1Payout ?? 0),
+          q2Payout: Number(entry?.q2Payout ?? 0),
+          q3Payout: Number(entry?.q3Payout ?? 0),
+          q4Payout: Number(entry?.q4Payout ?? 0)
+        }))
+      ),
       startDate: pool?.start_date?.slice(0, 10) ?? '',
       endDate: pool?.end_date?.slice(0, 10) ?? '',
       leagueCode: leagueDefinition.leagueCode,
@@ -595,15 +661,14 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
 
   const payoutSummary = useMemo(() => {
     const squareCost = Math.max(0, Number(poolForm.squareCost) || 0)
-    const payoutValues: Record<PayoutSlotKey, number> = {
-      q1: Math.max(0, Number(poolForm.q1Payout) || 0),
-      q2: Math.max(0, Number(poolForm.q2Payout) || 0),
-      q3: Math.max(0, Number(poolForm.q3Payout) || 0),
-      q4: Math.max(0, Number(poolForm.q4Payout) || 0)
+    const payoutValues = {
+      q1Payout: Math.max(0, Number(poolForm.q1Payout) || 0),
+      q2Payout: Math.max(0, Number(poolForm.q2Payout) || 0),
+      q3Payout: Math.max(0, Number(poolForm.q3Payout) || 0),
+      q4Payout: Math.max(0, Number(poolForm.q4Payout) || 0)
     }
-
+    const normalizedRoundPayouts = normalizeRoundPayouts(poolForm.leagueCode, poolForm.roundPayouts)
     const totalRevenue = squareCost * TOTAL_SQUARES
-    const totalPayoutPerGame = selectedLeagueDefinition.activePayoutSlots.reduce((sum, slot) => sum + payoutValues[slot], 0)
     const estimatedGameCount =
       selectedPoolTypeDefinition.estimatedGameCountMode === 'single'
         ? 1
@@ -612,15 +677,62 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
           : selectedPoolTypeDefinition.estimatedGameCountMode === 'manual'
             ? Math.max(poolGames.length, selectedTemplateDefinition?.expectedGameCount ?? 0)
             : selectedLeagueDefinition.regularSeasonGameCount
-    const totalPayout = totalPayoutPerGame * estimatedGameCount
+
+    const getPayoutTotalForEntry = (entry: { q1Payout: number; q2Payout: number; q3Payout: number; q4Payout: number }): number =>
+      selectedLeagueDefinition.activePayoutSlots.reduce((sum, slot) => {
+        const slotValue = slot === 'q1' ? entry.q1Payout : slot === 'q2' ? entry.q2Payout : slot === 'q3' ? entry.q3Payout : entry.q4Payout
+        return sum + Number(slotValue ?? 0)
+      }, 0)
+
+    const totalPayoutPerGame = getPayoutTotalForEntry(payoutValues)
+    const roundGameCountMap = new Map<string, number>()
+    selectedTemplateDefinition?.rounds.forEach((round) => {
+      roundGameCountMap.set(`seq:${round.sequence}`, round.gameCount)
+      roundGameCountMap.set(`label:${round.label.trim().toLowerCase()}`, round.gameCount)
+    })
+
+    if (!selectedTemplateDefinition) {
+      poolGames.forEach((game) => {
+        const labelKey = String(game.round_label ?? '').trim().toLowerCase()
+        if (game.round_sequence != null) {
+          roundGameCountMap.set(`seq:${Number(game.round_sequence)}`, (roundGameCountMap.get(`seq:${Number(game.round_sequence)}`) ?? 0) + 1)
+        } else if (labelKey) {
+          roundGameCountMap.set(`label:${labelKey}`, (roundGameCountMap.get(`label:${labelKey}`) ?? 0) + 1)
+        }
+      })
+    }
+
+    const totalPayout =
+      poolForm.payoutScheduleMode === 'by_round' && selectedPoolTypeDefinition.code === 'tournament'
+        ? normalizedRoundPayouts.reduce((sum, roundPayout) => {
+            const matchingGameCount =
+              (roundPayout.roundSequence != null ? roundGameCountMap.get(`seq:${Number(roundPayout.roundSequence)}`) : undefined) ??
+              roundGameCountMap.get(`label:${roundPayout.roundLabel.trim().toLowerCase()}`) ??
+              1
+            return sum + getPayoutTotalForEntry(roundPayout) * matchingGameCount
+          }, 0)
+        : totalPayoutPerGame * estimatedGameCount
 
     const rawPaidOutToDate = poolGames.reduce((sum, game) => {
+      const matchingRoundPayout =
+        poolForm.payoutScheduleMode === 'by_round' && selectedPoolTypeDefinition.code === 'tournament'
+          ? findMatchingRoundPayout(normalizedRoundPayouts, game.round_label, game.round_sequence)
+          : null
+      const activePayoutEntry = matchingRoundPayout ?? payoutValues
+
       return (
         sum +
-        selectedLeagueDefinition.activePayoutSlots.reduce(
-          (slotSum, slot) => slotSum + (hasRecordedPayoutSlot(game, slot) ? payoutValues[slot] : 0),
-          0
-        )
+        selectedLeagueDefinition.activePayoutSlots.reduce((slotSum, slot) => {
+          const slotValue =
+            slot === 'q1'
+              ? activePayoutEntry.q1Payout
+              : slot === 'q2'
+                ? activePayoutEntry.q2Payout
+                : slot === 'q3'
+                  ? activePayoutEntry.q3Payout
+                  : activePayoutEntry.q4Payout
+          return slotSum + (hasRecordedPayoutSlot(game, slot) ? Number(slotValue ?? 0) : 0)
+        }, 0)
       )
     }, 0)
 
@@ -635,10 +747,13 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
       estimatedGameCount
     }
   }, [
+    poolForm.leagueCode,
+    poolForm.payoutScheduleMode,
     poolForm.q1Payout,
     poolForm.q2Payout,
     poolForm.q3Payout,
     poolForm.q4Payout,
+    poolForm.roundPayouts,
     poolForm.squareCost,
     poolGames,
     selectedLeagueDefinition,
@@ -663,6 +778,36 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
       q2Payout: slot === 'q2' ? value : current.q2Payout,
       q3Payout: slot === 'q3' ? value : current.q3Payout,
       q4Payout: slot === 'q4' ? value : current.q4Payout
+    }))
+  }
+
+  const setRoundPayoutField = (index: number, updates: Partial<RoundPayoutConfig>): void => {
+    setPoolForm((current) => ({
+      ...current,
+      roundPayouts: current.roundPayouts.map((roundPayout, roundIndex) =>
+        roundIndex === index ? { ...roundPayout, ...updates } : roundPayout
+      )
+    }))
+  }
+
+  const addRoundPayoutRow = (): void => {
+    setPoolForm((current) => ({
+      ...current,
+      roundPayouts: [...current.roundPayouts, createEmptyRoundPayout('', current.roundPayouts.length + 1)]
+    }))
+  }
+
+  const removeRoundPayoutRow = (index: number): void => {
+    setPoolForm((current) => ({
+      ...current,
+      roundPayouts: current.roundPayouts.filter((_, roundIndex) => roundIndex !== index)
+    }))
+  }
+
+  const applyTemplateRoundPayoutRows = (): void => {
+    setPoolForm((current) => ({
+      ...current,
+      roundPayouts: buildTemplateRoundPayouts(current.leagueCode, current.templateCode, current.roundPayouts)
     }))
   }
 
@@ -718,6 +863,23 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
       return
     }
 
+    if (poolForm.payoutScheduleMode === 'by_round') {
+      if (poolForm.poolType !== 'tournament') {
+        setError('Round-based payout schedules are currently only supported for tournament pools.')
+        return
+      }
+
+      if (poolForm.roundPayouts.some((roundPayout) => !roundPayout.roundLabel.trim())) {
+        setError('Give each round payout row a round name before saving.')
+        return
+      }
+
+      if (normalizeRoundPayouts(poolForm.leagueCode, poolForm.roundPayouts).length === 0) {
+        setError('Add at least one round payout when using by-round tournament payouts.')
+        return
+      }
+    }
+
     if (!canManagePools) {
       setError('Sign in as an organizer to save pools.')
       onRequireSignIn()
@@ -728,6 +890,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     setError(null)
 
     try {
+      const normalizedRoundPayoutEntries = normalizeRoundPayouts(poolForm.leagueCode, poolForm.roundPayouts)
       const payload = {
         poolName: poolForm.poolName.trim(),
         teamId: Number(poolForm.teamId),
@@ -735,6 +898,8 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
         poolType: poolForm.poolType,
         structureMode: poolForm.structureMode,
         templateCode: poolForm.templateCode || undefined,
+        payoutScheduleMode: poolForm.payoutScheduleMode,
+        roundPayouts: poolForm.payoutScheduleMode === 'by_round' ? normalizedRoundPayoutEntries : [],
         startDate: poolForm.startDate || undefined,
         endDate: poolForm.endDate || undefined,
         leagueCode: poolForm.leagueCode,
@@ -1255,6 +1420,13 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                       poolType: nextType.code,
                       structureMode: nextStructureMode,
                       templateCode: nextTemplateCode,
+                      payoutScheduleMode: nextType.code === 'tournament' ? current.payoutScheduleMode : 'uniform',
+                      roundPayouts:
+                        nextType.code === 'tournament'
+                          ? current.payoutScheduleMode === 'by_round'
+                            ? buildTemplateRoundPayouts(current.leagueCode, nextTemplateCode, current.roundPayouts)
+                            : current.roundPayouts
+                          : [],
                       startDate: nextType.supportsDateWindow ? nextDates.startDate : '',
                       endDate: nextType.supportsDateWindow ? nextDates.endDate : '',
                       winnerLoserMode: current.winnerLoserMode || nextType.defaultWinnerLoserMode
@@ -1313,6 +1485,10 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                         ...current,
                         structureMode: nextMode,
                         templateCode: nextTemplateCode,
+                        roundPayouts:
+                          current.payoutScheduleMode === 'by_round' && nextMode === 'template'
+                            ? buildTemplateRoundPayouts(current.leagueCode, nextTemplateCode, current.roundPayouts)
+                            : current.roundPayouts,
                         startDate: nextDates.startDate,
                         endDate: nextDates.endDate
                       }
@@ -1338,6 +1514,10 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                       return {
                         ...current,
                         templateCode: nextTemplateCode,
+                        roundPayouts:
+                          current.payoutScheduleMode === 'by_round'
+                            ? buildTemplateRoundPayouts(current.leagueCode, nextTemplateCode, current.roundPayouts)
+                            : current.roundPayouts,
                         startDate: nextDates.startDate,
                         endDate: nextDates.endDate
                       }
@@ -1410,6 +1590,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                       endDate: nextDates.endDate,
                       primarySportTeamId: '',
                       primaryTeam: '',
+                      roundPayouts: normalizeRoundPayouts(nextLeague.leagueCode, current.roundPayouts),
                       q1Payout: nextLeague.activePayoutSlots.includes('q1') ? current.q1Payout : 0,
                       q2Payout: nextLeague.activePayoutSlots.includes('q2') ? current.q2Payout : 0,
                       q3Payout: nextLeague.activePayoutSlots.includes('q3') ? current.q3Payout : 0,
@@ -1495,26 +1676,155 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
               />
             </label>
 
-            {selectedLeagueDefinition.activePayoutSlots.map((slot) => {
-              const payoutValue =
-                slot === 'q1' ? poolForm.q1Payout : slot === 'q2' ? poolForm.q2Payout : slot === 'q3' ? poolForm.q3Payout : poolForm.q4Payout
+            {poolForm.poolType === 'tournament' ? (
+              <label className="field-block">
+                <span>Payout schedule</span>
+                <select
+                  value={poolForm.payoutScheduleMode}
+                  onChange={(event) => {
+                    const nextMode = event.target.value as PoolPayoutScheduleMode
+                    setPoolForm((current) => ({
+                      ...current,
+                      payoutScheduleMode: nextMode,
+                      roundPayouts:
+                        nextMode === 'by_round'
+                          ? current.roundPayouts.length > 0
+                            ? normalizeRoundPayouts(current.leagueCode, current.roundPayouts)
+                            : buildTemplateRoundPayouts(current.leagueCode, current.templateCode, [])
+                          : current.roundPayouts
+                    }))
+                  }}
+                  disabled={saving}
+                >
+                  <option value="uniform">Same payout for every game</option>
+                  <option value="by_round">Custom payout by round</option>
+                </select>
+              </label>
+            ) : null}
 
-              return (
-                <label key={slot} className="field-block">
-                  <span>{selectedLeagueDefinition.payoutLabels[slot]}</span>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={formatCurrencyInput(payoutValue)}
-                    onChange={(event) => setPayoutForSlot(slot, parseCurrencyInput(event.target.value))}
-                    disabled={saving}
-                  />
-                </label>
-              )
-            })}
+            {poolForm.payoutScheduleMode === 'by_round' && poolForm.poolType === 'tournament' ? (
+              <div className="landing-field-span landing-round-payout-editor">
+                <p className="small landing-readonly-note">
+                  Enter the tournament payouts by round. For NCAA basketball, you can leave the 1st-half amount at `$0` and only set the final amount for each round.
+                </p>
+
+                <div className="landing-round-payout-actions">
+                  <button
+                    type="button"
+                    className="secondary compact"
+                    onClick={applyTemplateRoundPayoutRows}
+                    disabled={saving || !selectedTemplateDefinition}
+                  >
+                    {selectedTemplateDefinition ? 'Load template rounds' : 'Select a template to preload rounds'}
+                  </button>
+                  <button type="button" className="secondary compact" onClick={addRoundPayoutRow} disabled={saving}>
+                    Add round
+                  </button>
+                </div>
+
+                {poolForm.roundPayouts.length === 0 ? (
+                  <p className="small">No round payouts added yet. Add a round or load the template defaults.</p>
+                ) : (
+                  <div className="landing-round-payout-list">
+                    {poolForm.roundPayouts.map((roundPayout, index) => (
+                      <div key={`${roundPayout.roundLabel || 'round'}-${index}`} className="landing-round-payout-card">
+                        <div className="landing-round-payout-header">
+                          <strong>{roundPayout.roundLabel.trim() || `Round ${index + 1}`}</strong>
+                          <button
+                            type="button"
+                            className="secondary compact"
+                            onClick={() => removeRoundPayoutRow(index)}
+                            disabled={saving}
+                          >
+                            Remove
+                          </button>
+                        </div>
+
+                        <div className="landing-player-fields">
+                          <label className="field-block">
+                            <span>Round / stage</span>
+                            <input
+                              value={roundPayout.roundLabel}
+                              onChange={(event) => setRoundPayoutField(index, { roundLabel: event.target.value })}
+                              disabled={saving}
+                            />
+                          </label>
+
+                          <label className="field-block">
+                            <span>Round order</span>
+                            <input
+                              type="number"
+                              min={1}
+                              value={roundPayout.roundSequence ?? ''}
+                              onChange={(event) =>
+                                setRoundPayoutField(index, {
+                                  roundSequence: event.target.value ? Number(event.target.value) : null
+                                })
+                              }
+                              disabled={saving}
+                            />
+                          </label>
+
+                          {selectedLeagueDefinition.activePayoutSlots.map((slot) => {
+                            const payoutValue =
+                              slot === 'q1'
+                                ? roundPayout.q1Payout
+                                : slot === 'q2'
+                                  ? roundPayout.q2Payout
+                                  : slot === 'q3'
+                                    ? roundPayout.q3Payout
+                                    : roundPayout.q4Payout
+
+                            return (
+                              <label key={`${slot}-${index}`} className="field-block">
+                                <span>{selectedLeagueDefinition.payoutLabels[slot]}</span>
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={formatCurrencyInput(payoutValue)}
+                                  onChange={(event) =>
+                                    setRoundPayoutField(index, {
+                                      q1Payout: slot === 'q1' ? parseCurrencyInput(event.target.value) : roundPayout.q1Payout,
+                                      q2Payout: slot === 'q2' ? parseCurrencyInput(event.target.value) : roundPayout.q2Payout,
+                                      q3Payout: slot === 'q3' ? parseCurrencyInput(event.target.value) : roundPayout.q3Payout,
+                                      q4Payout: slot === 'q4' ? parseCurrencyInput(event.target.value) : roundPayout.q4Payout
+                                    })
+                                  }
+                                  disabled={saving}
+                                />
+                              </label>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              selectedLeagueDefinition.activePayoutSlots.map((slot) => {
+                const payoutValue =
+                  slot === 'q1' ? poolForm.q1Payout : slot === 'q2' ? poolForm.q2Payout : slot === 'q3' ? poolForm.q3Payout : poolForm.q4Payout
+
+                return (
+                  <label key={slot} className="field-block">
+                    <span>{selectedLeagueDefinition.payoutLabels[slot]}</span>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={formatCurrencyInput(payoutValue)}
+                      onChange={(event) => setPayoutForSlot(slot, parseCurrencyInput(event.target.value))}
+                      disabled={saving}
+                    />
+                  </label>
+                )
+              })
+            )}
 
             <p className="small landing-readonly-note landing-field-span">
-              Payout checkpoints follow the selected league. NCAA basketball uses 1st half and final, MLB uses final only, and playoff/tournament pools are estimated from the games you add.
+              {poolForm.payoutScheduleMode === 'by_round' && poolForm.poolType === 'tournament'
+                ? 'Use by-round payouts for escalating tournament prizes like $10 in the opening round and $500 in the championship.'
+                : 'Payout checkpoints follow the selected league. NCAA basketball uses 1st half and final, MLB uses final only, and playoff/tournament pools are estimated from the games you add.'}
             </p>
 
             <label className="field-block">

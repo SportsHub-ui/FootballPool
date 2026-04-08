@@ -3,6 +3,7 @@ const fs = require('fs');
 const dotenv = require('dotenv');
 const { spawnSync } = require('child_process');
 const { Client } = require('pg');
+const { cleanDatabase, deriveTestDatabaseUrl } = require('./clean-db-data');
 
 const rootDir = path.resolve(__dirname, '..');
 
@@ -16,21 +17,6 @@ const loadEnvFile = (envPath) => {
 };
 
 const quoteIdentifier = (value) => `"${String(value).replace(/"/g, '""')}"`;
-
-const deriveTestDatabaseUrl = (value) => {
-  const parsed = new URL(value);
-  const databaseName = decodeURIComponent(parsed.pathname.replace(/^\//, '') || 'postgres');
-
-  if (!databaseName) {
-    throw new Error('DATABASE_URL must include a database name.');
-  }
-
-  if (!/test/i.test(databaseName)) {
-    parsed.pathname = `/${encodeURIComponent(`${databaseName}_test`)}`;
-  }
-
-  return parsed.toString();
-};
 
 const ensureDatabaseExists = async (connectionString) => {
   const targetUrl = new URL(connectionString);
@@ -104,12 +90,22 @@ const main = async () => {
 
   try {
     await ensureDatabaseExists(process.env.DATABASE_URL);
+    await cleanDatabase(process.env.DATABASE_URL, { target: 'test' });
   } catch (error) {
     process.env.DATABASE_URL = fallbackDatabaseUrl;
-    process.env.FOOTBALL_POOL_DISABLE_TEST_RESET = 'true';
-    console.warn(
-      `[test-runner] Could not provision ${targetDatabaseName}; running in non-destructive mode against the configured database. ${error instanceof Error ? error.message : String(error)}`
-    );
+
+    try {
+      await cleanDatabase(fallbackDatabaseUrl, { target: 'dev' });
+      process.env.FOOTBALL_POOL_ALLOW_DEV_TEST_RESET = 'true';
+      console.warn(
+        `[test-runner] Could not provision ${targetDatabaseName}; falling back to a cleaned development database for this run. ${error instanceof Error ? error.message : String(error)}`
+      );
+    } catch (fallbackCleanupError) {
+      process.env.FOOTBALL_POOL_DISABLE_TEST_RESET = 'true';
+      console.warn(
+        `[test-runner] Could not provision or clean ${targetDatabaseName}; running in non-destructive mode against the configured database. ${fallbackCleanupError instanceof Error ? fallbackCleanupError.message : String(fallbackCleanupError)}`
+      );
+    }
   }
 
   runCommand(process.execPath, [path.join(rootDir, 'scripts', 'run-migrations.js')]);

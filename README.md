@@ -108,6 +108,22 @@ npm run test:run
 npm run test:ui
 ```
 
+> The test runner now auto-cleans the dedicated `*_test` database before each run so automated test data does not keep piling up.
+
+### Clean Local Data Quickly
+
+```bash
+cd backend
+
+# Wipe local development data but keep migrations and reference sport teams
+npm run db:clean
+
+# Wipe the dedicated automated test database
+npm run db:clean:test
+```
+
+These cleanup commands preserve `football_pool.schema_migrations` and the seeded `football_pool.sport_team` catalog, while removing mutable test/dev data like users, pools, games, squares, winnings, notifications, and uploaded images.
+
 ## API Endpoints
 
 ### Health & Diagnostics

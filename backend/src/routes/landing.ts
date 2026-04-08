@@ -3,10 +3,12 @@ import { Request, Router } from 'express';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { db } from '../config/db';
+import { getPoolLeagueDefinition } from '../config/poolLeagues';
 import { ensurePoolSquaresInitialized } from '../services/poolSquares';
 import { ensurePoolDisplayTokenSupport } from '../services/poolDisplay';
 import { getPoolSimulationStatus } from '../services/poolSimulation';
 import { ensureNotificationSupport } from '../services/notifications';
+import { loadPoolPayoutConfig, resolvePoolPayoutsForRound } from '../services/poolPayouts';
 import { resolveWinningSquareNumber } from '../services/scoreProcessing';
 
 export const landingRouter = Router();
@@ -103,6 +105,8 @@ const mapLandingGameRow = (row: Record<string, any>) => {
     opponent: (row.opponent ?? row.away_team_name ?? 'Opponent') as string,
     game_dt: row.game_dt ?? row.game_date ?? null,
     is_simulation: Boolean(row.is_simulation ?? false),
+    round_label: typeof row.round_label === 'string' ? row.round_label : null,
+    round_sequence: toNullableNumber(row.round_sequence),
     row_numbers: Array.isArray(row.row_numbers) ? row.row_numbers : null,
     col_numbers: Array.isArray(row.col_numbers)
       ? row.col_numbers
@@ -130,6 +134,8 @@ const loadPoolGames = async (client: PoolClient, poolId: number) => {
             away_team.name AS opponent,
             COALESCE(g.kickoff_at, g.game_date::timestamp) AS game_dt,
             COALESCE(g.is_simulation, FALSE) AS is_simulation,
+            pg.round_label,
+            pg.round_sequence,
             pg.row_numbers,
             pg.column_numbers,
             g.scores_by_quarter
@@ -346,6 +352,32 @@ const pickDisplayGameId = (
   return selectedId != null ? Number(selectedId) : null;
 };
 
+const buildBoardPayoutSummary = (
+  leagueCode: string | null | undefined,
+  payoutConfig: Awaited<ReturnType<typeof loadPoolPayoutConfig>>,
+  roundLabel?: string | null,
+  roundSequence?: number | null
+) => {
+  const leagueDefinition = getPoolLeagueDefinition(leagueCode);
+  const activePayouts = resolvePoolPayoutsForRound(payoutConfig, roundLabel, roundSequence);
+
+  return {
+    payoutScheduleMode: payoutConfig.payoutScheduleMode,
+    currentRoundLabel: roundLabel ?? null,
+    currentRoundSequence: roundSequence ?? null,
+    activeSlots: leagueDefinition.activePayoutSlots,
+    payoutLabels: leagueDefinition.payoutLabels,
+    defaultPayouts: payoutConfig.defaultPayouts,
+    activePayouts: {
+      q1Payout: activePayouts.q1Payout,
+      q2Payout: activePayouts.q2Payout,
+      q3Payout: activePayouts.q3Payout,
+      q4Payout: activePayouts.q4Payout
+    },
+    roundPayouts: payoutConfig.roundPayouts
+  };
+};
+
 const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, gameId?: number | null) => {
   const games = await loadPoolGames(client, poolId);
 
@@ -388,13 +420,7 @@ const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, g
     }
   }
 
-  const payoutsResult = await client.query(
-    `SELECT q1_payout, q2_payout, q3_payout, q4_payout
-     FROM football_pool.pool
-     WHERE id = $1
-     LIMIT 1`,
-    [poolId]
-  );
+  const payoutConfig = await loadPoolPayoutConfig(client, poolId);
 
   const squaresResult = await client.query(
     `SELECT s.id,
@@ -413,15 +439,8 @@ const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, g
     [poolId]
   );
 
-  const payouts = payoutsResult.rows[0] ?? {
-    q1_payout: 0,
-    q2_payout: 0,
-    q3_payout: 0,
-    q4_payout: 0
-  };
-
   const simulationStatus = await getPoolSimulationStatus(client, poolId).catch(() => null);
-  const winnerLoserMode = Boolean(pool?.winner_loser_flg);
+  const winnerLoserMode = Boolean(payoutConfig.winnerLoserMode);
   const currentGameTotals = new Map<number, number>();
   const seasonTotals = new Map<number, number>();
   const selectedGameIsLiveSimulationQuarter =
@@ -465,26 +484,27 @@ const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, g
         ? Number(simulationStatus?.nextQuarter ?? 0)
         : null;
 
+    const gamePayouts = resolvePoolPayoutsForRound(payoutConfig, game.round_label, game.round_sequence);
     const entries = [
       {
         quarter: 1,
         squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, game.q1_opponent_score, game.q1_primary_score, winnerLoserMode),
-        amount: Number(payouts.q1_payout ?? 0)
+        amount: Number(gamePayouts.q1Payout ?? 0)
       },
       {
         quarter: 2,
         squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, game.q2_opponent_score, game.q2_primary_score, winnerLoserMode),
-        amount: Number(payouts.q2_payout ?? 0)
+        amount: Number(gamePayouts.q2Payout ?? 0)
       },
       {
         quarter: 3,
         squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, game.q3_opponent_score, game.q3_primary_score, winnerLoserMode),
-        amount: Number(payouts.q3_payout ?? 0)
+        amount: Number(gamePayouts.q3Payout ?? 0)
       },
       {
         quarter: 4,
         squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, game.q4_opponent_score, game.q4_primary_score, winnerLoserMode),
-        amount: Number(payouts.q4_payout ?? 0)
+        amount: Number(gamePayouts.q4Payout ?? 0)
       }
     ];
 
@@ -512,6 +532,13 @@ const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, g
     is_current_score_leader: currentLeaderSquare != null && Number(square.square_num) === Number(currentLeaderSquare)
   }));
 
+  const payoutSummary = buildBoardPayoutSummary(
+    pool.league_code,
+    payoutConfig,
+    selectedGame?.round_label ?? null,
+    selectedGame?.round_sequence ?? null
+  );
+
   return {
     selectedGame,
     board: {
@@ -529,6 +556,7 @@ const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, g
       teamLogo: pool.logo_file ?? null,
       rowNumbers: Array.isArray(selectedGame?.row_numbers) ? selectedGame.row_numbers : null,
       colNumbers: Array.isArray(selectedGame?.col_numbers) ? selectedGame.col_numbers : null,
+      payoutSummary,
       squares
     }
   };

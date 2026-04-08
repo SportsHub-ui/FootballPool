@@ -13,6 +13,8 @@
     "test:run": "node ./scripts/run-vitest.js run",
     "lint": "eslint .",
     "db:migrate": "node ./scripts/run-migrations.js",
+    "db:clean": "node ./scripts/clean-db-data.js --target=dev",
+    "db:clean:test": "node ./scripts/clean-db-data.js --target=test",
     "db:sync-sport-teams": "node ./scripts/sync-sport-teams.js"
   },
   "dependencies": {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
+import { PayoutSummaryPanel, type BoardPayoutSummary } from './PayoutSummaryPanel'
 
 type UserPool = {
   id: number
@@ -98,6 +99,7 @@ type PoolBoard = {
   teamLogo: string | null
   rowNumbers: Array<number | string> | null
   colNumbers: Array<number | string> | null
+  payoutSummary?: BoardPayoutSummary | null
   squares: BoardSquare[]
 }
 
@@ -660,8 +662,9 @@ export function ParticipantView() {
             <div className="pool-subsection">
               <h3>Pool Squares Board</h3>
               {poolBoard ? (
-                <div
-                  className="pool-board"
+                <>
+                  <div
+                    className="pool-board"
                   style={{
                     ['--team-primary' as string]: poolBoard.teamPrimaryColor,
                     ['--team-secondary' as string]: poolBoard.teamSecondaryColor
@@ -777,6 +780,9 @@ export function ParticipantView() {
                     </div>
                   ) : null}
                 </div>
+
+                  {poolBoard?.payoutSummary ? <PayoutSummaryPanel summary={poolBoard.payoutSummary} title="Pool payout schedule" /> : null}
+                </>
               ) : (
                 <p>No board data yet.</p>
               )}

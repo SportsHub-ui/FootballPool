@@ -10,6 +10,7 @@ export type PoolLeagueDefinition = {
   label: string;
   espnPath: string;
   activePayoutSlots: PayoutSlotKey[];
+  payoutLabels: Record<PayoutSlotKey, string>;
   regularSeasonGameCount: number;
 };
 
@@ -20,6 +21,7 @@ const poolLeagueDefinitions: Record<SupportedLeagueCode, PoolLeagueDefinition> =
     label: 'NFL',
     espnPath: 'football/nfl',
     activePayoutSlots: ['q1', 'q2', 'q3', 'q4'],
+    payoutLabels: { q1: 'Q1 payout', q2: 'Halftime payout', q3: 'Q3 payout', q4: 'Final payout' },
     regularSeasonGameCount: 17
   },
   NCAAF: {
@@ -28,6 +30,7 @@ const poolLeagueDefinitions: Record<SupportedLeagueCode, PoolLeagueDefinition> =
     label: 'NCAAF',
     espnPath: 'football/college-football',
     activePayoutSlots: ['q1', 'q2', 'q3', 'q4'],
+    payoutLabels: { q1: 'Q1 payout', q2: 'Halftime payout', q3: 'Q3 payout', q4: 'Final payout' },
     regularSeasonGameCount: 12
   },
   NBA: {
@@ -36,6 +39,7 @@ const poolLeagueDefinitions: Record<SupportedLeagueCode, PoolLeagueDefinition> =
     label: 'NBA',
     espnPath: 'basketball/nba',
     activePayoutSlots: ['q1', 'q2', 'q3', 'q4'],
+    payoutLabels: { q1: 'Q1 payout', q2: 'Halftime payout', q3: 'Q3 payout', q4: 'Final payout' },
     regularSeasonGameCount: 82
   },
   NCAAB: {
@@ -44,6 +48,7 @@ const poolLeagueDefinitions: Record<SupportedLeagueCode, PoolLeagueDefinition> =
     label: 'NCAAB',
     espnPath: 'basketball/mens-college-basketball',
     activePayoutSlots: ['q1', 'q4'],
+    payoutLabels: { q1: '1st half payout', q2: 'Unused', q3: 'Unused', q4: 'Final payout' },
     regularSeasonGameCount: 31
   },
   NHL: {
@@ -52,6 +57,7 @@ const poolLeagueDefinitions: Record<SupportedLeagueCode, PoolLeagueDefinition> =
     label: 'NHL',
     espnPath: 'hockey/nhl',
     activePayoutSlots: ['q1', 'q2', 'q4'],
+    payoutLabels: { q1: '1st period payout', q2: '2nd period payout', q3: 'Unused', q4: 'Final payout' },
     regularSeasonGameCount: 82
   },
   MLB: {
@@ -60,6 +66,7 @@ const poolLeagueDefinitions: Record<SupportedLeagueCode, PoolLeagueDefinition> =
     label: 'MLB',
     espnPath: 'baseball/mlb',
     activePayoutSlots: ['q4'],
+    payoutLabels: { q1: 'Unused', q2: 'Unused', q3: 'Unused', q4: 'Final payout' },
     regularSeasonGameCount: 162
   }
 };
