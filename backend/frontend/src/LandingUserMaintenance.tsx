@@ -67,7 +67,7 @@ const formatUserName = (user: Pick<LandingUserRecord, 'first_name' | 'last_name'
 }
 
 const buildPoolLabel = (pool: LandingPool): string => {
-  const teamLabel = pool.team_name ?? `Team ${pool.id}`
+  const teamLabel = pool.team_name ?? `Organization ${pool.id}`
   const parts = [`${teamLabel} — ${pool.pool_name ?? `Pool ${pool.id}`}`]
   if (pool.season) {
     parts.push(String(pool.season))
@@ -85,10 +85,10 @@ const buildAssignedPoolLabel = (pool: LandingUserPool): string => {
 }
 
 const formatPlayerTeamLabel = (assignment: LandingPlayerTeam): string =>
-  `${assignment.team_name ?? `Team ${assignment.team_id}`}${assignment.jersey_num != null ? ` #${assignment.jersey_num}` : ''}`
+  `${assignment.team_name ?? `Organization ${assignment.team_id}`}${assignment.jersey_num != null ? ` #${assignment.jersey_num}` : ''}`
 
 const formatNotificationLevel = (level: NotificationLevel): string => {
-  if (level === 'quarter_win') return 'Quarter win'
+  if (level === 'quarter_win') return 'Score segment win'
   if (level === 'game_total') return 'Total after game ends'
   return 'None'
 }
@@ -451,7 +451,7 @@ export function LandingUserMaintenance({
                 checked={showPlayersOnly}
                 onChange={(event) => onTogglePlayersOnly(event.target.checked)}
               />
-              <span>Players only</span>
+              <span>Members only</span>
             </label>
             <span className="landing-collapsible-count">{visibleUsers.length}</span>
           </span>
@@ -462,7 +462,7 @@ export function LandingUserMaintenance({
             <p className="small">Loading users...</p>
           ) : visibleUsers.length === 0 ? (
             <p className="small">
-              {showPlayersOnly ? 'No player users match the current filter.' : 'No user records are available for the pools you can see yet.'}
+              {showPlayersOnly ? 'No member users match the current filter.' : 'No user records are available for the pools you can see yet.'}
             </p>
           ) : (
             <table className="landing-player-table">
@@ -474,7 +474,7 @@ export function LandingUserMaintenance({
                   <th>Venmo</th>
                   <th>Notifications</th>
                   <th>Pools</th>
-                  <th>Teams</th>
+                  <th>Organizations</th>
                 </tr>
               </thead>
               <tbody>
@@ -494,7 +494,7 @@ export function LandingUserMaintenance({
                       {user.player_teams.length > 0
                         ? user.player_teams.map(formatPlayerTeamLabel).join(' | ')
                         : user.is_player_flg
-                          ? 'Player with no current team assignment'
+                          ? 'Member with no current organization assignment'
                           : '—'}
                     </td>
                   </tr>
@@ -550,10 +550,10 @@ export function LandingUserMaintenance({
 
           <div className="landing-selected-summary">
             <div className="landing-selected-summary-header">
-              <strong>Current player teams</strong>
+              <strong>Current member organizations</strong>
               {selectedIsPlayer ? (
                 <button type="button" className="secondary compact" onClick={onOpenPlayerMaintenance}>
-                  Open Players
+                  Open Members
                 </button>
               ) : null}
             </div>
@@ -563,8 +563,8 @@ export function LandingUserMaintenance({
             ) : (
               <p className="small landing-selected-team-empty">
                 {selectedIsPlayer
-                  ? 'This player currently has no team assignments.'
-                  : 'This user is not currently marked as a player.'}
+                  ? 'This member currently has no organization assignments.'
+                  : 'This user is not currently marked as a member.'}
               </p>
             )}
           </div>
@@ -625,7 +625,7 @@ export function LandingUserMaintenance({
                 }
               >
                 <option value="none">None</option>
-                <option value="quarter_win">Quarter win</option>
+                <option value="quarter_win">Score segment win</option>
                 <option value="game_total">Total win after game ends</option>
               </select>
             </label>
@@ -636,7 +636,7 @@ export function LandingUserMaintenance({
                 checked={userForm.notifyOnSquareLead}
                 onChange={(event) => setUserForm((current) => ({ ...current, notifyOnSquareLead: event.target.checked }))}
               />
-              <span>Email a live warning when this user's square becomes the current quarter leader</span>
+              <span>Email a live warning when this user's square becomes the current live leader</span>
             </label>
 
             <label className="checkbox-row landing-inline-checkbox landing-field-span">
@@ -645,7 +645,7 @@ export function LandingUserMaintenance({
                 checked={selectedIsPlayer}
                 onChange={(event) => setSelectedIsPlayer(event.target.checked)}
               />
-              <span>Mark this user as a player</span>
+              <span>Mark this user as a member</span>
             </label>
           </div>
 

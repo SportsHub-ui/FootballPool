@@ -3,16 +3,37 @@ import { z } from 'zod';
 import { requireRole } from '../middleware/auth';
 import { db } from '../config/db';
 import {
-  getScoresForGame,
+  ingestGameScores,
   listEligibleGamesForIngestion,
   type IngestionSource
 } from '../services/scoreIngestion';
-import {
-  processGameScores,
-  type QuarterScoresInput
-} from '../services/scoreProcessing';
+import { subscribeScoreIngestionEvents } from '../services/scoreIngestionEvents';
+import { type QuarterScoresInput } from '../services/scoreProcessing';
 
 export const ingestionRouter = Router();
+
+ingestionRouter.get('/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  res.write(`event: connected\ndata: ${JSON.stringify({ connected: true, timestamp: new Date().toISOString() })}\n\n`);
+
+  const unsubscribe = subscribeScoreIngestionEvents((event) => {
+    res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+  });
+
+  const heartbeat = setInterval(() => {
+    res.write(`: keep-alive ${Date.now()}\n\n`);
+  }, 25_000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    unsubscribe();
+    res.end();
+  });
+});
 
 ingestionRouter.use(requireRole('organizer'));
 
@@ -78,13 +99,12 @@ ingestionRouter.post('/games/:gameId/scores', async (req, res) => {
     const { gameId } = z.object({ gameId: z.coerce.number().int().positive() }).parse(req.params);
     const input = ingestOneSchema.parse(req.body ?? {});
 
-    const scores = await getScoresForGame(
+    const result = await ingestGameScores(
       gameId,
       input.source as IngestionSource,
-      input.scores as QuarterScoresInput | undefined
+      input.scores as QuarterScoresInput | undefined,
+      { forceProcess: true }
     );
-
-    const result = await processGameScores(gameId, scores);
 
     await logIngestionRun({
       runMode: 'single',
@@ -95,16 +115,12 @@ ingestionRouter.post('/games/:gameId/scores', async (req, res) => {
       requestedBy: String(req.auth?.userId ?? ''),
       details: {
         gameId,
-        scores,
         result
       }
     });
 
     res.json({
       message: 'Score ingestion completed',
-      gameId,
-      source: input.source,
-      scores,
       ...result
     });
   } catch (error) {
@@ -122,18 +138,23 @@ ingestionRouter.post('/run', async (req, res) => {
       ? input.gameIds
       : await listEligibleGamesForIngestion();
 
-    const results: Array<{ gameId: number; ok: boolean; detail: string }> = [];
+    const results: Array<{ gameId: number; ok: boolean; detail: string; state?: string }> = [];
 
     for (const gameId of targetGameIds) {
       try {
-        const scores = await getScoresForGame(
+        const result = await ingestGameScores(
           gameId,
           source,
-          input.scoresByGameId?.[String(gameId)] as QuarterScoresInput | undefined
+          input.scoresByGameId?.[String(gameId)] as QuarterScoresInput | undefined,
+          { forceProcess: true }
         );
 
-        await processGameScores(gameId, scores);
-        results.push({ gameId, ok: true, detail: 'processed' });
+        results.push({
+          gameId,
+          ok: true,
+          detail: result.updated ? 'updated' : 'no-change',
+          state: result.state
+        });
       } catch (error) {
         results.push({
           gameId,

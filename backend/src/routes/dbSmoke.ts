@@ -1,5 +1,8 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
+import { z } from 'zod';
 import { db } from '../config/db';
+import { requireRole } from '../middleware/auth';
+import { getApiUsageDashboard } from '../services/apiUsage';
 
 export const dbSmokeRouter = Router();
 
@@ -9,9 +12,9 @@ dbSmokeRouter.get('/smoke', async (_req, res) => {
       `
         SELECT 'users' AS table_name, COUNT(*)::int AS row_count FROM football_pool.users
         UNION ALL
-        SELECT 'team' AS table_name, COUNT(*)::int AS row_count FROM football_pool.team
+        SELECT 'organization' AS table_name, COUNT(*)::int AS row_count FROM football_pool.organization
         UNION ALL
-        SELECT 'player_team' AS table_name, COUNT(*)::int AS row_count FROM football_pool.player_team
+        SELECT 'member_organization' AS table_name, COUNT(*)::int AS row_count FROM football_pool.member_organization
         UNION ALL
         SELECT 'pool' AS table_name, COUNT(*)::int AS row_count FROM football_pool.pool
         UNION ALL
@@ -39,6 +42,33 @@ dbSmokeRouter.get('/smoke', async (_req, res) => {
   }
 });
 
+dbSmokeRouter.get('/api-usage', requireRole('organizer'), async (req, res) => {
+  try {
+    const query = z
+      .object({
+        hours: z.coerce.number().int().positive().max(24 * 30).optional(),
+        limit: z.coerce.number().int().positive().max(100).optional()
+      })
+      .safeParse(req.query);
+
+    const dashboard = await getApiUsageDashboard({
+      hours: query.success ? query.data.hours : undefined,
+      limit: query.success ? query.data.limit : undefined
+    });
+
+    res.json({
+      status: 'ok',
+      ...dashboard
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: 'error',
+      message: 'Failed to load API usage dashboard',
+      detail: error instanceof Error ? error.message : 'Unknown dashboard error'
+    });
+  }
+});
+
 dbSmokeRouter.get('/preview', async (_req, res) => {
   try {
     const result = await db.query(
@@ -50,11 +80,12 @@ dbSmokeRouter.get('/preview', async (_req, res) => {
           t.team_name,
           COUNT(s.id)::int AS total_squares,
           COUNT(s.id) FILTER (WHERE s.participant_id IS NOT NULL)::int AS sold_squares,
-          MAX(g.game_dt) AS latest_game_dt
+          MAX(COALESCE(g.kickoff_at, g.game_date::timestamp)) AS latest_game_dt
         FROM football_pool.pool p
-        JOIN football_pool.team t ON t.id = p.team_id
+        JOIN football_pool.organization t ON t.id = p.team_id
         LEFT JOIN football_pool.square s ON s.pool_id = p.id
-        LEFT JOIN football_pool.game g ON g.pool_id = p.id
+        LEFT JOIN football_pool.pool_game pg ON pg.pool_id = p.id
+        LEFT JOIN football_pool.game g ON g.id = pg.game_id
         GROUP BY p.id, p.pool_name, p.season, t.team_name
         ORDER BY p.created_at DESC, p.id DESC
         LIMIT 25
@@ -73,3 +104,4 @@ dbSmokeRouter.get('/preview', async (_req, res) => {
     });
   }
 });
+

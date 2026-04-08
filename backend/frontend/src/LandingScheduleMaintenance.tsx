@@ -1,13 +1,17 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 
 import type { LandingPool } from './LandingMetrics'
+import { getPoolTemplateDefinition } from './utils/poolStructures'
 
 type PoolRecord = {
   id: number
   pool_name: string | null
   team_id: number | null
   season: number | null
+  pool_type?: string | null
+  structure_mode?: string | null
+  template_code?: string | null
   primary_team: string | null
   square_cost: number | null
   q1_payout: number | null
@@ -21,6 +25,11 @@ type GameRecord = {
   id: number
   pool_id: number
   week_num: number | null
+  round_label?: string | null
+  round_sequence?: number | null
+  bracket_region?: string | null
+  matchup_order?: number | null
+  championship_flg?: boolean
   opponent: string
   game_dt: string
   is_simulation: boolean
@@ -47,45 +56,26 @@ const DEFAULT_HERO_ACCENT = '#ffffff'
 const SCHEDULE_LIST_MIN_HEIGHT = 120
 const SCHEDULE_LIST_MAX_HEIGHT = 360
 const SCHEDULE_LIST_DEFAULT_HEIGHT = 170
-const NFL_TEAMS = [
-  'BYE',
-  'Arizona Cardinals',
-  'Atlanta Falcons',
-  'Baltimore Ravens',
-  'Buffalo Bills',
-  'Carolina Panthers',
-  'Chicago Bears',
-  'Cincinnati Bengals',
-  'Cleveland Browns',
-  'Dallas Cowboys',
-  'Denver Broncos',
-  'Detroit Lions',
-  'Green Bay Packers',
-  'Houston Texans',
-  'Indianapolis Colts',
-  'Jacksonville Jaguars',
-  'Kansas City Chiefs',
-  'Las Vegas Raiders',
-  'Los Angeles Chargers',
-  'Los Angeles Rams',
-  'Miami Dolphins',
-  'Minnesota Vikings',
-  'New England Patriots',
-  'New Orleans Saints',
-  'New York Giants',
-  'New York Jets',
-  'Philadelphia Eagles',
-  'Pittsburgh Steelers',
-  'San Francisco 49ers',
-  'Seattle Seahawks',
-  'Tampa Bay Buccaneers',
-  'Tennessee Titans',
-  'Washington Commanders'
-] as const
+
+const getRoundHeading = (game: Pick<GameRecord, 'round_label' | 'round_sequence' | 'bracket_region' | 'championship_flg'>): string => {
+  if (game.round_label?.trim()) {
+    return game.bracket_region?.trim() ? `${game.round_label} • ${game.bracket_region}` : game.round_label
+  }
+
+  if (game.championship_flg) {
+    return 'Championship'
+  }
+
+  if (game.round_sequence != null) {
+    return `Round ${game.round_sequence}`
+  }
+
+  return 'General Schedule'
+}
 
 const formatScheduleName = (game: GameRecord): string => {
-  const weekLabel = game.week_num != null ? `Week ${game.week_num} • ` : ''
-  return `${weekLabel}${new Date(game.game_dt).toLocaleDateString()} • ${game.opponent}`
+  const heading = getRoundHeading(game)
+  return `${heading} • ${new Date(game.game_dt).toLocaleDateString()} • ${game.opponent}`
 }
 const toDateInputValue = (value: string): string => {
   const date = new Date(value)
@@ -96,7 +86,9 @@ const toDateInputValue = (value: string): string => {
 export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase, onRequireSignIn }: Props) {
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [refreshingActiveGames, setRefreshingActiveGames] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [refreshFeedback, setRefreshFeedback] = useState<string | null>(null)
   const [poolRecords, setPoolRecords] = useState<PoolRecord[]>([])
   const [games, setGames] = useState<GameRecord[]>([])
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null)
@@ -106,9 +98,13 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
   const [scheduleForm, setScheduleForm] = useState({
     poolId: '',
     weekNum: '',
+    roundLabel: '',
+    bracketRegion: '',
+    matchupOrder: '',
     opponent: '',
     gameDate: '',
-    isSimulation: false
+    isSimulation: false,
+    isChampionship: false
   })
 
   const canManageSchedules = Boolean(token)
@@ -130,10 +126,14 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
     setIsCreatingNew(game == null)
     setScheduleForm({
       poolId: game?.pool_id != null ? String(game.pool_id) : '',
-      weekNum: game?.week_num != null ? String(game.week_num) : '',
+      weekNum: game?.round_sequence != null ? String(game.round_sequence) : game?.week_num != null ? String(game.week_num) : '',
+      roundLabel: game?.round_label ?? '',
+      bracketRegion: game?.bracket_region ?? '',
+      matchupOrder: game?.matchup_order != null ? String(game.matchup_order) : '',
       opponent: game?.opponent ?? '',
       gameDate: game?.game_dt ? toDateInputValue(game.game_dt) : '',
-      isSimulation: Boolean(game?.is_simulation)
+      isSimulation: Boolean(game?.is_simulation),
+      isChampionship: Boolean(game?.championship_flg)
     })
   }
 
@@ -166,7 +166,9 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
         .flat()
         .sort(
           (left, right) =>
-            (left.week_num ?? Number.MAX_SAFE_INTEGER) - (right.week_num ?? Number.MAX_SAFE_INTEGER) ||
+            (left.round_sequence ?? left.week_num ?? Number.MAX_SAFE_INTEGER) -
+              (right.round_sequence ?? right.week_num ?? Number.MAX_SAFE_INTEGER) ||
+            (left.matchup_order ?? Number.MAX_SAFE_INTEGER) - (right.matchup_order ?? Number.MAX_SAFE_INTEGER) ||
             new Date(left.game_dt).getTime() - new Date(right.game_dt).getTime()
         )
 
@@ -227,6 +229,16 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
     [poolRecords, scheduleForm.poolId]
   )
 
+  const selectedTemplateDefinition = useMemo(
+    () => getPoolTemplateDefinition(selectedPool?.template_code),
+    [selectedPool?.template_code]
+  )
+
+  const selectedRoundDefinition = useMemo(
+    () => selectedTemplateDefinition?.rounds.find((round) => round.label === scheduleForm.roundLabel) ?? null,
+    [scheduleForm.roundLabel, selectedTemplateDefinition]
+  )
+
   const onSelectGame = (gameId: number): void => {
     const game = games.find((entry) => entry.id === gameId) ?? null
     loadGameIntoForm(game)
@@ -264,8 +276,8 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
   }
 
   const onSaveSchedule = async (): Promise<void> => {
-    if (!scheduleForm.poolId || !scheduleForm.weekNum || !scheduleForm.opponent.trim() || !scheduleForm.gameDate) {
-      setError('Pool, week number, opponent, and game date are required.')
+    if (!scheduleForm.poolId || !scheduleForm.opponent.trim() || !scheduleForm.gameDate) {
+      setError('Pool, matchup label, and game date are required.')
       return
     }
 
@@ -281,7 +293,12 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
     try {
       const payload = {
         poolId: Number(scheduleForm.poolId),
-        weekNum: Number(scheduleForm.weekNum),
+        weekNum: scheduleForm.weekNum ? Number(scheduleForm.weekNum) : undefined,
+        roundLabel: scheduleForm.roundLabel.trim() || undefined,
+        roundSequence: scheduleForm.weekNum ? Number(scheduleForm.weekNum) : undefined,
+        bracketRegion: scheduleForm.bracketRegion.trim() || undefined,
+        matchupOrder: scheduleForm.matchupOrder ? Number(scheduleForm.matchupOrder) : undefined,
+        isChampionship: scheduleForm.isChampionship,
         opponent: scheduleForm.opponent.trim(),
         gameDate: scheduleForm.gameDate,
         isSimulation: scheduleForm.isSimulation
@@ -351,12 +368,65 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
     }
   }
 
+  const onRefreshActiveGames = async (): Promise<void> => {
+    if (!token) {
+      setError('Sign in as an organizer to refresh active games.')
+      onRequireSignIn()
+      return
+    }
+
+    setRefreshingActiveGames(true)
+    setError(null)
+    setRefreshFeedback(null)
+
+    try {
+      const result = await request<{ total?: number; success?: number; failed?: number }>('/api/ingestion/run', {
+        method: 'POST',
+        headers: {
+          ...authHeaders,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ source: 'espn' })
+      })
+
+      const total = Number(result.total ?? 0)
+      const success = Number(result.success ?? 0)
+      const failed = Number(result.failed ?? 0)
+
+      setRefreshFeedback(
+        total > 0
+          ? `Refresh finished: ${success} of ${total} active game${total === 1 ? '' : 's'} checked${failed > 0 ? `, ${failed} failed` : ''}.`
+          : 'No eligible active games need a refresh right now.'
+      )
+
+      await loadScheduleData(selectedGameId)
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : 'Failed to refresh active games')
+    } finally {
+      setRefreshingActiveGames(false)
+    }
+  }
+
   return (
     <section className="player-maintenance-shell">
       <div className="landing-hero-bar landing-player-hero" style={heroStyle}>
         <div>
           <h1>Schedule Maintenance</h1>
           <p>{heroSubtitle}</p>
+        </div>
+
+        <div className="landing-hero-controls">
+          <button
+            type="button"
+            className="secondary compact"
+            onClick={() => {
+              void onRefreshActiveGames()
+            }}
+            disabled={refreshingActiveGames || !token}
+          >
+            {refreshingActiveGames ? 'Refreshing active games...' : 'Refresh Active Games'}
+          </button>
+          {refreshFeedback ? <p className="small">{refreshFeedback}</p> : null}
         </div>
       </div>
 
@@ -398,7 +468,8 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
             <table className="landing-player-table">
               <thead>
                 <tr>
-                  <th>Week</th>
+                  <th>Round</th>
+                  <th>Order</th>
                   <th>Date</th>
                   <th>Opponent</th>
                   <th>Pool</th>
@@ -406,21 +477,36 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
                 </tr>
               </thead>
               <tbody>
-                {games.map((game) => {
+                {games.map((game, index) => {
                   const pool = poolRecords.find((entry) => entry.id === game.pool_id)
+                  const previousGame = index > 0 ? games[index - 1] : null
+                  const currentGroupKey = `${game.pool_id}:${getRoundHeading(game)}`
+                  const previousGroupKey = previousGame ? `${previousGame.pool_id}:${getRoundHeading(previousGame)}` : null
+                  const showGroupHeader = currentGroupKey !== previousGroupKey
 
                   return (
-                    <tr
-                      key={game.id}
-                      className={game.id === selectedGameId ? 'is-selected' : ''}
-                      onClick={() => onSelectGame(game.id)}
-                    >
-                      <td>{game.week_num ?? '—'}</td>
-                      <td>{new Date(game.game_dt).toLocaleDateString()}</td>
-                      <td>{game.opponent}</td>
-                      <td>{pool?.pool_name?.trim() || 'Unnamed pool'}</td>
-                      <td>{game.is_simulation ? 'Simulation' : 'Live'}</td>
-                    </tr>
+                    <Fragment key={game.id}>
+                      {showGroupHeader ? (
+                        <tr key={`${game.id}-group`} className="landing-group-row">
+                          <td colSpan={6}>
+                            <strong>{getRoundHeading(game)}</strong>
+                            <span className="small"> — {pool?.pool_name?.trim() || 'Unnamed pool'}</span>
+                          </td>
+                        </tr>
+                      ) : null}
+                      <tr
+                        key={game.id}
+                        className={game.id === selectedGameId ? 'is-selected' : ''}
+                        onClick={() => onSelectGame(game.id)}
+                      >
+                        <td>{game.round_label ?? (game.championship_flg ? 'Championship' : game.bracket_region ?? 'General')}</td>
+                        <td>{game.matchup_order ?? game.round_sequence ?? game.week_num ?? '—'}</td>
+                        <td>{new Date(game.game_dt).toLocaleDateString()}</td>
+                        <td>{game.opponent}</td>
+                        <td>{pool?.pool_name?.trim() || 'Unnamed pool'}</td>
+                        <td>{game.is_simulation ? 'Simulation' : 'Live'}</td>
+                      </tr>
+                    </Fragment>
                   )
                 })}
               </tbody>
@@ -477,7 +563,19 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
               <span>Pool</span>
               <select
                 value={scheduleForm.poolId}
-                onChange={(event) => setScheduleForm((current) => ({ ...current, poolId: event.target.value }))}
+                onChange={(event) => {
+                  const nextPoolId = event.target.value
+                  const nextPool = poolRecords.find((pool) => String(pool.id) === nextPoolId) ?? null
+                  const nextTemplate = getPoolTemplateDefinition(nextPool?.template_code)
+
+                  setScheduleForm((current) => ({
+                    ...current,
+                    poolId: nextPoolId,
+                    roundLabel: current.roundLabel || nextTemplate?.rounds[0]?.label || '',
+                    weekNum: current.weekNum || (nextTemplate?.rounds[0]?.sequence != null ? String(nextTemplate.rounds[0].sequence) : ''),
+                    bracketRegion: current.bracketRegion
+                  }))
+                }}
                 disabled={saving}
               >
                 <option value="">Select pool</option>
@@ -490,11 +588,56 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
             </label>
 
             <label className="field-block">
-              <span>Week number</span>
+              <span>Round / stage</span>
+              <>
+                <input
+                  list="schedule-round-options"
+                  value={scheduleForm.roundLabel}
+                  onChange={(event) => {
+                    const nextRoundLabel = event.target.value
+                    const matchedRound = selectedTemplateDefinition?.rounds.find((round) => round.label === nextRoundLabel)
+                    setScheduleForm((current) => ({
+                      ...current,
+                      roundLabel: nextRoundLabel,
+                      weekNum: matchedRound?.sequence != null ? String(matchedRound.sequence) : current.weekNum,
+                      isChampionship: matchedRound?.championship ?? current.isChampionship
+                    }))
+                  }}
+                  placeholder="e.g. Sweet 16, Final Four, Championship"
+                  disabled={saving}
+                />
+                <datalist id="schedule-round-options">
+                  {(selectedTemplateDefinition?.rounds ?? []).map((round) => (
+                    <option key={round.label} value={round.label} />
+                  ))}
+                </datalist>
+              </>
+            </label>
+
+            <label className="field-block">
+              <span>Region / pod (optional)</span>
+              <>
+                <input
+                  list="schedule-region-options"
+                  value={scheduleForm.bracketRegion}
+                  onChange={(event) => setScheduleForm((current) => ({ ...current, bracketRegion: event.target.value }))}
+                  placeholder="e.g. Midwest, East"
+                  disabled={saving}
+                />
+                <datalist id="schedule-region-options">
+                  {(selectedRoundDefinition?.regions ?? []).map((region) => (
+                    <option key={region} value={region} />
+                  ))}
+                </datalist>
+              </>
+            </label>
+
+            <label className="field-block">
+              <span>Round order / week (optional)</span>
               <input
                 type="number"
                 min="1"
-                max="25"
+                max="400"
                 value={scheduleForm.weekNum}
                 onChange={(event) => setScheduleForm((current) => ({ ...current, weekNum: event.target.value }))}
                 disabled={saving}
@@ -502,22 +645,25 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
             </label>
 
             <label className="field-block">
-              <span>Opponent</span>
-              <select
+              <span>Matchup slot (optional)</span>
+              <input
+                type="number"
+                min="1"
+                max="100"
+                value={scheduleForm.matchupOrder}
+                onChange={(event) => setScheduleForm((current) => ({ ...current, matchupOrder: event.target.value }))}
+                disabled={saving}
+              />
+            </label>
+
+            <label className="field-block">
+              <span>Opponent or matchup label</span>
+              <input
                 value={scheduleForm.opponent}
                 onChange={(event) => setScheduleForm((current) => ({ ...current, opponent: event.target.value }))}
+                placeholder="e.g. Lions, Duke vs Houston, AFC Championship"
                 disabled={saving}
-              >
-                <option value="">Select opponent</option>
-                {scheduleForm.opponent && !NFL_TEAMS.includes(scheduleForm.opponent as (typeof NFL_TEAMS)[number]) ? (
-                  <option value={scheduleForm.opponent}>{scheduleForm.opponent}</option>
-                ) : null}
-                {NFL_TEAMS.map((teamName) => (
-                  <option key={teamName} value={teamName}>
-                    {teamName}
-                  </option>
-                ))}
-              </select>
+              />
             </label>
 
             <label className="field-block">
@@ -533,12 +679,35 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
             <label className="checkbox-row landing-inline-checkbox">
               <input
                 type="checkbox"
+                checked={scheduleForm.isChampionship}
+                onChange={(event) =>
+                  setScheduleForm((current) => ({
+                    ...current,
+                    isChampionship: event.target.checked,
+                    roundLabel: event.target.checked ? 'Championship' : current.roundLabel
+                  }))
+                }
+                disabled={saving}
+              />
+              <span>Championship game</span>
+            </label>
+
+            <label className="checkbox-row landing-inline-checkbox">
+              <input
+                type="checkbox"
                 checked={scheduleForm.isSimulation}
                 onChange={(event) => setScheduleForm((current) => ({ ...current, isSimulation: event.target.checked }))}
                 disabled={saving}
               />
               <span>Simulation game</span>
             </label>
+
+            {selectedTemplateDefinition ? (
+              <p className="small landing-readonly-note landing-field-span">
+                Template guide: {selectedTemplateDefinition.label} includes {selectedTemplateDefinition.rounds.map((round) => round.label).join(', ')}.
+                Later rounds are preloaded with winner-path labels so the bracket can read like “Winner of Sweet 16 Game 1 vs Winner of Sweet 16 Game 2.”
+              </p>
+            ) : null}
           </div>
 
         </article>
@@ -558,8 +727,13 @@ export function LandingScheduleMaintenance({ pools, token, authHeaders, apiBase,
             </div>
 
             <div className="landing-selected-summary">
-              <strong>Week</strong>
-              <p className="small">{(selectedGame?.week_num ?? scheduleForm.weekNum) || 'No week selected'}</p>
+              <strong>Round</strong>
+              <p className="small">{selectedGame ? getRoundHeading(selectedGame) : scheduleForm.roundLabel || 'No round selected'}</p>
+            </div>
+
+            <div className="landing-selected-summary">
+              <strong>Matchup order</strong>
+              <p className="small">{(selectedGame?.matchup_order ?? scheduleForm.matchupOrder) || 'No order set'}</p>
             </div>
 
             <div className="landing-selected-summary">

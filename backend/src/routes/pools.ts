@@ -1,4 +1,4 @@
-import { Router } from 'express';
+﻿import { Router } from 'express';
 import { db } from '../config/db';
 import { requireRole } from '../middleware/auth';
 
@@ -13,7 +13,7 @@ poolsRouter.get('/', requireRole('organizer', 'participant', 'player'), async (_
         p.season,
         t.team_name
       FROM football_pool.pool p
-      JOIN football_pool.team t ON t.id = p.team_id
+      JOIN football_pool.organization t ON t.id = p.team_id
       ORDER BY p.created_at DESC
       LIMIT 100
     `
@@ -21,3 +21,4 @@ poolsRouter.get('/', requireRole('organizer', 'participant', 'player'), async (_
 
   res.json(result.rows);
 });
+

@@ -28,9 +28,9 @@ type NotificationTemplateRow = {
   markup_format: NotificationMarkupFormat | null;
 };
 
-export const DEFAULT_NOTIFICATION_TEMPLATES: Record<
+export const LEGACY_NOTIFICATION_TEMPLATES: Record<
   NotificationTemplateScope,
-  Record<NotificationTemplateKind, Omit<NotificationTemplateRecord, 'recipientScope' | 'notificationKind' | 'poolId' | 'source'>>
+  Partial<Record<NotificationTemplateKind, Omit<NotificationTemplateRecord, 'recipientScope' | 'notificationKind' | 'poolId' | 'source'>>>
 > = {
   participant: {
     quarter_win: {
@@ -41,18 +41,6 @@ export const DEFAULT_NOTIFICATION_TEMPLATES: Record<
         'Your square #{{squareNum}} won quarter {{quarter}} in {{poolName}}.',
         '{{scoreLine}}',
         'Quarter payout: {{payout}}'
-      ].join('\n'),
-      markupFormat: 'plain_text'
-    },
-    game_total: {
-      subjectTemplate: 'Final winnings for {{poolName}}',
-      bodyTemplate: [
-        'Hi {{recipientName}},',
-        '',
-        'The game in {{poolName}} has ended.',
-        'Your total winnings: {{totalWon}}',
-        '',
-        '{{winningsBreakdown}}'
       ].join('\n'),
       markupFormat: 'plain_text'
     },
@@ -80,6 +68,71 @@ export const DEFAULT_NOTIFICATION_TEMPLATES: Record<
       ].join('\n'),
       markupFormat: 'plain_text'
     },
+    lead_warning: {
+      subjectTemplate: 'Live square leader for {{poolName}}',
+      bodyTemplate: [
+        'Hi {{recipientName}},',
+        '',
+        '{{leaderName}} on square #{{squareNum}} would win quarter {{quarter}} in {{poolName}} if the quarter ended now.',
+        'Current score: {{scoreLine}}'
+      ].join('\n'),
+      markupFormat: 'plain_text'
+    }
+  }
+};
+
+export const DEFAULT_NOTIFICATION_TEMPLATES: Record<
+  NotificationTemplateScope,
+  Record<NotificationTemplateKind, Omit<NotificationTemplateRecord, 'recipientScope' | 'notificationKind' | 'poolId' | 'source'>>
+> = {
+  participant: {
+    quarter_win: {
+      subjectTemplate: 'You won {{segmentLabel}} in {{poolName}}',
+      bodyTemplate: [
+        'Hi {{recipientName}},',
+        '',
+        'Your square #{{squareNum}} won {{segmentLabel}} in {{poolName}}.',
+        '{{scoreLine}}',
+        'Payout: {{payout}}'
+      ].join('\n'),
+      markupFormat: 'plain_text'
+    },
+    game_total: {
+      subjectTemplate: 'Final winnings for {{poolName}}',
+      bodyTemplate: [
+        'Hi {{recipientName}},',
+        '',
+        'The game in {{poolName}} has ended.',
+        'Your total winnings: {{totalWon}}',
+        '',
+        '{{winningsBreakdown}}'
+      ].join('\n'),
+      markupFormat: 'plain_text'
+    },
+    lead_warning: {
+      subjectTemplate: 'Your square is currently leading in {{poolName}}',
+      bodyTemplate: [
+        'Hi {{recipientName}},',
+        '',
+        'Square #{{squareNum}} would win {{segmentLabel}} in {{poolName}} if play stopped right now.',
+        'Current score: {{scoreLine}}'
+      ].join('\n'),
+      markupFormat: 'plain_text'
+    }
+  },
+  pool_contact: {
+    quarter_win: {
+      subjectTemplate: '{{segmentLabel}} winner for {{poolName}}',
+      bodyTemplate: [
+        'Hi {{recipientName}},',
+        '',
+        '{{winnerName}} won {{segmentLabel}} in {{poolName}}.',
+        'Winning square: #{{squareNum}}',
+        '{{scoreLine}}',
+        'Payout: {{payout}}'
+      ].join('\n'),
+      markupFormat: 'plain_text'
+    },
     game_total: {
       subjectTemplate: 'Game final summary for {{poolName}}',
       bodyTemplate: [
@@ -96,7 +149,7 @@ export const DEFAULT_NOTIFICATION_TEMPLATES: Record<
       bodyTemplate: [
         'Hi {{recipientName}},',
         '',
-        '{{leaderName}} on square #{{squareNum}} would win quarter {{quarter}} in {{poolName}} if the quarter ended now.',
+        '{{leaderName}} on square #{{squareNum}} would win {{segmentLabel}} in {{poolName}} if play stopped now.',
         'Current score: {{scoreLine}}'
       ].join('\n'),
       markupFormat: 'plain_text'
@@ -113,6 +166,7 @@ export const availableNotificationVariables: Record<NotificationTemplateKind, st
     'opponentName',
     'scoreLine',
     'quarter',
+    'segmentLabel',
     'squareNum',
     'payout'
   ],
@@ -125,6 +179,7 @@ export const availableNotificationVariables: Record<NotificationTemplateKind, st
     'opponentName',
     'scoreLine',
     'quarter',
+    'segmentLabel',
     'squareNum'
   ]
 };

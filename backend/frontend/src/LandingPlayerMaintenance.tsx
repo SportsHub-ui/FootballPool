@@ -10,6 +10,7 @@ type LandingTeam = {
   primary_color: string | null
   secondary_color: string | null
   logo_file: string | null
+  has_members_flg?: boolean | null
 }
 
 type LandingPlayerTeam = {
@@ -75,16 +76,18 @@ const formatPersonName = (player: Pick<LandingPlayerRecord, 'first_name' | 'last
 }
 
 const buildAssignmentDrafts = (teams: LandingTeam[], player: LandingPlayerRecord | null): TeamAssignmentDraft[] =>
-  teams.map((team) => {
-    const match = player?.player_teams.find((assignment) => assignment.team_id === team.id)
+  teams
+    .filter((team) => team.has_members_flg !== false)
+    .map((team) => {
+      const match = player?.player_teams.find((assignment) => assignment.team_id === team.id)
 
-    return {
-      teamId: team.id,
-      teamName: team.team_name ?? `Team ${team.id}`,
-      assigned: Boolean(match),
-      jerseyNum: match?.jersey_num != null ? String(match.jersey_num) : ''
-    }
-  })
+      return {
+        teamId: team.id,
+        teamName: team.team_name ?? `Organization ${team.id}`,
+        assigned: Boolean(match),
+        jerseyNum: match?.jersey_num != null ? String(match.jersey_num) : ''
+      }
+    })
 
 export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, onRequireSignIn }: Props) {
   const [loading, setLoading] = useState(false)
@@ -142,7 +145,9 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
         headers: authHeaders
       })
 
-      setTeams(result.teams)
+      const assignableTeams = result.teams.filter((team) => team.has_members_flg !== false)
+
+      setTeams(assignableTeams)
       setPlayers(result.players)
 
       if (token) {
@@ -164,7 +169,7 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
           : result.players[0]?.id ?? null
 
       const nextPlayer = result.players.find((player) => player.id === nextSelectedPlayer) ?? null
-      loadPlayerIntoForm(nextPlayer, result.teams)
+      loadPlayerIntoForm(nextPlayer, assignableTeams)
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : 'Failed to load player maintenance data')
       setTeams([])
@@ -200,14 +205,14 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
 
   const heroSubtitle = useMemo(() => {
     if (pools.length === 0) {
-      return 'No authorized pools are available for player maintenance yet.'
+      return 'No authorized pools are available for member maintenance yet.'
     }
 
     const visibilityText = canManagePlayers
-      ? 'You can review and maintain players for the teams you are authorized to see.'
-      : 'You can review public player records below. Sign in to make updates.'
+      ? 'You can review and maintain members for the organizations you are authorized to see.'
+      : 'You can review public member records below. Sign in to make updates.'
 
-    return `${visibilityText} ${players.length} player record${players.length === 1 ? '' : 's'} across ${teams.length} team${teams.length === 1 ? '' : 's'}.`
+    return `${visibilityText} ${players.length} member record${players.length === 1 ? '' : 's'} across ${teams.length} organization${teams.length === 1 ? '' : 's'}.`
   }, [canManagePlayers, players.length, pools.length, teams.length])
 
   const onSelectPlayer = (playerId: number): void => {
@@ -265,13 +270,8 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
       return
     }
 
-    if (selectedAssignments.some((assignment) => assignment.jerseyNum.trim() === '')) {
-      setError('Enter a jersey number for every assigned team.')
-      return
-    }
-
     if (!canManagePlayers) {
-      setError('Sign in to add or update players.')
+      setError('Sign in to add or update members.')
       onRequireSignIn()
       return
     }
@@ -280,9 +280,9 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
     setError(null)
 
     try {
-      const playerTeamsPayload = selectedAssignments.map((assignment) => ({
+      const memberOrganizationsPayload = selectedAssignments.map((assignment) => ({
         teamId: assignment.teamId,
-        jerseyNum: Number(assignment.jerseyNum)
+        memberNumber: assignment.jerseyNum.trim() === '' ? null : Number(assignment.jerseyNum)
       }))
 
       if (isCreatingNew) {
@@ -295,7 +295,7 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
         const nonPlayerMatch = nameMatches.find((user) => !Boolean(user.is_player_flg))
         if (nonPlayerMatch) {
           const shouldConvertExisting = window.confirm(
-            'A user with this name already exists but is not marked as a player. Click OK to make that user a player, or Cancel to create a new user record.'
+            'A user with this name already exists but is not marked as a member. Click OK to make that user a member, or Cancel to create a new user record.'
           )
 
           if (shouldConvertExisting) {
@@ -308,8 +308,8 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
                 email: trimmedEmail || nonPlayerMatch.email || undefined,
                 phone: trimmedPhone || nonPlayerMatch.phone || undefined,
                 venmoAcct: trimmedVenmoAcct || nonPlayerMatch.venmo_acct || undefined,
-                isPlayer: true,
-                playerTeams: playerTeamsPayload
+                isMember: true,
+                memberOrganizations: memberOrganizationsPayload
               })
             })
 
@@ -321,7 +321,7 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
         const playerMatch = nameMatches.find((user) => Boolean(user.is_player_flg))
         if (playerMatch) {
           const shouldCreateAnother = window.confirm(
-            'A player with this name already exists. Click OK to add another user record with the same name, or Cancel to stop.'
+            'A member with this name already exists. Click OK to add another user record with the same name, or Cancel to stop.'
           )
 
           if (!shouldCreateAnother) {
@@ -338,8 +338,8 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
             email: trimmedEmail || undefined,
             phone: trimmedPhone || undefined,
             venmoAcct: trimmedVenmoAcct || undefined,
-            isPlayer: true,
-            playerTeams: playerTeamsPayload
+            isMember: true,
+            memberOrganizations: memberOrganizationsPayload
           })
         })
 
@@ -361,14 +361,14 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
           email: trimmedEmail || undefined,
           phone: trimmedPhone || undefined,
           venmoAcct: trimmedVenmoAcct || undefined,
-          isPlayer: true,
-          playerTeams: playerTeamsPayload
+          isMember: true,
+          memberOrganizations: memberOrganizationsPayload
         })
       })
 
       await loadPlayerData(selectedPlayerId)
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : 'Failed to save player')
+      setError(saveError instanceof Error ? saveError.message : 'Failed to save member')
     } finally {
       setSaving(false)
     }
@@ -376,22 +376,22 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
 
   const onDeletePlayer = async (): Promise<void> => {
     if (!selectedPlayerId) {
-      setError('Select a player to delete.')
+      setError('Select a member to delete.')
       return
     }
 
     if (playerAssignments.some((assignment) => assignment.assigned)) {
-      setError('A player can only be deleted if they are not assigned to a team.')
+      setError('A member can only be deleted if they are not assigned to an organization.')
       return
     }
 
     if (!canManagePlayers) {
-      setError('Sign in to delete a player.')
+      setError('Sign in to delete a member.')
       onRequireSignIn()
       return
     }
 
-    const confirmed = window.confirm('Delete this player record?')
+    const confirmed = window.confirm('Delete this member record?')
     if (!confirmed) {
       return
     }
@@ -407,7 +407,7 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
 
       await loadPlayerData()
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : 'Failed to delete player')
+      setError(deleteError instanceof Error ? deleteError.message : 'Failed to delete member')
     } finally {
       setSaving(false)
     }
@@ -417,7 +417,7 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
     <section className="player-maintenance-shell">
       <div className="landing-hero-bar landing-player-hero" style={heroStyle}>
         <div>
-          <h1>Player Maintenance</h1>
+          <h1>Member Maintenance</h1>
           <p>{heroSubtitle}</p>
         </div>
       </div>
@@ -444,25 +444,25 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
             >
               {isPlayerListExpanded ? '−' : '+'}
             </button>
-            <span>Players</span>
+            <span>Members</span>
           </span>
           <span className="landing-collapsible-count">{players.length}</span>
         </summary>
 
         <div className="landing-player-list-wrap is-scrollable" style={isPlayerListExpanded ? { height: `${playerListHeight}px` } : undefined}>
           {loading ? (
-            <p className="small">Loading players...</p>
+            <p className="small">Loading members...</p>
           ) : players.length === 0 ? (
-            <p className="small">No player records are available for the teams you can see yet.</p>
+            <p className="small">No member records are available for the organizations you can see yet.</p>
           ) : (
             <table className="landing-player-table">
               <thead>
                 <tr>
-                  <th>Player</th>
+                  <th>Member</th>
                   <th>Email</th>
                   <th>Phone</th>
                   <th>Venmo</th>
-                  <th>Teams</th>
+                  <th>Organizations</th>
                 </tr>
               </thead>
               <tbody>
@@ -478,7 +478,7 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
                     <td>{player.venmo_acct ?? '—'}</td>
                     <td>
                       {player.player_teams.length > 0
-                        ? player.player_teams.map((assignment) => `${assignment.team_name ?? `Team ${assignment.team_id}`} #${assignment.jersey_num ?? '—'}`).join(' | ')
+                        ? player.player_teams.map((assignment) => `${assignment.team_name ?? `Organization ${assignment.team_id}`} #${assignment.jersey_num ?? '—'}`).join(' | ')
                         : 'Not assigned'}
                     </td>
                   </tr>
@@ -506,8 +506,8 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
         <article className="landing-maintenance-card">
           <div className="landing-maintenance-header">
             <div>
-              <h2>Player Maintenance</h2>
-              <p className="small">Select a player row to edit, or add a new player record.</p>
+              <h2>Member Maintenance</h2>
+              <p className="small">Select a member row to edit, or add a new member record.</p>
             </div>
             <div className="landing-maintenance-actions">
               <button type="button" className="secondary compact" onClick={onAddPlayer}>
@@ -575,23 +575,25 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
             </label>
           </div>
 
-          {!canManagePlayers ? <p className="small">Sign in to add, update, or delete player records.</p> : null}
+          {!canManagePlayers ? <p className="small">Sign in to add, update, or delete member records.</p> : null}
         </article>
 
         <article className="landing-maintenance-card">
           <div className="landing-subhero" style={heroStyle}>
-            <h2>Team Assignments</h2>
+            <h2>Organization Assignments</h2>
           </div>
 
           <details className="landing-collapsible landing-team-collapsible" open>
             <summary>
-              <span>Teams</span>
+              <span>Organizations</span>
               <span className="landing-collapsible-count">{teams.length}</span>
             </summary>
 
+            <p className="small landing-readonly-note">Only organizations configured to track members appear in this list.</p>
+
             <div className="landing-team-assignment-list">
               {teams.length === 0 ? (
-                <p className="small">No authorized teams are available.</p>
+                <p className="small">No authorized organizations are available.</p>
               ) : (
                 playerAssignments.map((assignment) => (
                   <div key={`team-assignment-${assignment.teamId}`} className="landing-team-assignment-row">
@@ -618,7 +620,7 @@ export function LandingPlayerMaintenance({ pools, token, authHeaders, apiBase, o
                       onChange={(event) => {
                         updateAssignment(assignment.teamId, { jerseyNum: event.target.value })
                       }}
-                      placeholder="Jersey #"
+                      placeholder="Number"
                     />
                   </div>
                 ))

@@ -1,6 +1,8 @@
-import { useState, useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
+import { PayoutSummaryPanel, type BoardPayoutSummary } from './PayoutSummaryPanel'
+import { getScoreSegmentDefinitions } from './utils/poolLeagues'
 
 type UserPool = {
   id: number
@@ -50,7 +52,7 @@ type WinningsResponse = {
 type Game = {
   id: number
   pool_game_id: number // new: pool_game PK
-  game_id: number // new: game_new PK
+  game_id: number // normalized shared game PK
   pool_id: number
   week_num: number | null
   opponent: string
@@ -88,6 +90,8 @@ type PoolBoard = {
   primaryTeamId: number | null // references nfl_team.id
   primaryTeam: string
   opponent: string
+  winnerLoserMode?: boolean
+  poolType?: string | null
   gameId: number | null
   gameDate: string | null
   teamName: string | null
@@ -96,6 +100,7 @@ type PoolBoard = {
   teamLogo: string | null
   rowNumbers: Array<number | string> | null
   colNumbers: Array<number | string> | null
+  payoutSummary?: BoardPayoutSummary | null
   squares: BoardSquare[]
 }
 
@@ -195,6 +200,27 @@ const resolveTeamBrand = (
   }
 }
 
+const getGameScoreForQuarter = (game: Game, quarter: number): string => {
+  const primaryScore =
+    quarter === 1
+      ? game.q1_primary_score
+      : quarter === 2
+        ? game.q2_primary_score
+        : quarter === 3
+          ? game.q3_primary_score
+          : game.q4_primary_score
+  const opponentScore =
+    quarter === 1
+      ? game.q1_opponent_score
+      : quarter === 2
+        ? game.q2_opponent_score
+        : quarter === 3
+          ? game.q3_opponent_score
+          : game.q4_opponent_score
+
+  return primaryScore !== null && opponentScore !== null ? `${primaryScore}-${opponentScore}` : 'TBD'
+}
+
 export function ParticipantView() {
   const [view, setView] = useState<'login' | 'dashboard'>('login')
   const [token, setToken] = useState<string | null>(localStorage.getItem('auth-token'))
@@ -211,6 +237,7 @@ export function ParticipantView() {
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null)
   const [poolBoard, setPoolBoard] = useState<PoolBoard | null>(null)
   const [winnings, setWinnings] = useState<WinningsResponse | null>(null)
+  const liveRefreshTimerRef = useRef<number | null>(null)
 
   const headers = useMemo(() => {
     const h: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -219,6 +246,11 @@ export function ParticipantView() {
     }
     return h
   }, [token])
+
+  const scoreSegments = useMemo(
+    () => getScoreSegmentDefinitions({ activeSlots: poolBoard?.payoutSummary?.activeSlots, payoutLabels: poolBoard?.payoutSummary?.payoutLabels }),
+    [poolBoard?.payoutSummary]
+  )
 
   const handleLogin = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -265,6 +297,35 @@ export function ParticipantView() {
       if (winningsRes.ok) setWinnings(await winningsRes.json())
     } catch (err) {
       console.error('Failed to load participant data:', err)
+    }
+  }
+
+  const refreshSelectedPoolBoard = async (poolId: number, preferredGameId?: number | null) => {
+    try {
+      const gamesRes = await fetch(`${API_BASE}/api/participant/pools/${poolId}/games`, { headers })
+
+      if (!gamesRes.ok) {
+        throw new Error('Failed to load pool games')
+      }
+
+      const games: Game[] = await gamesRes.json()
+      setPoolGames(games)
+
+      const nextGameId = preferredGameId != null && games.some((game) => Number(game.id) === Number(preferredGameId) || Number(game.game_id) === Number(preferredGameId))
+        ? preferredGameId
+        : null
+
+      setSelectedGameId(nextGameId)
+
+      const query = nextGameId != null ? `?gameId=${nextGameId}` : ''
+      const boardRes = await fetch(`${API_BASE}/api/participant/pools/${poolId}/board${query}`, { headers })
+
+      if (boardRes.ok) {
+        const boardData = await boardRes.json()
+        setPoolBoard(boardData.board)
+      }
+    } catch (err) {
+      console.error('Failed to refresh live participant board:', err)
     }
   }
 
@@ -317,6 +378,58 @@ export function ParticipantView() {
     }
   }
 
+  useEffect(() => {
+    if (typeof window === 'undefined' || view !== 'dashboard' || !selectedPool) {
+      return
+    }
+
+    const eventSource = new EventSource(`${API_BASE}/api/ingestion/events`)
+
+    const scheduleRefresh = () => {
+      if (liveRefreshTimerRef.current != null) {
+        window.clearTimeout(liveRefreshTimerRef.current)
+      }
+
+      liveRefreshTimerRef.current = window.setTimeout(() => {
+        liveRefreshTimerRef.current = null
+        void refreshSelectedPoolBoard(selectedPool, selectedGameId)
+      }, 750)
+    }
+
+    const handleGameUpdated = (event: MessageEvent) => {
+      try {
+        const payload = JSON.parse(event.data) as { payload?: { gameId?: unknown } }
+        const gameId = Number(payload?.payload?.gameId)
+
+        if (!Number.isFinite(gameId)) {
+          return
+        }
+
+        const isRelevant =
+          poolGames.some((game) => Number(game.id) === gameId || Number(game.game_id) === gameId) ||
+          Number(selectedGameId ?? poolBoard?.gameId ?? 0) === gameId
+
+        if (isRelevant) {
+          scheduleRefresh()
+        }
+      } catch (error) {
+        console.warn('Ignoring malformed live score event', error)
+      }
+    }
+
+    eventSource.addEventListener('game-updated', handleGameUpdated as EventListener)
+
+    return () => {
+      if (liveRefreshTimerRef.current != null) {
+        window.clearTimeout(liveRefreshTimerRef.current)
+        liveRefreshTimerRef.current = null
+      }
+
+      eventSource.removeEventListener('game-updated', handleGameUpdated as EventListener)
+      eventSource.close()
+    }
+  }, [poolBoard?.gameId, poolGames, selectedGameId, selectedPool, view])
+
   const handleLogout = () => {
     localStorage.removeItem('auth-token')
     setToken(null)
@@ -359,6 +472,15 @@ export function ParticipantView() {
 
   const primaryBrand = useMemo(() => {
     if (!poolBoard) return null
+    if (poolBoard.winnerLoserMode) {
+      return {
+        key: 'winner-score',
+        color: poolBoard.teamPrimaryColor,
+        accent: poolBoard.teamSecondaryColor,
+        logo: ''
+      }
+    }
+
     return resolveTeamBrand(
       poolBoard.primaryTeam,
       poolBoard.teamPrimaryColor,
@@ -369,6 +491,14 @@ export function ParticipantView() {
 
   const opponentBrand = useMemo(() => {
     if (!poolBoard) return null
+    if (poolBoard.winnerLoserMode) {
+      return {
+        key: 'losing-score',
+        color: '#5f6368',
+        accent: '#ffffff',
+        logo: ''
+      }
+    }
     return resolveTeamBrand(poolBoard.opponent, '#0076b6', '#b0b7bc', null)
   }, [poolBoard])
 
@@ -517,38 +647,12 @@ export function ParticipantView() {
                         <span className="game-date">{new Date(game.game_dt).toLocaleDateString()}</span>
                       </div>
                       <div className="game-scores">
-                        <div className="quarter">
-                          <label>Q1</label>
-                          <span>
-                            {game.q1_primary_score !== null
-                              ? `${game.q1_primary_score}-${game.q1_opponent_score}`
-                              : 'TBD'}
-                          </span>
-                        </div>
-                        <div className="quarter">
-                          <label>Q2</label>
-                          <span>
-                            {game.q2_primary_score !== null
-                              ? `${game.q2_primary_score}-${game.q2_opponent_score}`
-                              : 'TBD'}
-                          </span>
-                        </div>
-                        <div className="quarter">
-                          <label>Q3</label>
-                          <span>
-                            {game.q3_primary_score !== null
-                              ? `${game.q3_primary_score}-${game.q3_opponent_score}`
-                              : 'TBD'}
-                          </span>
-                        </div>
-                        <div className="quarter">
-                          <label>Q4</label>
-                          <span>
-                            {game.q4_primary_score !== null
-                              ? `${game.q4_primary_score}-${game.q4_opponent_score}`
-                              : 'TBD'}
-                          </span>
-                        </div>
+                        {scoreSegments.map((segment) => (
+                          <div key={`${game.id}-${segment.slot}`} className="quarter">
+                            <label>{segment.shortLabel}</label>
+                            <span>{getGameScoreForQuarter(game, segment.quarter)}</span>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   ))
@@ -559,8 +663,9 @@ export function ParticipantView() {
             <div className="pool-subsection">
               <h3>Pool Squares Board</h3>
               {poolBoard ? (
-                <div
-                  className="pool-board"
+                <>
+                  <div
+                    className="pool-board"
                   style={{
                     ['--team-primary' as string]: poolBoard.teamPrimaryColor,
                     ['--team-secondary' as string]: poolBoard.teamSecondaryColor
@@ -618,6 +723,7 @@ export function ParticipantView() {
                                   : hasSeasonWin
                                     ? 'win-1'
                                     : 'win-0'
+                                const winStateClass = hasWeekWin ? 'is-week-win' : hasSeasonWin ? 'is-season-win' : ''
                                 const hasTooltip = hasWeekWin || hasSeasonWin || isCurrentLeader
                                 const squareTooltip = hasTooltip
                                   ? `${isCurrentLeader ? 'Currently leading • ' : ''}Week: ${formatBoardMoney(sq.current_game_won)} • YTD: ${formatBoardMoney(sq.season_won_total)}`
@@ -627,7 +733,7 @@ export function ParticipantView() {
                                   <button
                                     key={sq.id}
                                     type="button"
-                                    className={`board-square ${sq.participant_id ? 'owned' : 'open'} ${winClass} ${isCurrentLeader ? 'current-win' : ''}`}
+                                    className={`board-square ${sq.participant_id ? 'owned' : 'open'} ${winClass} ${winStateClass} ${isCurrentLeader ? 'current-win' : ''}`}
                                     aria-label={squareTooltip}
                                   >
                                     {sq.participant_id ? (
@@ -675,6 +781,9 @@ export function ParticipantView() {
                     </div>
                   ) : null}
                 </div>
+
+                  {poolBoard?.payoutSummary ? <PayoutSummaryPanel summary={poolBoard.payoutSummary} title="Pool payout schedule" /> : null}
+                </>
               ) : (
                 <p>No board data yet.</p>
               )}
