@@ -1088,6 +1088,119 @@ describe('Football Pool API', () => {
       expect(statusResponse.body.status.canCleanup).toBe(true)
     })
 
+    it('should seed an NBA by-quarter simulation with quarter controls and live board data', async () => {
+      await db.query(`
+        SELECT setval(
+          pg_get_serial_sequence('football_pool.sport_team', 'id'),
+          GREATEST(COALESCE((SELECT MAX(id) FROM football_pool.sport_team), 1), 1),
+          true
+        )
+      `)
+
+      const sportTeamKey = `sim-nba-${Date.now()}`
+      const sportTeamResult = await db.query<{ id: number }>(
+        `INSERT INTO football_pool.sport_team (
+           name,
+           abbreviation,
+           sport_code,
+           league_code,
+           espn_team_id,
+           espn_team_uid
+         )
+         VALUES ($1, $2, 'BASKETBALL', 'NBA', $3, $4)
+         ON CONFLICT (sport_code, league_code, name)
+         DO UPDATE SET abbreviation = EXCLUDED.abbreviation
+         RETURNING id`,
+        [`Sim NBA Team ${sportTeamKey}`, 'SNB', sportTeamKey, `sim:nba:${sportTeamKey}`]
+      )
+      const sportTeamId = Number(sportTeamResult.rows[0]?.id)
+
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({ teamName: `NBA Sim Org ${Date.now()}` })
+
+      const teamId = Number(teamResponse.body.id)
+
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `NBA Quarter Sim Pool ${Date.now()}`,
+          teamId,
+          season: 2025,
+          leagueCode: 'NBA',
+          primarySportTeamId: sportTeamId,
+          squareCost: 20,
+          q1Payout: 100,
+          q2Payout: 100,
+          q3Payout: 100,
+          q4Payout: 200
+        })
+
+      const poolId = Number(poolResponse.body.id)
+
+      await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'NBA',
+          lastName: `User${Date.now()}`,
+          email: `nba-quarter-${Date.now()}@example.com`,
+          phone: '5552600000',
+          isPlayer: true,
+          playerTeams: [{ teamId, jerseyNum: 30 }]
+        })
+
+      const firstGame = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: 1,
+          opponent: 'NBA Test Opponent',
+          gameDate: '2025-10-20',
+          isSimulation: true
+        })
+
+      expect(firstGame.status).toBe(200)
+      expect(firstGame.body.game).toBeTruthy()
+      const gameId = Number(firstGame.body.game.id)
+
+      const startResponse = await request(app)
+        .post(`/api/setup/pools/${poolId}/simulation`)
+        .set(organizerHeaders)
+        .send({ mode: 'by_quarter' })
+
+      expect(startResponse.status).toBe(201)
+      expect(startResponse.body.result.mode).toBe('by_quarter')
+
+      const statusResponse = await request(app)
+        .get(`/api/setup/pools/${poolId}/simulation`)
+        .set(organizerHeaders)
+
+      expect(statusResponse.status).toBe(200)
+      expect(statusResponse.body.status.currentGameId).toBe(gameId)
+      expect(statusResponse.body.status.progressAction).toBe('complete_quarter')
+
+      const gamesResponse = await request(app)
+        .get(`/api/landing/pools/${poolId}/games`)
+        .set(organizerHeaders)
+
+      const seededGame = gamesResponse.body.games.find((game: { id: number }) => game.id === gameId)
+      expect(seededGame.q1_primary_score).not.toBeNull()
+      expect(seededGame.q1_opponent_score).not.toBeNull()
+      expect(seededGame.q2_primary_score).toBeNull()
+
+      const boardResponse = await request(app)
+        .get(`/api/landing/pools/${poolId}/board?gameId=${gameId}`)
+        .set(organizerHeaders)
+
+      expect(boardResponse.status).toBe(200)
+      expect(boardResponse.body.board.rowNumbers).toHaveLength(10)
+      expect(boardResponse.body.board.colNumbers).toHaveLength(10)
+    })
+
     it('should seed a by-quarter simulation with a live mid-quarter board highlight', async () => {
       const teamResponse = await request(app)
         .post('/api/setup/teams')

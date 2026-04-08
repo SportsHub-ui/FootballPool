@@ -333,9 +333,25 @@ const pickInitialPoolId = (pools: LandingPool[], currentPoolId: number | null): 
   return defaultPool?.id ?? null
 }
 
-const pickInitialGameId = (games: LandingGame[], preferredGameId?: number | null): number | null => {
+const pickInitialGameId = (
+  games: LandingGame[],
+  preferredGameId?: number | null,
+  simulationCurrentGameId?: number | null
+): number | null => {
   if (preferredGameId && games.some((game) => game.id === preferredGameId)) {
     return preferredGameId
+  }
+
+  if (simulationCurrentGameId && games.some((game) => game.id === simulationCurrentGameId)) {
+    return simulationCurrentGameId
+  }
+
+  const liveOrScoredGame =
+    games.find((game) => !isCompletedGame(game) && getLatestScoredQuarter(game) != null) ??
+    [...games].reverse().find((game) => getLatestScoredQuarter(game) != null)
+
+  if (liveOrScoredGame) {
+    return liveOrScoredGame.id
   }
 
   const today = new Date()
@@ -457,10 +473,9 @@ export function LandingPage() {
     setBoard(data.board ?? null)
   }
 
-  const loadSimulationStatus = async (poolId: number): Promise<void> => {
+  const fetchSimulationStatus = async (poolId: number): Promise<SimulationControlStatus | null> => {
     if (!SHOW_SIMULATION_CONTROLS) {
-      setSimulationStatus(null)
-      return
+      return null
     }
 
     try {
@@ -473,9 +488,9 @@ export function LandingPage() {
       }
 
       const data = await response.json()
-      setSimulationStatus(data.status ?? null)
+      return data.status ?? null
     } catch {
-      setSimulationStatus(null)
+      return null
     }
   }
 
@@ -493,15 +508,16 @@ export function LandingPage() {
         throw new Error('Failed to load pool games')
       }
 
-      const data = await response.json()
+      const [data, nextSimulationStatus] = await Promise.all([response.json(), fetchSimulationStatus(poolId)])
       const nextGames: LandingGame[] = data.games ?? []
-      const nextGameId = pickInitialGameId(nextGames, preferredGameId)
+      const nextGameId = pickInitialGameId(nextGames, preferredGameId, nextSimulationStatus?.currentGameId ?? null)
 
       setGames(nextGames)
       setSelectedPoolId(poolId)
       setSelectedGameId(nextGameId)
+      setSimulationStatus(nextSimulationStatus)
 
-      await Promise.all([loadBoard(poolId, nextGameId), loadSimulationStatus(poolId)])
+      await loadBoard(poolId, nextGameId)
     } catch (error) {
       setSimulationStatus(null)
       setPageError(error instanceof Error ? error.message : 'Failed to load pool data')
@@ -523,14 +539,19 @@ export function LandingPage() {
         throw new Error('Failed to refresh pool games')
       }
 
-      const data = await response.json()
+      const [data, nextSimulationStatus] = await Promise.all([response.json(), fetchSimulationStatus(poolId)])
       const nextGames: LandingGame[] = data.games ?? []
-      const nextGameId = pickInitialGameId(nextGames, preferredGameId ?? selectedGameId)
+      const nextGameId = pickInitialGameId(
+        nextGames,
+        preferredGameId ?? selectedGameId,
+        nextSimulationStatus?.currentGameId ?? null
+      )
 
       setGames(nextGames)
       setSelectedGameId(nextGameId)
+      setSimulationStatus(nextSimulationStatus)
 
-      await Promise.all([loadBoard(poolId, nextGameId), loadSimulationStatus(poolId)])
+      await loadBoard(poolId, nextGameId)
     } catch (error) {
       console.error('Failed to refresh live landing board:', error)
     }
@@ -1025,7 +1046,16 @@ export function LandingPage() {
   const latestScoredQuarter = getLatestScoredQuarter(selectedGame)
 
   const quarterSummaries = useMemo(() => {
-    if (!board || !selectedGame || latestScoredQuarter == null) {
+    if (!board || !selectedGame) {
+      return []
+    }
+
+    const activeSimulationQuarter =
+      simulationStatus?.mode === 'by_quarter' && Number(simulationStatus.currentGameId ?? 0) === Number(selectedGame.id)
+        ? Number(simulationStatus.nextQuarter ?? 1)
+        : null
+
+    if (latestScoredQuarter == null && activeSimulationQuarter == null) {
       return []
     }
 
@@ -1044,17 +1074,21 @@ export function LandingPage() {
         ? resolveWinningSquareNumber(board.rowNumbers, board.colNumbers, opponentScore, primaryScore)
         : null
       const matchingSquare = squareNum != null ? squaresByNumber.get(squareNum) ?? null : null
+      const isActiveQuarter =
+        activeSimulationQuarter != null
+          ? quarter === activeSimulationQuarter
+          : !gameComplete && quarter === latestScoredQuarter
 
       return {
         quarter,
-        status: !hasScore ? 'pending' : !gameComplete && quarter === latestScoredQuarter ? 'active' : 'completed',
+        status: !hasScore ? (isActiveQuarter ? 'active' : 'pending') : !gameComplete && isActiveQuarter ? 'active' : 'completed',
         primaryScore,
         opponentScore,
         squareNum,
-        ownerName: hasScore ? formatQuarterSquareOwner(matchingSquare, squareNum) : 'Awaiting score'
+        ownerName: hasScore ? formatQuarterSquareOwner(matchingSquare, squareNum) : isActiveQuarter ? 'Live scoring in progress' : 'Awaiting score'
       }
     })
-  }, [board, latestScoredQuarter, selectedGame])
+  }, [board, latestScoredQuarter, selectedGame, simulationStatus])
 
   const showQuarterSummaries = quarterSummaries.length > 0
 
