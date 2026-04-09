@@ -371,6 +371,59 @@ describe('Football Pool API', () => {
     })
   })
 
+  describe('Display advertising settings', () => {
+    it('should save organization-scoped ad settings and placement-aware ads', async () => {
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({
+          teamName: `Marketing Org ${Date.now()}`,
+          primaryColor: '#123456',
+          secondaryColor: '#ffffff'
+        })
+
+      expect(teamResponse.status).toBe(201)
+      const organizationId = Number(teamResponse.body.id)
+
+      const settingsResponse = await request(app)
+        .put(`/api/setup/marketing/display/settings?organizationId=${organizationId}`)
+        .set(organizerHeaders)
+        .send({
+          adsEnabled: true,
+          frequencySeconds: 120,
+          durationSeconds: 25,
+          shrinkPercent: 82,
+          sidebarCount: 2,
+          bannerCount: 3,
+          defaultBannerMessage: 'Thanks to our sponsors',
+          hideAdsForOrganization: false
+        })
+
+      expect(settingsResponse.status).toBe(200)
+      expect(settingsResponse.body.settings.sidebarCount).toBe(2)
+      expect(settingsResponse.body.settings.bannerCount).toBe(3)
+      expect(settingsResponse.body.settings.defaultBannerMessage).toBe('Thanks to our sponsors')
+
+      const adResponse = await request(app)
+        .post('/api/setup/marketing/display/ads')
+        .set(organizerHeaders)
+        .send({
+          title: 'Bottom Banner Sponsor',
+          body: 'Now serving game-day specials',
+          footer: 'Section 112',
+          accentColor: '#ff9900',
+          placement: 'banner',
+          organizationId,
+          activeFlg: true,
+          sortOrder: 1
+        })
+
+      expect(adResponse.status).toBe(201)
+      expect(adResponse.body.ad.placement).toBe('banner')
+      expect(adResponse.body.ad.organizationId).toBe(organizationId)
+    })
+  })
+
   describe('Setup Endpoints - Pools', () => {
     let createdPoolId: number
     let displayToken: string

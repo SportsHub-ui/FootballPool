@@ -165,18 +165,10 @@ const main = async () => {
       await cleanDatabase(resolvedDatabaseUrl, { target });
       return;
     } catch (error) {
-      const fallbackDevUrl = process.env.DATABASE_URL || baseDatabaseUrl;
-      const fallbackDevName = getDatabaseName(fallbackDevUrl);
-
-      if (/(^dev|dev$|development)/i.test(fallbackDevName)) {
-        console.warn(
-          `[db-clean] Could not access or create ${getDatabaseName(resolvedDatabaseUrl)}; cleaning ${fallbackDevName} instead so local automated test data does not accumulate. ${error instanceof Error ? error.message : String(error)}`
-        );
-        await cleanDatabase(fallbackDevUrl, { target: 'dev' });
-        return;
-      }
-
-      throw error;
+      const requestedTestDatabaseName = getDatabaseName(resolvedDatabaseUrl);
+      throw new Error(
+        `Could not access or create the dedicated test database "${requestedTestDatabaseName}". Refusing to clean the development database. Create ${requestedTestDatabaseName} manually or set TEST_DATABASE_URL to a safe isolated database. ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 

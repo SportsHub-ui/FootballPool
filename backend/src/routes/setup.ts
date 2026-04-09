@@ -379,11 +379,19 @@ const displayAdIdParams = z.object({
   adId: z.coerce.number().int().positive()
 });
 
+const marketingDisplayQuerySchema = z.object({
+  organizationId: z.coerce.number().int().positive().optional()
+});
+
 const updateDisplayAdSettingsSchema = z.object({
   adsEnabled: z.boolean(),
   frequencySeconds: z.number().int().min(15).max(3600),
   durationSeconds: z.number().int().min(5).max(600),
-  shrinkPercent: z.number().int().min(50).max(95)
+  shrinkPercent: z.number().int().min(50).max(95),
+  sidebarCount: z.number().int().min(0).max(4),
+  bannerCount: z.number().int().min(0).max(6),
+  defaultBannerMessage: z.string().trim().max(500).optional().or(z.literal('')),
+  hideAdsForOrganization: z.boolean().optional().default(false)
 });
 
 const saveDisplayAdSchema = z.object({
@@ -392,6 +400,8 @@ const saveDisplayAdSchema = z.object({
   footer: z.string().trim().max(255).optional().or(z.literal('')),
   imageUrl: z.string().trim().max(500).optional().or(z.literal('')),
   accentColor: z.string().trim().max(32).optional().or(z.literal('')),
+  placement: z.enum(['sidebar', 'banner']).optional().default('sidebar'),
+  organizationId: z.number().int().positive().nullable().optional(),
   activeFlg: z.boolean().optional().default(true),
   sortOrder: z.number().int().min(0).max(999).optional().default(0)
 });
@@ -1179,12 +1189,22 @@ setupRouter.delete('/notifications/templates/:recipientScope/:notificationKind',
   }
 });
 
-setupRouter.get('/marketing/display', async (_req, res) => {
+setupRouter.get('/marketing/display', async (req, res) => {
+  const parsedQuery = marketingDisplayQuerySchema.safeParse(req.query);
+
+  if (!parsedQuery.success) {
+    res.status(400).json({ error: parsedQuery.error.issues });
+    return;
+  }
+
   const client = await db.connect();
 
   try {
     await ensureDisplayAdvertisingSupport(client);
-    const result = await loadDisplayAdvertising(client, { includeInactive: true });
+    const result = await loadDisplayAdvertising(client, {
+      includeInactive: true,
+      organizationId: parsedQuery.data.organizationId ?? null
+    });
     res.status(200).json(result);
   } catch (error) {
     res.status(500).json({
@@ -1197,7 +1217,13 @@ setupRouter.get('/marketing/display', async (_req, res) => {
 });
 
 setupRouter.put('/marketing/display/settings', async (req, res) => {
+  const parsedQuery = marketingDisplayQuerySchema.safeParse(req.query);
   const parsedBody = updateDisplayAdSettingsSchema.safeParse(req.body);
+
+  if (!parsedQuery.success) {
+    res.status(400).json({ error: parsedQuery.error.issues });
+    return;
+  }
 
   if (!parsedBody.success) {
     res.status(400).json({ error: parsedBody.error.issues });
@@ -1208,7 +1234,9 @@ setupRouter.put('/marketing/display/settings', async (req, res) => {
 
   try {
     await ensureDisplayAdvertisingSupport(client);
-    const settings = await saveDisplayAdSettings(client, parsedBody.data);
+    const settings = await saveDisplayAdSettings(client, parsedBody.data, {
+      organizationId: parsedQuery.data.organizationId ?? null
+    });
     res.status(200).json({ settings });
   } catch (error) {
     res.status(500).json({

@@ -146,6 +146,8 @@ type TeamBrand = {
   logo: string
 }
 
+type DisplayAdPlacement = 'sidebar' | 'banner'
+
 type DisplayAdItem = {
   id: string | number
   title: string
@@ -153,6 +155,8 @@ type DisplayAdItem = {
   footer?: string
   imageUrl?: string
   accentColor?: string
+  placement?: DisplayAdPlacement
+  label?: string
 }
 
 type DisplayAdSettings = {
@@ -160,6 +164,10 @@ type DisplayAdSettings = {
   frequencySeconds: number
   durationSeconds: number
   shrinkPercent: number
+  sidebarCount: number
+  bannerCount: number
+  defaultBannerMessage: string
+  hideAdsForOrganization: boolean
 }
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '')
@@ -178,7 +186,11 @@ const DEFAULT_DISPLAY_AD_SETTINGS: DisplayAdSettings = {
   adsEnabled: false,
   frequencySeconds: 180,
   durationSeconds: 30,
-  shrinkPercent: 80
+  shrinkPercent: 80,
+  sidebarCount: 1,
+  bannerCount: 1,
+  defaultBannerMessage: '',
+  hideAdsForOrganization: false
 }
 
 const NFL_TEAM_BRANDS: TeamBrand[] = [
@@ -293,7 +305,17 @@ const normalizeDisplayAdSettings = (value?: Partial<DisplayAdSettings> | null): 
   shrinkPercent: Math.min(
     95,
     Math.max(50, Number(value?.shrinkPercent ?? DEFAULT_DISPLAY_AD_SETTINGS.shrinkPercent) || DEFAULT_DISPLAY_AD_SETTINGS.shrinkPercent)
-  )
+  ),
+  sidebarCount: Math.min(
+    4,
+    Math.max(0, Number(value?.sidebarCount ?? DEFAULT_DISPLAY_AD_SETTINGS.sidebarCount) || DEFAULT_DISPLAY_AD_SETTINGS.sidebarCount)
+  ),
+  bannerCount: Math.min(
+    6,
+    Math.max(0, Number(value?.bannerCount ?? DEFAULT_DISPLAY_AD_SETTINGS.bannerCount) || DEFAULT_DISPLAY_AD_SETTINGS.bannerCount)
+  ),
+  defaultBannerMessage: (value?.defaultBannerMessage ?? DEFAULT_DISPLAY_AD_SETTINGS.defaultBannerMessage).toString().trim(),
+  hideAdsForOrganization: Boolean(value?.hideAdsForOrganization ?? DEFAULT_DISPLAY_AD_SETTINGS.hideAdsForOrganization)
 })
 
 const normalizeDisplayAdItems = (value?: DisplayAdItem[] | null): DisplayAdItem[] => {
@@ -308,9 +330,23 @@ const normalizeDisplayAdItems = (value?: DisplayAdItem[] | null): DisplayAdItem[
       body: item.body?.toString().trim() || undefined,
       footer: item.footer?.toString().trim() || undefined,
       imageUrl: item.imageUrl?.toString().trim() || undefined,
-      accentColor: item.accentColor?.toString().trim() || undefined
+      accentColor: item.accentColor?.toString().trim() || undefined,
+      placement: (item.placement === 'banner' ? 'banner' : 'sidebar') as DisplayAdPlacement,
+      label: item.label?.toString().trim() || undefined
     }))
     .filter((item) => item.title)
+}
+
+const buildDisplayAdWindow = (items: DisplayAdItem[], count: number, startIndex: number): DisplayAdItem[] => {
+  if (count <= 0 || items.length === 0) {
+    return []
+  }
+
+  if (items.length <= count) {
+    return items.slice(0, count)
+  }
+
+  return Array.from({ length: Math.min(count, items.length) }, (_, offset) => items[(startIndex + offset) % items.length])
 }
 
 const formatDate = (value: string | null | undefined, options?: { timeZone?: string | null }): string => {
@@ -332,6 +368,8 @@ const formatClockTime = (value: Date, timeZone?: string | null): string => new I
 
 function DisplayAdCard({ ad, compact = false }: { ad: DisplayAdItem; compact?: boolean }) {
   const imageSrc = ad.imageUrl ? resolveImageUrl(ad.imageUrl) : ''
+  const adLabel = ad.label?.trim() || 'Sponsored'
+  const placeholderText = adLabel === 'Pool message' ? 'INFO' : 'AD'
 
   return (
     <article
@@ -344,12 +382,12 @@ function DisplayAdCard({ ad, compact = false }: { ad: DisplayAdItem; compact?: b
         </div>
       ) : (
         <div className="display-ad-card-visual is-placeholder">
-          <span>AD</span>
+          <span>{placeholderText}</span>
         </div>
       )}
 
       <div className="display-ad-card-copy">
-        <span className="display-ad-card-label">Sponsored</span>
+        <span className="display-ad-card-label">{adLabel}</span>
         <strong className="display-ad-card-title">{ad.title}</strong>
         {ad.body ? <p className="display-ad-card-body">{ad.body}</p> : null}
         {ad.footer ? <span className="display-ad-card-footer">{ad.footer}</span> : null}
@@ -765,6 +803,8 @@ export function LandingPage() {
       const linkedPool = launch.pool ?? null
       const nextDisplayAdItems = normalizeDisplayAdItems(launch.displayAds)
       const nextDisplayAdSettings = normalizeDisplayAdSettings(launch.displayAdSettings)
+      const nextDisplayFallbackEnabled = Boolean(nextDisplayAdSettings.defaultBannerMessage) && nextDisplayAdSettings.bannerCount > 0
+      const nextDisplayAdInventoryCount = nextDisplayAdItems.length + (nextDisplayFallbackEnabled ? 1 : 0)
 
       setPools(linkedPool ? [linkedPool] : [])
       setSelectedPoolId(linkedPool?.id ?? null)
@@ -773,8 +813,8 @@ export function LandingPage() {
       setBoard(launch.board ?? null)
       setDisplayAdItems(nextDisplayAdItems)
       setDisplayAdSettings(nextDisplayAdSettings)
-      setActiveDisplayAdIndex((current) => (nextDisplayAdItems.length > 0 ? current % nextDisplayAdItems.length : 0))
-      if (!nextDisplayAdSettings.adsEnabled || nextDisplayAdItems.length === 0) {
+      setActiveDisplayAdIndex((current) => (nextDisplayAdInventoryCount > 0 ? current % nextDisplayAdInventoryCount : 0))
+      if (!nextDisplayAdSettings.adsEnabled || nextDisplayAdSettings.hideAdsForOrganization || nextDisplayAdInventoryCount === 0) {
         setDisplayAdVisible(false)
       }
       setSimulationStatus(null)
@@ -934,7 +974,16 @@ export function LandingPage() {
   }, [activePage, board?.gameId, displayOnlyMode, displayRefreshSeconds, displayToken, games, selectedGameId, selectedPoolId, token])
 
   useEffect(() => {
-    if (typeof window === 'undefined' || !displayOnlyMode || !displayAdSettings.adsEnabled || displayAdItems.length === 0) {
+    const hasFallbackBannerMessage = Boolean(displayAdSettings.defaultBannerMessage?.trim()) && displayAdSettings.bannerCount > 0
+    const totalDisplayAdWindows = displayAdItems.length + (hasFallbackBannerMessage ? 1 : 0)
+
+    if (
+      typeof window === 'undefined' ||
+      !displayOnlyMode ||
+      !displayAdSettings.adsEnabled ||
+      displayAdSettings.hideAdsForOrganization ||
+      totalDisplayAdWindows === 0
+    ) {
       setDisplayAdVisible(false)
       setActiveDisplayAdIndex(0)
       return
@@ -958,7 +1007,7 @@ export function LandingPage() {
           }
 
           setDisplayAdVisible(false)
-          setActiveDisplayAdIndex((current) => (current + 1) % displayAdItems.length)
+          setActiveDisplayAdIndex((current) => (current + 1) % totalDisplayAdWindows)
           scheduleNextAdWindow()
         }, displayAdSettings.durationSeconds * 1000)
       }, displayAdSettings.frequencySeconds * 1000)
@@ -977,7 +1026,16 @@ export function LandingPage() {
         window.clearTimeout(hideTimer)
       }
     }
-  }, [displayAdItems.length, displayAdSettings.adsEnabled, displayAdSettings.durationSeconds, displayAdSettings.frequencySeconds, displayOnlyMode])
+  }, [
+    displayAdItems.length,
+    displayAdSettings.adsEnabled,
+    displayAdSettings.bannerCount,
+    displayAdSettings.defaultBannerMessage,
+    displayAdSettings.durationSeconds,
+    displayAdSettings.frequencySeconds,
+    displayAdSettings.hideAdsForOrganization,
+    displayOnlyMode
+  ])
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -1393,14 +1451,64 @@ export function LandingPage() {
   }, [board, latestScoredQuarter, scoreSegments, selectedGame, selectedPool, simulationStatus])
 
   const showQuarterSummaries = quarterSummaries.length > 0
-  const showDisplayAds = displayOnlyMode && displayAdSettings.adsEnabled && displayAdItems.length > 0 && displayAdVisible
-  const activeDisplayAd = showDisplayAds
-    ? displayAdItems[activeDisplayAdIndex % displayAdItems.length] ?? null
-    : null
-  const secondaryDisplayAd = showDisplayAds && displayAdItems.length > 1
-    ? (displayAdItems[(activeDisplayAdIndex + 1) % displayAdItems.length] ?? activeDisplayAd)
-    : null
   const displayAdScale = Math.min(0.95, Math.max(0.5, displayAdSettings.shrinkPercent / 100))
+  const displayAdSidebarCount = Math.min(4, Math.max(0, Number(displayAdSettings.sidebarCount ?? 1) || 0))
+  const displayAdBannerCount = Math.min(6, Math.max(0, Number(displayAdSettings.bannerCount ?? 1) || 0))
+  const displayAdFallbackMessage = displayAdSettings.defaultBannerMessage?.trim() ?? ''
+  const sidebarDisplayAdItems = useMemo(
+    () => displayAdItems.filter((item) => (item.placement ?? 'sidebar') === 'sidebar'),
+    [displayAdItems]
+  )
+  const bannerDisplayAdItems = useMemo(
+    () => displayAdItems.filter((item) => item.placement === 'banner'),
+    [displayAdItems]
+  )
+  const hasDisplayAdContent = !displayAdSettings.hideAdsForOrganization && (
+    (displayAdSidebarCount > 0 && sidebarDisplayAdItems.length > 0) ||
+    (displayAdBannerCount > 0 && (bannerDisplayAdItems.length > 0 || Boolean(displayAdFallbackMessage)))
+  )
+  const showDisplayAds = displayOnlyMode && displayAdSettings.adsEnabled && hasDisplayAdContent && displayAdVisible
+  const visibleSidebarAds = useMemo(
+    () => (showDisplayAds ? buildDisplayAdWindow(sidebarDisplayAdItems, displayAdSidebarCount, activeDisplayAdIndex) : []),
+    [activeDisplayAdIndex, displayAdSidebarCount, showDisplayAds, sidebarDisplayAdItems]
+  )
+  const visibleBannerAds = useMemo(() => {
+    if (!showDisplayAds || displayAdBannerCount <= 0) {
+      return []
+    }
+
+    const items = buildDisplayAdWindow(bannerDisplayAdItems, displayAdBannerCount, activeDisplayAdIndex)
+
+    if (!displayAdFallbackMessage) {
+      return items
+    }
+
+    const fallbackAccent = board?.teamSecondaryColor ?? '#93c5fd'
+    const fallbackFooter = board?.poolName ? `${board.poolName} display update` : 'Community spotlight'
+
+    while (items.length < displayAdBannerCount) {
+      items.push({
+        id: `default-banner-message-${items.length}`,
+        title: displayAdFallbackMessage,
+        footer: fallbackFooter,
+        accentColor: fallbackAccent,
+        placement: 'banner',
+        label: 'Pool message'
+      })
+    }
+
+    return items
+  }, [
+    activeDisplayAdIndex,
+    bannerDisplayAdItems,
+    board?.poolName,
+    board?.teamSecondaryColor,
+    displayAdBannerCount,
+    displayAdFallbackMessage,
+    showDisplayAds
+  ])
+  const showDisplaySidebar = showDisplayAds && visibleSidebarAds.length > 0 && displayAdSidebarCount > 0
+  const showDisplayBanner = showDisplayAds && visibleBannerAds.length > 0 && displayAdBannerCount > 0
   const featuredDisplaySummary = useMemo(() => {
     if (!displayOnlyMode || quarterSummaries.length === 0) {
       return null
@@ -1594,7 +1702,14 @@ export function LandingPage() {
 
           {selectedPool && board ? (
             <>
-              <div className={`display-ad-layout ${showDisplayAds ? 'is-ad-mode' : ''}`}>
+              <div
+                className={[
+                  'display-ad-layout',
+                  showDisplayAds ? 'is-ad-mode' : '',
+                  showDisplaySidebar ? 'has-sidebar-ads' : '',
+                  showDisplayBanner ? 'has-banner-ads' : ''
+                ].filter(Boolean).join(' ')}
+              >
                 <div className="display-board-stage">
                   <div
                     className={`pool-board ${displayOnlyMode ? 'is-display-only' : ''} ${showDisplayAds ? 'is-ad-mode' : ''}`}
@@ -1783,15 +1898,29 @@ export function LandingPage() {
                   </div>
                 </div>
 
-                {showDisplayAds && activeDisplayAd ? (
-                  <aside className="display-ad-sidebar" aria-label="Display advertising panel">
-                    <DisplayAdCard ad={activeDisplayAd} />
+                {showDisplaySidebar ? (
+                  <aside className="display-ad-sidebar display-ad-rail" aria-label="Display advertising right rail">
+                    <div
+                      className="display-ad-rail-content"
+                      style={{ gridTemplateRows: `repeat(${visibleSidebarAds.length}, minmax(0, 1fr))` }}
+                    >
+                      {visibleSidebarAds.map((ad, index) => (
+                        <DisplayAdCard key={`${ad.id}-sidebar-${index}`} ad={ad} />
+                      ))}
+                    </div>
                   </aside>
                 ) : null}
 
-                {showDisplayAds && secondaryDisplayAd ? (
-                  <section className="display-ad-banner" aria-label="Display advertising banner">
-                    <DisplayAdCard ad={secondaryDisplayAd} compact />
+                {showDisplayBanner ? (
+                  <section className="display-ad-banner display-ad-rail" aria-label="Display advertising bottom rail">
+                    <div
+                      className="display-ad-banner-grid"
+                      style={{ gridTemplateColumns: `repeat(${visibleBannerAds.length}, minmax(0, 1fr))` }}
+                    >
+                      {visibleBannerAds.map((ad, index) => (
+                        <DisplayAdCard key={`${ad.id}-banner-${index}`} ad={ad} compact />
+                      ))}
+                    </div>
                   </section>
                 ) : null}
               </div>

@@ -4,6 +4,7 @@ export type LandingPool = {
   id: number
   pool_name: string | null
   season: number | null
+  team_id?: number | null
   primary_team_id: number | null // references sport_team.id
   primary_sport_team_id?: number | null
   pool_type?: string | null
