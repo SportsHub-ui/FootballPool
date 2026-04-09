@@ -2,8 +2,11 @@ const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');
 const dotenv = require('dotenv');
+const { deriveTestDatabaseUrl } = require('./clean-db-data');
 
-const isTestLike = process.env.NODE_ENV === 'test' || process.env.APP_ENV === 'test';
+const targetArg = process.argv.find((arg) => arg.startsWith('--target='));
+const requestedTarget = targetArg?.split('=')[1] === 'test' ? 'test' : 'dev';
+const isTestLike = requestedTarget === 'test' || process.env.NODE_ENV === 'test' || process.env.APP_ENV === 'test';
 
 const envPaths = [
   ...(isTestLike
@@ -47,10 +50,17 @@ async function getAppliedMigrations(client) {
 }
 
 async function run() {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    throw new Error('DATABASE_URL is required');
+  const baseDatabaseUrl = requestedTarget === 'test'
+    ? process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
+    : process.env.DATABASE_URL;
+
+  if (!baseDatabaseUrl) {
+    throw new Error(requestedTarget === 'test' ? 'TEST_DATABASE_URL or DATABASE_URL is required' : 'DATABASE_URL is required');
   }
+
+  const databaseUrl = requestedTarget === 'test' ? deriveTestDatabaseUrl(baseDatabaseUrl) : baseDatabaseUrl;
+  const databaseName = decodeURIComponent(new URL(databaseUrl).pathname.replace(/^\//, '') || 'postgres');
+  console.log(`[db:migrate] Target database ${databaseName}${requestedTarget === 'test' ? ' (isolated test db)' : ''}`);
 
   const client = new Client({ connectionString: databaseUrl });
   await client.connect();

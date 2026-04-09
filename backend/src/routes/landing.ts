@@ -173,6 +173,7 @@ const loadAccessiblePools = async (client: PoolClient, userId: number | null, ca
     `SELECT p.id,
             p.pool_name,
             p.season,
+            p.team_id,
             COALESCE(p.pool_type, 'season') AS pool_type,
             p.primary_team,
             p.primary_sport_team_id,
@@ -213,6 +214,7 @@ const loadAccessiblePool = async (client: PoolClient, poolId: number, userId: nu
     `SELECT p.id,
             p.pool_name,
             p.season,
+            p.team_id,
             COALESCE(p.pool_type, 'season') AS pool_type,
             p.primary_team,
             p.primary_sport_team_id,
@@ -302,6 +304,7 @@ const loadPoolByDisplayToken = async (client: PoolClient, displayToken: string) 
     `SELECT p.id,
             p.pool_name,
             p.season,
+            p.team_id,
             COALESCE(p.pool_type, 'season') AS pool_type,
             p.primary_team,
             p.primary_sport_team_id,
@@ -1152,7 +1155,9 @@ landingRouter.get('/display/:displayToken', async (req, res) => {
       await ensureDisplayAdvertisingSupport(client);
       const games = await loadPoolGames(client, Number(pool.id));
       const simulationStatus = await getPoolSimulationStatus(client, Number(pool.id)).catch(() => null);
-      const { settings: displayAdSettings, ads: displayAds } = await loadDisplayAdvertising(client);
+      const { settings: displayAdSettings, ads: displayAds } = await loadDisplayAdvertising(client, {
+        organizationId: Number(pool.team_id ?? 0) || null
+      });
       const selectedGameId = pickDisplayGameId(
         games as Array<{
           id: number;

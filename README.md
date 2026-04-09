@@ -106,9 +106,14 @@ npm run test:run
 
 # Run tests with UI
 npm run test:ui
+
+# Apply migrations to the isolated test database
+npm run db:migrate:test
 ```
 
-> The test runner now auto-cleans the dedicated `*_test` database before each run so automated test data does not keep piling up.
+> Automated tests only use the dedicated `TEST_DATABASE_URL` / `*_test` database and will now **refuse to touch your development data** if that isolated database is unavailable.
+>
+> First-time local setup: create a separate test database such as `devdb_test`, or point `TEST_DATABASE_URL` at any safe isolated PostgreSQL database. Use `npm run db:migrate:test` instead of temporarily overriding `DATABASE_URL` in your shell.
 
 ### Clean Local Data Quickly
 

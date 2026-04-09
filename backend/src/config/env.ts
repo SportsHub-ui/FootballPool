@@ -6,6 +6,14 @@ const isProductionLike =
   process.env.NODE_ENV === 'production' || process.env.APP_ENV === 'production';
 const isTestLike = process.env.NODE_ENV === 'test' || process.env.APP_ENV === 'test';
 
+const resolveDatabaseName = (value: string): string => {
+  try {
+    return decodeURIComponent(new URL(value).pathname.replace(/^\//, '') || 'postgres');
+  } catch {
+    return '';
+  }
+};
+
 // Try common locations so running from repo root or backend folder both work.
 const envPaths = [
   ...(isTestLike
@@ -32,6 +40,11 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   JWT_SECRET: z.string().min(1),
   APP_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  ALLOW_TEST_DATABASE_IN_DEV: z
+    .enum(['true', 'false'])
+    .optional()
+    .default('false')
+    .transform((value) => value === 'true'),
   SCORE_INGEST_ENABLED: z
     .enum(['true', 'false'])
     .optional()
@@ -71,6 +84,14 @@ if (!parsed.success) {
   const missing = parsed.error.issues.map((issue) => issue.path.join('.')).join(', ');
   throw new Error(
     `Missing required environment variables: ${missing}. Create backend/.env from backend/.env.example and set DATABASE_URL and JWT_SECRET.`
+  );
+}
+
+const databaseName = resolveDatabaseName(parsed.data.DATABASE_URL);
+
+if (!isTestLike && !parsed.data.ALLOW_TEST_DATABASE_IN_DEV && /test/i.test(databaseName)) {
+  throw new Error(
+    `DATABASE_URL is pointing at test database "${databaseName}" while APP_ENV=${parsed.data.APP_ENV}. Start a fresh terminal or run Remove-Item Env:DATABASE_URL so the backend uses your normal development database instead.`
   );
 }
 

@@ -2,11 +2,18 @@ import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import type { LandingPool } from './LandingMetrics'
 
+type DisplayAdPlacement = 'sidebar' | 'banner'
+
 type DisplayAdSettings = {
   adsEnabled: boolean
   frequencySeconds: number
   durationSeconds: number
   shrinkPercent: number
+  sidebarCount: number
+  bannerCount: number
+  defaultBannerMessage: string
+  hideAdsForOrganization: boolean
+  organizationId?: number | null
 }
 
 type DisplayAdRecord = {
@@ -18,10 +25,13 @@ type DisplayAdRecord = {
   accentColor: string | null
   activeFlg: boolean
   sortOrder: number
+  placement: DisplayAdPlacement
+  organizationId: number | null
+  organizationName?: string | null
 }
 
 type MarketingResponse = {
-  settings: DisplayAdSettings
+  settings: Omit<DisplayAdSettings, 'defaultBannerMessage'> & { defaultBannerMessage: string | null }
   ads: DisplayAdRecord[]
 }
 
@@ -33,18 +43,28 @@ type Props = {
   onRequireSignIn: () => void
 }
 
+type ScopeOption = {
+  id: number | null
+  label: string
+}
+
 const DEFAULT_HERO_COLOR = '#8a8f98'
 const DEFAULT_HERO_ACCENT = '#ffffff'
 
-const buildEmptyAdForm = () => ({
+const buildEmptyAdForm = (organizationId: number | null = null) => ({
   title: '',
   body: '',
   footer: '',
   imageUrl: '',
   accentColor: '#ffd54f',
+  placement: 'sidebar' as DisplayAdPlacement,
+  organizationId,
   activeFlg: true,
   sortOrder: 0
 })
+
+const buildScopeQuery = (organizationId: number | null): string =>
+  organizationId != null ? `?organizationId=${organizationId}` : ''
 
 export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase, onRequireSignIn }: Props) {
   const [loading, setLoading] = useState(false)
@@ -53,13 +73,39 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
   const [notice, setNotice] = useState<string | null>(null)
   const [ads, setAds] = useState<DisplayAdRecord[]>([])
   const [selectedAdId, setSelectedAdId] = useState<number | null>(null)
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState<number | null>(null)
   const [settings, setSettings] = useState<DisplayAdSettings>({
     adsEnabled: false,
     frequencySeconds: 180,
     durationSeconds: 30,
-    shrinkPercent: 80
+    shrinkPercent: 80,
+    sidebarCount: 1,
+    bannerCount: 1,
+    defaultBannerMessage: '',
+    hideAdsForOrganization: false,
+    organizationId: null
   })
   const [adForm, setAdForm] = useState(buildEmptyAdForm())
+
+  const scopeOptions = useMemo<ScopeOption[]>(() => {
+    const seen = new Set<number>()
+    const options: ScopeOption[] = [{ id: null, label: 'Global defaults' }]
+
+    for (const pool of pools) {
+      const organizationId = Number(pool.team_id ?? 0)
+      if (!Number.isFinite(organizationId) || organizationId <= 0 || seen.has(organizationId)) {
+        continue
+      }
+
+      seen.add(organizationId)
+      options.push({
+        id: organizationId,
+        label: pool.team_name ?? `Organization ${organizationId}`
+      })
+    }
+
+    return options
+  }, [pools])
 
   const request = async <T,>(path: string, init?: RequestInit): Promise<T> => {
     const response = await fetch(`${apiBase}${path}`, init)
@@ -73,7 +119,7 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
     return data as T
   }
 
-  const loadMarketing = async (preferredAdId?: number | null) => {
+  const loadMarketing = async (preferredAdId?: number | null, organizationId: number | null = selectedOrganizationId) => {
     if (!token) {
       setAds([])
       setError('Sign in as an organizer to manage display advertising.')
@@ -84,12 +130,22 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
     setError(null)
 
     try {
-      const result = await request<MarketingResponse>('/api/setup/marketing/display', {
+      const result = await request<MarketingResponse>(`/api/setup/marketing/display${buildScopeQuery(organizationId)}`, {
         headers: authHeaders
       })
 
       setAds(result.ads)
-      setSettings(result.settings)
+      setSettings({
+        adsEnabled: Boolean(result.settings.adsEnabled),
+        frequencySeconds: Number(result.settings.frequencySeconds ?? 180) || 180,
+        durationSeconds: Number(result.settings.durationSeconds ?? 30) || 30,
+        shrinkPercent: Number(result.settings.shrinkPercent ?? 80) || 80,
+        sidebarCount: Number(result.settings.sidebarCount ?? 1) || 1,
+        bannerCount: Number(result.settings.bannerCount ?? 1) || 1,
+        defaultBannerMessage: result.settings.defaultBannerMessage ?? '',
+        hideAdsForOrganization: Boolean(result.settings.hideAdsForOrganization),
+        organizationId: organizationId ?? null
+      })
 
       const nextSelectedId =
         preferredAdId != null && result.ads.some((ad) => ad.id === preferredAdId)
@@ -107,10 +163,12 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
               footer: selectedAd.footer ?? '',
               imageUrl: selectedAd.imageUrl ?? '',
               accentColor: selectedAd.accentColor ?? '#ffd54f',
+              placement: selectedAd.placement ?? 'sidebar',
+              organizationId: selectedAd.organizationId ?? organizationId ?? null,
               activeFlg: selectedAd.activeFlg,
               sortOrder: selectedAd.sortOrder ?? 0
             }
-          : buildEmptyAdForm()
+          : buildEmptyAdForm(organizationId)
       )
     } catch (fetchError) {
       setAds([])
@@ -121,9 +179,9 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
   }
 
   useEffect(() => {
-    void loadMarketing(selectedAdId)
+    void loadMarketing(selectedAdId, selectedOrganizationId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token])
+  }, [token, selectedOrganizationId])
 
   const heroPool = useMemo(() => {
     const defaultPool = pools.find((pool) => pool.default_flg)
@@ -138,6 +196,8 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
     }),
     [heroPool]
   )
+
+  const selectedScopeLabel = scopeOptions.find((option) => option.id === selectedOrganizationId)?.label ?? 'Global defaults'
 
   const selectedAd = useMemo(
     () => ads.find((ad) => ad.id === selectedAdId) ?? null,
@@ -154,10 +214,12 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
             footer: ad.footer ?? '',
             imageUrl: ad.imageUrl ?? '',
             accentColor: ad.accentColor ?? '#ffd54f',
+            placement: ad.placement ?? 'sidebar',
+            organizationId: ad.organizationId ?? selectedOrganizationId,
             activeFlg: ad.activeFlg,
             sortOrder: ad.sortOrder ?? 0
           }
-        : buildEmptyAdForm()
+        : buildEmptyAdForm(selectedOrganizationId)
     )
     setNotice(null)
     setError(null)
@@ -176,14 +238,21 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
     setNotice(null)
 
     try {
-      const result = await request<{ settings: DisplayAdSettings }>('/api/setup/marketing/display/settings', {
-        method: 'PUT',
-        headers: authHeaders,
-        body: JSON.stringify(settings)
-      })
+      const result = await request<{ settings: MarketingResponse['settings'] }>(
+        `/api/setup/marketing/display/settings${buildScopeQuery(selectedOrganizationId)}`,
+        {
+          method: 'PUT',
+          headers: authHeaders,
+          body: JSON.stringify(settings)
+        }
+      )
 
-      setSettings(result.settings)
-      setNotice('Display advertising settings saved.')
+      setSettings((current) => ({
+        ...current,
+        ...result.settings,
+        defaultBannerMessage: result.settings.defaultBannerMessage ?? ''
+      }))
+      setNotice(`${selectedScopeLabel} display settings saved.`)
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Failed to save display advertising settings')
     } finally {
@@ -204,22 +273,27 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
     setNotice(null)
 
     try {
+      const payload = {
+        ...adForm,
+        organizationId: selectedOrganizationId
+      }
+
       if (selectedAdId != null) {
         await request(`/api/setup/marketing/display/ads/${selectedAdId}`, {
           method: 'PATCH',
           headers: authHeaders,
-          body: JSON.stringify(adForm)
+          body: JSON.stringify(payload)
         })
         setNotice('Display ad updated.')
-        await loadMarketing(selectedAdId)
+        await loadMarketing(selectedAdId, selectedOrganizationId)
       } else {
         const result = await request<{ ad: DisplayAdRecord }>('/api/setup/marketing/display/ads', {
           method: 'POST',
           headers: authHeaders,
-          body: JSON.stringify(adForm)
+          body: JSON.stringify(payload)
         })
         setNotice('Display ad created.')
-        await loadMarketing(result.ad.id)
+        await loadMarketing(result.ad.id, selectedOrganizationId)
       }
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Failed to save display ad')
@@ -251,8 +325,8 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
 
       setNotice('Display ad deleted.')
       setSelectedAdId(null)
-      setAdForm(buildEmptyAdForm())
-      await loadMarketing(null)
+      setAdForm(buildEmptyAdForm(selectedOrganizationId))
+      await loadMarketing(null, selectedOrganizationId)
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : 'Failed to delete display ad')
     } finally {
@@ -266,7 +340,7 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
         <div>
           <p className="landing-eyebrow">Marketing</p>
           <h1>Display Advertising</h1>
-          <p>Manage the sponsor content and display cadence shown on the read-only TV screen.</p>
+          <p>Configure cleaner kiosk ad rails, placement, stacking, and organization-specific overrides.</p>
         </div>
       </div>
 
@@ -283,9 +357,35 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
 
       <div className="marketing-grid">
         <article className="panel">
-          <h2>Display timing</h2>
-          <p className="small">These settings control when the display board shrinks and how long sponsor content stays visible.</p>
+          <div className="marketing-panel-header">
+            <div>
+              <h2>Display layout</h2>
+              <p className="small">Pick a scope, then configure how the right and bottom ad bars behave on the kiosk.</p>
+            </div>
+          </div>
+
           <form className="form-grid" onSubmit={handleSaveSettings}>
+            <label className="field-block field-block-full">
+              <span>Advertising scope</span>
+              <select
+                value={selectedOrganizationId ?? ''}
+                onChange={(event) => {
+                  const nextOrganizationId = event.target.value ? Number(event.target.value) : null
+                  setSelectedOrganizationId(nextOrganizationId)
+                  setSelectedAdId(null)
+                  setNotice(null)
+                  setError(null)
+                }}
+                disabled={saving || loading}
+              >
+                {scopeOptions.map((option) => (
+                  <option key={option.id ?? 'global'} value={option.id ?? ''}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             <label className="checkbox-row marketing-checkbox-row">
               <input
                 type="checkbox"
@@ -295,6 +395,18 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
               />
               Enable advertising on the display screen
             </label>
+
+            {selectedOrganizationId != null ? (
+              <label className="checkbox-row marketing-checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={settings.hideAdsForOrganization}
+                  onChange={(event) => setSettings((current) => ({ ...current, hideAdsForOrganization: event.target.checked }))}
+                  disabled={saving}
+                />
+                Hide all ads for this organization
+              </label>
+            ) : null}
 
             <label className="field-block">
               <span>Frequency (seconds)</span>
@@ -332,9 +444,44 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
               />
             </label>
 
+            <label className="field-block">
+              <span>Right bar stacked ads</span>
+              <input
+                type="number"
+                min={0}
+                max={4}
+                value={settings.sidebarCount}
+                onChange={(event) => setSettings((current) => ({ ...current, sidebarCount: Number(event.target.value) || 0 }))}
+                disabled={saving}
+              />
+            </label>
+
+            <label className="field-block">
+              <span>Bottom bar tiles</span>
+              <input
+                type="number"
+                min={0}
+                max={6}
+                value={settings.bannerCount}
+                onChange={(event) => setSettings((current) => ({ ...current, bannerCount: Number(event.target.value) || 0 }))}
+                disabled={saving}
+              />
+            </label>
+
+            <label className="field-block field-block-full">
+              <span>Default bottom-bar message</span>
+              <textarea
+                rows={3}
+                value={settings.defaultBannerMessage}
+                onChange={(event) => setSettings((current) => ({ ...current, defaultBannerMessage: event.target.value }))}
+                placeholder="Welcome sponsors, event messaging, or a fallback announcement"
+                disabled={saving}
+              />
+            </label>
+
             <div className="modal-actions">
               <button className="primary" type="submit" disabled={saving || loading}>
-                {saving ? 'Saving...' : 'Save display settings'}
+                {saving ? 'Saving...' : `Save ${selectedScopeLabel} settings`}
               </button>
             </div>
           </form>
@@ -344,7 +491,11 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
           <div className="marketing-panel-header">
             <div>
               <h2>Creative library</h2>
-              <p className="small">Choose an ad to edit or start a new sponsor placement.</p>
+              <p className="small">
+                {selectedOrganizationId == null
+                  ? 'These are the global fallback ads used when an organization has no custom creatives.'
+                  : 'These creatives override the global set for this organization. If you leave this list empty, the global ads will still be used.'}
+              </p>
             </div>
             <button type="button" className="secondary" onClick={() => handleSelectAd(null)} disabled={saving}>
               New creative
@@ -353,7 +504,7 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
 
           <div className="marketing-ad-list">
             {ads.length === 0 ? (
-              <p className="small">No display ads saved yet. Add one to start rotating sponsor content.</p>
+              <p className="small">No ads are saved for {selectedScopeLabel.toLowerCase()} yet.</p>
             ) : (
               ads.map((ad) => (
                 <button
@@ -364,7 +515,9 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
                 >
                   <span>
                     <strong>{ad.title}</strong>
-                    <small>{ad.activeFlg ? 'Active' : 'Hidden'} • order {ad.sortOrder}</small>
+                    <small>
+                      {ad.placement === 'banner' ? 'Bottom bar' : 'Right bar'} • {ad.activeFlg ? 'Active' : 'Hidden'} • order {ad.sortOrder}
+                    </small>
                   </span>
                   <span className="marketing-ad-color" style={{ backgroundColor: ad.accentColor ?? '#ffd54f' }} />
                 </button>
@@ -375,7 +528,7 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
       </div>
 
       <article className="panel">
-        <h2>{selectedAd ? `Edit ad #${selectedAd.id}` : 'New display ad'}</h2>
+        <h2>{selectedAd ? `Edit ad #${selectedAd.id}` : `New ad for ${selectedScopeLabel}`}</h2>
         <form className="form-grid" onSubmit={handleSaveAd}>
           <label className="field-block">
             <span>Title</span>
@@ -389,14 +542,15 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
           </label>
 
           <label className="field-block">
-            <span>Accent color</span>
-            <input
-              value={adForm.accentColor}
-              onChange={(event) => setAdForm((current) => ({ ...current, accentColor: event.target.value }))}
-              placeholder="#ffd54f"
-              maxLength={32}
+            <span>Placement</span>
+            <select
+              value={adForm.placement}
+              onChange={(event) => setAdForm((current) => ({ ...current, placement: event.target.value as DisplayAdPlacement }))}
               disabled={saving}
-            />
+            >
+              <option value="sidebar">Right bar</option>
+              <option value="banner">Bottom bar</option>
+            </select>
           </label>
 
           <label className="field-block">
@@ -420,6 +574,25 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
               onChange={(event) => setAdForm((current) => ({ ...current, sortOrder: Number(event.target.value) || 0 }))}
               disabled={saving}
             />
+          </label>
+
+          <label className="field-block field-block-full marketing-color-row">
+            <span>Accent color</span>
+            <div className="marketing-color-inputs">
+              <input
+                type="color"
+                value={adForm.accentColor || '#ffd54f'}
+                onChange={(event) => setAdForm((current) => ({ ...current, accentColor: event.target.value }))}
+                disabled={saving}
+              />
+              <input
+                value={adForm.accentColor}
+                onChange={(event) => setAdForm((current) => ({ ...current, accentColor: event.target.value }))}
+                placeholder="#ffd54f"
+                maxLength={32}
+                disabled={saving}
+              />
+            </div>
           </label>
 
           <label className="field-block field-block-full">

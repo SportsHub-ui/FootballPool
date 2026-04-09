@@ -82,7 +82,7 @@ const main = async () => {
     throw new Error('DATABASE_URL or TEST_DATABASE_URL is required to run tests safely.');
   }
 
-  const fallbackDatabaseUrl = baseDatabaseUrl;
+  const configuredDatabaseName = decodeURIComponent(new URL(baseDatabaseUrl).pathname.replace(/^\//, '') || 'postgres');
   process.env.DATABASE_URL = deriveTestDatabaseUrl(baseDatabaseUrl);
 
   const targetDatabaseName = decodeURIComponent(new URL(process.env.DATABASE_URL).pathname.replace(/^\//, '') || 'postgres');
@@ -92,20 +92,11 @@ const main = async () => {
     await ensureDatabaseExists(process.env.DATABASE_URL);
     await cleanDatabase(process.env.DATABASE_URL, { target: 'test' });
   } catch (error) {
-    process.env.DATABASE_URL = fallbackDatabaseUrl;
+    process.env.FOOTBALL_POOL_DISABLE_TEST_RESET = 'true';
 
-    try {
-      await cleanDatabase(fallbackDatabaseUrl, { target: 'dev' });
-      process.env.FOOTBALL_POOL_ALLOW_DEV_TEST_RESET = 'true';
-      console.warn(
-        `[test-runner] Could not provision ${targetDatabaseName}; falling back to a cleaned development database for this run. ${error instanceof Error ? error.message : String(error)}`
-      );
-    } catch (fallbackCleanupError) {
-      process.env.FOOTBALL_POOL_DISABLE_TEST_RESET = 'true';
-      console.warn(
-        `[test-runner] Could not provision or clean ${targetDatabaseName}; running in non-destructive mode against the configured database. ${fallbackCleanupError instanceof Error ? fallbackCleanupError.message : String(fallbackCleanupError)}`
-      );
-    }
+    throw new Error(
+      `[test-runner] Refusing to run automated tests against ${configuredDatabaseName} because the dedicated test database ${targetDatabaseName} could not be prepared. Create ${targetDatabaseName} manually or set TEST_DATABASE_URL to a safe isolated database. ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 
   runCommand(process.execPath, [path.join(rootDir, 'scripts', 'run-migrations.js')]);
