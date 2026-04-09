@@ -292,31 +292,50 @@ const resolveDisplayRefreshSeconds = (value: string | null | undefined): number 
   return parsed
 }
 
-const normalizeDisplayAdSettings = (value?: Partial<DisplayAdSettings> | null): DisplayAdSettings => ({
-  adsEnabled: Boolean(value?.adsEnabled ?? DEFAULT_DISPLAY_AD_SETTINGS.adsEnabled),
-  frequencySeconds: Math.min(
-    3600,
-    Math.max(15, Number(value?.frequencySeconds ?? DEFAULT_DISPLAY_AD_SETTINGS.frequencySeconds) || DEFAULT_DISPLAY_AD_SETTINGS.frequencySeconds)
-  ),
-  durationSeconds: Math.min(
-    600,
-    Math.max(5, Number(value?.durationSeconds ?? DEFAULT_DISPLAY_AD_SETTINGS.durationSeconds) || DEFAULT_DISPLAY_AD_SETTINGS.durationSeconds)
-  ),
-  shrinkPercent: Math.min(
-    95,
-    Math.max(50, Number(value?.shrinkPercent ?? DEFAULT_DISPLAY_AD_SETTINGS.shrinkPercent) || DEFAULT_DISPLAY_AD_SETTINGS.shrinkPercent)
-  ),
-  sidebarCount: Math.min(
-    4,
-    Math.max(0, Number(value?.sidebarCount ?? DEFAULT_DISPLAY_AD_SETTINGS.sidebarCount) || DEFAULT_DISPLAY_AD_SETTINGS.sidebarCount)
-  ),
-  bannerCount: Math.min(
-    6,
-    Math.max(0, Number(value?.bannerCount ?? DEFAULT_DISPLAY_AD_SETTINGS.bannerCount) || DEFAULT_DISPLAY_AD_SETTINGS.bannerCount)
-  ),
-  defaultBannerMessage: (value?.defaultBannerMessage ?? DEFAULT_DISPLAY_AD_SETTINGS.defaultBannerMessage).toString().trim(),
-  hideAdsForOrganization: Boolean(value?.hideAdsForOrganization ?? DEFAULT_DISPLAY_AD_SETTINGS.hideAdsForOrganization)
-})
+const normalizeDisplayAdSettings = (
+  value?: Partial<DisplayAdSettings> | null,
+  items?: DisplayAdItem[] | null
+): DisplayAdSettings => {
+  const adItems = Array.isArray(items) ? items : []
+  const inferredSidebarCount = Math.min(4, Math.max(1, adItems.filter((item) => (item.placement ?? 'sidebar') === 'sidebar').length || 1))
+  const inferredBannerCount = Math.min(6, Math.max(1, adItems.filter((item) => item.placement === 'banner').length || 1))
+
+  return {
+    adsEnabled: Boolean(value?.adsEnabled ?? DEFAULT_DISPLAY_AD_SETTINGS.adsEnabled),
+    frequencySeconds: Math.min(
+      3600,
+      Math.max(15, Number(value?.frequencySeconds ?? DEFAULT_DISPLAY_AD_SETTINGS.frequencySeconds) || DEFAULT_DISPLAY_AD_SETTINGS.frequencySeconds)
+    ),
+    durationSeconds: Math.min(
+      600,
+      Math.max(5, Number(value?.durationSeconds ?? DEFAULT_DISPLAY_AD_SETTINGS.durationSeconds) || DEFAULT_DISPLAY_AD_SETTINGS.durationSeconds)
+    ),
+    shrinkPercent: Math.min(
+      95,
+      Math.max(50, Number(value?.shrinkPercent ?? DEFAULT_DISPLAY_AD_SETTINGS.shrinkPercent) || DEFAULT_DISPLAY_AD_SETTINGS.shrinkPercent)
+    ),
+    sidebarCount: Math.min(
+      4,
+      Math.max(
+        0,
+        Number(
+          value?.sidebarCount ?? (adItems.some((item) => (item.placement ?? 'sidebar') === 'sidebar') ? inferredSidebarCount : DEFAULT_DISPLAY_AD_SETTINGS.sidebarCount)
+        ) || 0
+      )
+    ),
+    bannerCount: Math.min(
+      6,
+      Math.max(
+        0,
+        Number(
+          value?.bannerCount ?? (adItems.some((item) => item.placement === 'banner') ? inferredBannerCount : DEFAULT_DISPLAY_AD_SETTINGS.bannerCount)
+        ) || 0
+      )
+    ),
+    defaultBannerMessage: (value?.defaultBannerMessage ?? DEFAULT_DISPLAY_AD_SETTINGS.defaultBannerMessage).toString().trim(),
+    hideAdsForOrganization: Boolean(value?.hideAdsForOrganization ?? DEFAULT_DISPLAY_AD_SETTINGS.hideAdsForOrganization)
+  }
+}
 
 const normalizeDisplayAdItems = (value?: DisplayAdItem[] | null): DisplayAdItem[] => {
   if (!Array.isArray(value)) {
@@ -802,7 +821,7 @@ export function LandingPage() {
       const launch = data as DisplayBoardLaunchResponse
       const linkedPool = launch.pool ?? null
       const nextDisplayAdItems = normalizeDisplayAdItems(launch.displayAds)
-      const nextDisplayAdSettings = normalizeDisplayAdSettings(launch.displayAdSettings)
+      const nextDisplayAdSettings = normalizeDisplayAdSettings(launch.displayAdSettings, nextDisplayAdItems)
       const nextDisplayFallbackEnabled = Boolean(nextDisplayAdSettings.defaultBannerMessage) && nextDisplayAdSettings.bannerCount > 0
       const nextDisplayAdInventoryCount = nextDisplayAdItems.length + (nextDisplayFallbackEnabled ? 1 : 0)
 
