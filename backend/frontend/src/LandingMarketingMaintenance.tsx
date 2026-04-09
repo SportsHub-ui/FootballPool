@@ -51,6 +51,13 @@ type ScopeOption = {
 const DEFAULT_HERO_COLOR = '#8a8f98'
 const DEFAULT_HERO_ACCENT = '#ffffff'
 
+const resolveImageUrl = (apiBase: string, value: string): string => {
+  if (!value) return ''
+  if (value.startsWith('http://') || value.startsWith('https://')) return value
+  if (value.startsWith('/')) return `${apiBase}${value}`
+  return `${apiBase}/images/${value}`
+}
+
 const buildEmptyAdForm = (organizationId: number | null = null) => ({
   title: '',
   body: '',
@@ -86,6 +93,8 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
     organizationId: null
   })
   const [adForm, setAdForm] = useState(buildEmptyAdForm())
+  const [adImageUpload, setAdImageUpload] = useState<File | null>(null)
+  const [uploadingImage, setUploadingImage] = useState(false)
 
   const scopeOptions = useMemo<ScopeOption[]>(() => {
     const seen = new Set<number>()
@@ -206,6 +215,7 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
 
   const handleSelectAd = (ad: DisplayAdRecord | null) => {
     setSelectedAdId(ad?.id ?? null)
+    setAdImageUpload(null)
     setAdForm(
       ad
         ? {
@@ -257,6 +267,61 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
       setError(saveError instanceof Error ? saveError.message : 'Failed to save display advertising settings')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const handleUploadAdImage = async (): Promise<void> => {
+    if (!adImageUpload) {
+      setError('Choose an image file first.')
+      return
+    }
+
+    if (!token) {
+      setError('Sign in as an organizer to upload ad images.')
+      onRequireSignIn()
+      return
+    }
+
+    setUploadingImage(true)
+    setError(null)
+    setNotice(null)
+
+    try {
+      const body = new FormData()
+      body.append('image', adImageUpload)
+
+      const uploadHeaders: Record<string, string> = {}
+      if (authHeaders.Authorization) {
+        uploadHeaders.Authorization = authHeaders.Authorization
+      }
+
+      const response = await fetch(`${apiBase}/api/setup/images/upload`, {
+        method: 'POST',
+        headers: uploadHeaders,
+        body
+      })
+
+      const text = await response.text()
+      let data: { error?: string; filePath?: string } = {}
+
+      try {
+        data = text ? JSON.parse(text) : {}
+      } catch {
+        data = { error: `Upload failed with status ${response.status}` }
+      }
+
+      if (!response.ok) {
+        throw new Error(data.error || `Failed to upload image (status ${response.status})`)
+      }
+
+      const storedPath = (data.filePath ?? '').toString().trim()
+      setAdForm((current) => ({ ...current, imageUrl: storedPath }))
+      setAdImageUpload(null)
+      setNotice('Image uploaded and linked to this ad.')
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : 'Failed to upload image')
+    } finally {
+      setUploadingImage(false)
     }
   }
 
@@ -373,10 +438,11 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
                   const nextOrganizationId = event.target.value ? Number(event.target.value) : null
                   setSelectedOrganizationId(nextOrganizationId)
                   setSelectedAdId(null)
+                  setAdImageUpload(null)
                   setNotice(null)
                   setError(null)
                 }}
-                disabled={saving || loading}
+                disabled={saving || loading || uploadingImage}
               >
                 {scopeOptions.map((option) => (
                   <option key={option.id ?? 'global'} value={option.id ?? ''}>
@@ -558,11 +624,51 @@ export function LandingMarketingMaintenance({ pools, token, authHeaders, apiBase
             <input
               value={adForm.imageUrl}
               onChange={(event) => setAdForm((current) => ({ ...current, imageUrl: event.target.value }))}
-              placeholder="https://example.com/ad.jpg or /images/your-file.png"
+              placeholder="https://example.com/ad.jpg or /api/setup/images/123/file"
               maxLength={500}
-              disabled={saving}
+              disabled={saving || uploadingImage}
             />
           </label>
+
+          <div className="field-block">
+            <span>Selected image</span>
+            <div className="selected-image-preview">
+              {adForm.imageUrl ? (
+                <img src={resolveImageUrl(apiBase, adForm.imageUrl)} alt={adForm.title || 'Selected ad image'} />
+              ) : (
+                <span>No image selected</span>
+              )}
+            </div>
+          </div>
+
+          <label className="field-block field-block-full">
+            <span>Upload image from your computer</span>
+            <input
+              type="file"
+              accept=".png,.jpg,.jpeg,.webp,.gif,.svg,image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+              onChange={(event) => setAdImageUpload(event.target.files?.[0] ?? null)}
+              disabled={saving || uploadingImage}
+            />
+          </label>
+
+          <div className="modal-actions">
+            <button type="button" className="secondary compact" onClick={() => void handleUploadAdImage()} disabled={saving || uploadingImage || !adImageUpload}>
+              {uploadingImage ? 'Uploading...' : 'Upload selected image'}
+            </button>
+            {adForm.imageUrl ? (
+              <button
+                type="button"
+                className="secondary compact"
+                onClick={() => {
+                  setAdImageUpload(null)
+                  setAdForm((current) => ({ ...current, imageUrl: '' }))
+                }}
+                disabled={saving || uploadingImage}
+              >
+                Remove image
+              </button>
+            ) : null}
+          </div>
 
           <label className="field-block">
             <span>Sort order</span>
