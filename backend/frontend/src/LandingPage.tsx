@@ -1822,118 +1822,244 @@ export function LandingPage() {
               ) : null}
 
               <div className="pool-board-main">
-                <div className="pool-board-brand">
-                  <img src={logoSrc} alt={selectedPool?.team_name ?? 'Football Pool'} />
-                </div>
-
-                <div className="pool-board-grid-wrap">
-                  <div className="board-axis-title board-axis-top" style={{ backgroundColor: primaryBrand.color, color: primaryBrand.accent }}>
-                    {primaryBrand.logo ? <img className="axis-team-logo" src={primaryBrand.logo} alt={primaryTeamLabel} /> : null}
-                    <span>{primaryTeamLabel}</span>
+                {!displayOnlyMode ? (
+                  <div className="pool-board-brand">
+                    <img src={logoSrc} alt={selectedPool?.team_name ?? 'Football Pool'} />
                   </div>
+                ) : null}
 
-                  <div className={`board-top-digits ${showQuarterSummaries ? 'with-quarter-summaries' : ''}`}>
-                    {topDigits.map((digit, index) => (
-                      <div key={`top-digit-${index}`} className="digit-cell">{digit}</div>
-                    ))}
-                  </div>
-
-                  <div className={`board-middle ${showQuarterSummaries ? 'with-quarter-summaries' : ''}`}>
-                    <div
-                      className="board-axis-title board-axis-left"
-                      style={selectedGame ? { backgroundColor: opponentBrand.color, color: opponentBrand.accent } : undefined}
-                    >
-                      {selectedGame && opponentBrand.logo ? <img className="axis-team-logo" src={opponentBrand.logo} alt={opponentTeamLabel} /> : null}
-                      <span>{opponentTeamLabel}</span>
-                    </div>
-
-                    <div className="board-grid">
-                      {boardRows.map((row, rowIndex) => (
-                        <div key={`landing-row-${rowIndex}`} className="board-row">
-                          <div className="digit-cell digit-row">{leftDigits[rowIndex]}</div>
-
-                          {row.map((square) => {
-                            const hasWeekWin = square.current_game_won > 0
-                            const hasSeasonWin = square.season_won_total > 0
-                            const isCurrentLeader = Boolean(square.is_current_score_leader)
-                            const winClass = hasWeekWin ? 'win-3' : hasSeasonWin ? 'win-1' : 'win-0'
-                            const winStateClass = hasWeekWin ? 'is-week-win' : hasSeasonWin ? 'is-season-win' : ''
-                            const isSelectedSquare = selectedSquare === square.square_num
-                            const displayOwnerName = displayOnlyMode
-                              ? `${square.participant_first_name ?? ''} ${square.participant_last_name ? `${square.participant_last_name.charAt(0)}.` : ''}`.trim()
-                              : ''
-                            const displayOwnerLabel = displayOwnerName || square.participant_first_name || square.participant_last_name || 'Assigned'
-                            const showPayoutTooltip = !displayOnlyMode && (hasWeekWin || hasSeasonWin || isCurrentLeader)
-                            const squareTooltip = showPayoutTooltip
-                              ? `${isCurrentLeader ? 'Currently leading • ' : ''}Week: ${formatBoardMoney(square.current_game_won)} • YTD: ${formatBoardMoney(square.season_won_total)}${hasActiveSelection ? ' • Click to manage assignment' : ''}`
-                              : undefined
-
-                            return (
-                              <button
-                                key={square.square_num}
-                                type="button"
-                                className={`landing-square-card ${square.participant_id ? 'owned' : 'open'} ${square.paid_flg ? 'paid' : ''} ${winClass} ${winStateClass} ${isCurrentLeader ? 'is-current-win' : ''} ${isSelectedSquare ? 'is-selected' : ''} ${hasActiveSelection ? 'is-manageable' : ''}`}
-                                onClick={hasActiveSelection ? () => void handleOpenSquareAssignment(square) : undefined}
-                                aria-label={squareTooltip}
-                              >
-                                {square.participant_id ? (
-                                  <span className={`square-owner ${displayOnlyMode ? 'is-display-only' : ''}`}>
-                                    <span>{displayOnlyMode ? displayOwnerLabel : square.participant_first_name ?? ''}</span>
-                                    {!displayOnlyMode ? <span>{square.participant_last_name ?? ''}</span> : null}
-                                    {!displayOnlyMode ? <span className="square-player-num">{square.player_jersey_num != null ? `#${square.player_jersey_num}` : ''}</span> : null}
-                                  </span>
-                                ) : (
-                                  <span className="square-open-number">{square.square_num}</span>
-                                )}
-
-                                {showPayoutTooltip ? (
-                                  <span className="square-hover-tooltip" aria-hidden="true">
-                                    <span><strong>Week</strong>{formatBoardMoney(square.current_game_won)}</span>
-                                    <span><strong>YTD</strong>{formatBoardMoney(square.season_won_total)}</span>
-                                  </span>
-                                ) : null}
-                              </button>
-                            )
-                          })}
+                <div className={`pool-board-grid-wrap ${displayOnlyMode ? 'is-display-only' : ''}`}>
+                  {displayOnlyMode ? (
+                    <div className={`board-display-shell ${showQuarterSummaries ? 'with-quarter-summaries' : ''}`}>
+                      <div className="board-display-main">
+                        <div className="board-display-logo">
+                          {logoSrc ? (
+                            <img src={logoSrc} alt={selectedPool?.team_name ?? 'Football Pool'} />
+                          ) : (
+                            <div className="pool-board-logo-fallback">{selectedPool?.team_name ?? 'Football Pool'}</div>
+                          )}
                         </div>
-                      ))}
+
+                        <div className="board-axis-title board-axis-top" style={{ backgroundColor: primaryBrand.color, color: primaryBrand.accent }}>
+                          {primaryBrand.logo ? <img className="axis-team-logo" src={primaryBrand.logo} alt={primaryTeamLabel} /> : null}
+                          <span>{primaryTeamLabel}</span>
+                        </div>
+
+                        <div className="board-top-digits">
+                          {topDigits.map((digit, index) => (
+                            <div key={`top-digit-${index}`} className="digit-cell">{digit}</div>
+                          ))}
+                        </div>
+
+                        <div className="board-middle">
+                          <div
+                            className="board-axis-title board-axis-left"
+                            style={selectedGame ? { backgroundColor: opponentBrand.color, color: opponentBrand.accent } : undefined}
+                          >
+                            {selectedGame && opponentBrand.logo ? <img className="axis-team-logo" src={opponentBrand.logo} alt={opponentTeamLabel} /> : null}
+                            <span>{opponentTeamLabel}</span>
+                          </div>
+
+                          <div className="board-grid">
+                            {boardRows.map((row, rowIndex) => (
+                              <div key={`landing-row-${rowIndex}`} className="board-row">
+                                <div className="digit-cell digit-row">{leftDigits[rowIndex]}</div>
+
+                                {row.map((square) => {
+                                  const hasWeekWin = square.current_game_won > 0
+                                  const hasSeasonWin = square.season_won_total > 0
+                                  const isCurrentLeader = Boolean(square.is_current_score_leader)
+                                  const winClass = hasWeekWin ? 'win-3' : hasSeasonWin ? 'win-1' : 'win-0'
+                                  const winStateClass = hasWeekWin ? 'is-week-win' : hasSeasonWin ? 'is-season-win' : ''
+                                  const isSelectedSquare = selectedSquare === square.square_num
+                                  const displayOwnerName = displayOnlyMode
+                                    ? `${square.participant_first_name ?? ''} ${square.participant_last_name ? `${square.participant_last_name.charAt(0)}.` : ''}`.trim()
+                                    : ''
+                                  const displayOwnerLabel = displayOwnerName || square.participant_first_name || square.participant_last_name || 'Assigned'
+                                  const showPayoutTooltip = !displayOnlyMode && (hasWeekWin || hasSeasonWin || isCurrentLeader)
+                                  const squareTooltip = showPayoutTooltip
+                                    ? `${isCurrentLeader ? 'Currently leading • ' : ''}Week: ${formatBoardMoney(square.current_game_won)} • YTD: ${formatBoardMoney(square.season_won_total)}${hasActiveSelection ? ' • Click to manage assignment' : ''}`
+                                    : undefined
+
+                                  return (
+                                    <button
+                                      key={square.square_num}
+                                      type="button"
+                                      className={`landing-square-card ${square.participant_id ? 'owned' : 'open'} ${square.paid_flg ? 'paid' : ''} ${winClass} ${winStateClass} ${isCurrentLeader ? 'is-current-win' : ''} ${isSelectedSquare ? 'is-selected' : ''} ${hasActiveSelection ? 'is-manageable' : ''}`}
+                                      onClick={hasActiveSelection ? () => void handleOpenSquareAssignment(square) : undefined}
+                                      aria-label={squareTooltip}
+                                    >
+                                      {square.participant_id ? (
+                                        <span className={`square-owner ${displayOnlyMode ? 'is-display-only' : ''}`}>
+                                          <span>{displayOnlyMode ? displayOwnerLabel : square.participant_first_name ?? ''}</span>
+                                          {!displayOnlyMode ? <span>{square.participant_last_name ?? ''}</span> : null}
+                                          {!displayOnlyMode ? <span className="square-player-num">{square.player_jersey_num != null ? `#${square.player_jersey_num}` : ''}</span> : null}
+                                        </span>
+                                      ) : (
+                                        <span className="square-open-number">{square.square_num}</span>
+                                      )}
+
+                                      {showPayoutTooltip ? (
+                                        <span className="square-hover-tooltip" aria-hidden="true">
+                                          <span><strong>Week</strong>{formatBoardMoney(square.current_game_won)}</span>
+                                          <span><strong>YTD</strong>{formatBoardMoney(square.season_won_total)}</span>
+                                        </span>
+                                      ) : null}
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {showQuarterSummaries ? (
+                        <aside className="board-quarter-summary-panel" aria-label="Current score winners and leaders">
+                          {quarterSummaries.map((summary) => (
+                            <article key={summary.id} className={`board-quarter-card is-${summary.status}`}>
+                              <div className="board-quarter-card-header">
+                                <span>{summary.label}</span>
+                                <span className="board-quarter-card-square">{summary.squareNum != null ? `Sq ${summary.squareNum}` : '—'}</span>
+                              </div>
+
+                              <div className="board-quarter-scoreline">
+                                <div>
+                                  {primaryTeamLogo ? (
+                                    <img src={primaryTeamLogo} alt={primaryTeamLabel} className="quarter-team-logo" />
+                                  ) : null}
+                                  <span>{summary.primaryScore ?? '—'}</span>
+                                </div>
+                                <div>
+                                  {opponentTeamLogo ? (
+                                    <img src={opponentTeamLogo} alt={opponentTeamLabel} className="quarter-team-logo" />
+                                  ) : null}
+                                  <span>{summary.opponentScore ?? '—'}</span>
+                                </div>
+                              </div>
+
+                              <div className="board-quarter-winner">
+                                <span className="board-quarter-winner-label">
+                                  {summary.status === 'completed' ? 'Winner' : summary.status === 'active' ? 'Leader' : 'Pending'}
+                                </span>
+                                <strong>{summary.ownerName}</strong>
+                              </div>
+                            </article>
+                          ))}
+                        </aside>
+                      ) : null}
                     </div>
+                  ) : (
+                    <>
+                      <div className="board-axis-title board-axis-top" style={{ backgroundColor: primaryBrand.color, color: primaryBrand.accent }}>
+                        {primaryBrand.logo ? <img className="axis-team-logo" src={primaryBrand.logo} alt={primaryTeamLabel} /> : null}
+                        <span>{primaryTeamLabel}</span>
+                      </div>
 
-                    {showQuarterSummaries ? (
-                      <aside className="board-quarter-summary-panel" aria-label="Current score winners and leaders">
-                        {quarterSummaries.map((summary) => (
-                          <article key={summary.id} className={`board-quarter-card is-${summary.status}`}>
-                            <div className="board-quarter-card-header">
-                              <span>{summary.label}</span>
-                              <span className="board-quarter-card-square">{summary.squareNum != null ? `Sq ${summary.squareNum}` : '—'}</span>
-                            </div>
-
-                            <div className="board-quarter-scoreline">
-                              <div>
-                                {primaryTeamLogo ? (
-                                  <img src={primaryTeamLogo} alt={primaryTeamLabel} className="quarter-team-logo" />
-                                ) : null}
-                                <span>{summary.primaryScore ?? '—'}</span>
-                              </div>
-                              <div>
-                                {opponentTeamLogo ? (
-                                  <img src={opponentTeamLogo} alt={opponentTeamLabel} className="quarter-team-logo" />
-                                ) : null}
-                                <span>{summary.opponentScore ?? '—'}</span>
-                              </div>
-                            </div>
-
-                            <div className="board-quarter-winner">
-                              <span className="board-quarter-winner-label">
-                                {summary.status === 'completed' ? 'Winner' : summary.status === 'active' ? 'Leader' : 'Pending'}
-                              </span>
-                              <strong>{summary.ownerName}</strong>
-                            </div>
-                          </article>
+                      <div className={`board-top-digits ${showQuarterSummaries ? 'with-quarter-summaries' : ''}`}>
+                        {topDigits.map((digit, index) => (
+                          <div key={`top-digit-${index}`} className="digit-cell">{digit}</div>
                         ))}
-                      </aside>
-                    ) : null}
-                  </div>
+                      </div>
+
+                      <div className={`board-middle ${showQuarterSummaries ? 'with-quarter-summaries' : ''}`}>
+                        <div
+                          className="board-axis-title board-axis-left"
+                          style={selectedGame ? { backgroundColor: opponentBrand.color, color: opponentBrand.accent } : undefined}
+                        >
+                          {selectedGame && opponentBrand.logo ? <img className="axis-team-logo" src={opponentBrand.logo} alt={opponentTeamLabel} /> : null}
+                          <span>{opponentTeamLabel}</span>
+                        </div>
+
+                        <div className="board-grid">
+                          {boardRows.map((row, rowIndex) => (
+                            <div key={`landing-row-${rowIndex}`} className="board-row">
+                              <div className="digit-cell digit-row">{leftDigits[rowIndex]}</div>
+
+                              {row.map((square) => {
+                                const hasWeekWin = square.current_game_won > 0
+                                const hasSeasonWin = square.season_won_total > 0
+                                const isCurrentLeader = Boolean(square.is_current_score_leader)
+                                const winClass = hasWeekWin ? 'win-3' : hasSeasonWin ? 'win-1' : 'win-0'
+                                const winStateClass = hasWeekWin ? 'is-week-win' : hasSeasonWin ? 'is-season-win' : ''
+                                const isSelectedSquare = selectedSquare === square.square_num
+                                const displayOwnerName = displayOnlyMode
+                                  ? `${square.participant_first_name ?? ''} ${square.participant_last_name ? `${square.participant_last_name.charAt(0)}.` : ''}`.trim()
+                                  : ''
+                                const displayOwnerLabel = displayOwnerName || square.participant_first_name || square.participant_last_name || 'Assigned'
+                                const showPayoutTooltip = !displayOnlyMode && (hasWeekWin || hasSeasonWin || isCurrentLeader)
+                                const squareTooltip = showPayoutTooltip
+                                  ? `${isCurrentLeader ? 'Currently leading • ' : ''}Week: ${formatBoardMoney(square.current_game_won)} • YTD: ${formatBoardMoney(square.season_won_total)}${hasActiveSelection ? ' • Click to manage assignment' : ''}`
+                                  : undefined
+
+                                return (
+                                  <button
+                                    key={square.square_num}
+                                    type="button"
+                                    className={`landing-square-card ${square.participant_id ? 'owned' : 'open'} ${square.paid_flg ? 'paid' : ''} ${winClass} ${winStateClass} ${isCurrentLeader ? 'is-current-win' : ''} ${isSelectedSquare ? 'is-selected' : ''} ${hasActiveSelection ? 'is-manageable' : ''}`}
+                                    onClick={hasActiveSelection ? () => void handleOpenSquareAssignment(square) : undefined}
+                                    aria-label={squareTooltip}
+                                  >
+                                    {square.participant_id ? (
+                                      <span className={`square-owner ${displayOnlyMode ? 'is-display-only' : ''}`}>
+                                        <span>{displayOnlyMode ? displayOwnerLabel : square.participant_first_name ?? ''}</span>
+                                        {!displayOnlyMode ? <span>{square.participant_last_name ?? ''}</span> : null}
+                                        {!displayOnlyMode ? <span className="square-player-num">{square.player_jersey_num != null ? `#${square.player_jersey_num}` : ''}</span> : null}
+                                      </span>
+                                    ) : (
+                                      <span className="square-open-number">{square.square_num}</span>
+                                    )}
+
+                                    {showPayoutTooltip ? (
+                                      <span className="square-hover-tooltip" aria-hidden="true">
+                                        <span><strong>Week</strong>{formatBoardMoney(square.current_game_won)}</span>
+                                        <span><strong>YTD</strong>{formatBoardMoney(square.season_won_total)}</span>
+                                      </span>
+                                    ) : null}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          ))}
+                        </div>
+
+                        {showQuarterSummaries ? (
+                          <aside className="board-quarter-summary-panel" aria-label="Current score winners and leaders">
+                            {quarterSummaries.map((summary) => (
+                              <article key={summary.id} className={`board-quarter-card is-${summary.status}`}>
+                                <div className="board-quarter-card-header">
+                                  <span>{summary.label}</span>
+                                  <span className="board-quarter-card-square">{summary.squareNum != null ? `Sq ${summary.squareNum}` : '—'}</span>
+                                </div>
+
+                                <div className="board-quarter-scoreline">
+                                  <div>
+                                    {primaryTeamLogo ? (
+                                      <img src={primaryTeamLogo} alt={primaryTeamLabel} className="quarter-team-logo" />
+                                    ) : null}
+                                    <span>{summary.primaryScore ?? '—'}</span>
+                                  </div>
+                                  <div>
+                                    {opponentTeamLogo ? (
+                                      <img src={opponentTeamLogo} alt={opponentTeamLabel} className="quarter-team-logo" />
+                                    ) : null}
+                                    <span>{summary.opponentScore ?? '—'}</span>
+                                  </div>
+                                </div>
+
+                                <div className="board-quarter-winner">
+                                  <span className="board-quarter-winner-label">
+                                    {summary.status === 'completed' ? 'Winner' : summary.status === 'active' ? 'Leader' : 'Pending'}
+                                  </span>
+                                  <strong>{summary.ownerName}</strong>
+                                </div>
+                              </article>
+                            ))}
+                          </aside>
+                        ) : null}
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
                   </div>
