@@ -43,8 +43,21 @@ import {
   resetNotificationTemplateToGlobal,
   saveNotificationTemplate
 } from '../services/notificationTemplates';
+import {
+  createDisplayAd,
+  deleteDisplayAd,
+  ensureDisplayAdvertisingSupport,
+  loadDisplayAdvertising,
+  saveDisplayAdSettings,
+  updateDisplayAd
+} from '../services/displayAds';
 
 export const setupRouter = Router();
+
+const canBootstrapFirstOrganizer = async (client: PoolClient): Promise<boolean> => {
+  const result = await client.query<{ user_count: string }>(`SELECT COUNT(*)::text AS user_count FROM football_pool.users`);
+  return Number(result.rows[0]?.user_count ?? 0) === 0;
+};
 
 const imageDir = path.resolve(__dirname, '../../images');
 fs.mkdirSync(imageDir, { recursive: true });
@@ -362,6 +375,27 @@ const updateNotificationTemplateSchema = z.object({
   markupFormat: z.enum(notificationMarkupFormatValues).default('plain_text')
 });
 
+const displayAdIdParams = z.object({
+  adId: z.coerce.number().int().positive()
+});
+
+const updateDisplayAdSettingsSchema = z.object({
+  adsEnabled: z.boolean(),
+  frequencySeconds: z.number().int().min(15).max(3600),
+  durationSeconds: z.number().int().min(5).max(600),
+  shrinkPercent: z.number().int().min(50).max(95)
+});
+
+const saveDisplayAdSchema = z.object({
+  title: z.string().trim().min(1).max(160),
+  body: z.string().trim().max(4000).optional().or(z.literal('')),
+  footer: z.string().trim().max(255).optional().or(z.literal('')),
+  imageUrl: z.string().trim().max(500).optional().or(z.literal('')),
+  accentColor: z.string().trim().max(32).optional().or(z.literal('')),
+  activeFlg: z.boolean().optional().default(true),
+  sortOrder: z.number().int().min(0).max(999).optional().default(0)
+});
+
 const sportTeamQuerySchema = z.object({
   leagueCode: z.string().trim().max(16).optional()
 });
@@ -406,6 +440,40 @@ setupRouter.get('/images/:imageId/file', async (req, res) => {
       error: 'Failed to load image',
       detail: error instanceof Error ? error.message : 'Unknown error'
     });
+  }
+});
+
+setupRouter.use(async (req, res, next) => {
+  if (req.auth?.role === 'organizer') {
+    next();
+    return;
+  }
+
+  const isBootstrapUserCreate = req.method === 'POST' && req.path === '/users';
+
+  if (!isBootstrapUserCreate) {
+    next();
+    return;
+  }
+
+  const client = await db.connect();
+
+  try {
+    if (await canBootstrapFirstOrganizer(client)) {
+      req.auth = {
+        userId: 'bootstrap-organizer',
+        role: 'organizer'
+      };
+    }
+
+    next();
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to verify organizer bootstrap status',
+      detail: error instanceof Error ? error.message : 'Unknown error'
+    });
+  } finally {
+    client.release();
   }
 });
 
@@ -1104,6 +1172,137 @@ setupRouter.delete('/notifications/templates/:recipientScope/:notificationKind',
   } catch (error) {
     res.status(500).json({
       error: 'Failed to reset notification template',
+      detail: error instanceof Error ? error.message : 'Unknown error'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+setupRouter.get('/marketing/display', async (_req, res) => {
+  const client = await db.connect();
+
+  try {
+    await ensureDisplayAdvertisingSupport(client);
+    const result = await loadDisplayAdvertising(client, { includeInactive: true });
+    res.status(200).json(result);
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to load display marketing settings',
+      detail: error instanceof Error ? error.message : 'Unknown error'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+setupRouter.put('/marketing/display/settings', async (req, res) => {
+  const parsedBody = updateDisplayAdSettingsSchema.safeParse(req.body);
+
+  if (!parsedBody.success) {
+    res.status(400).json({ error: parsedBody.error.issues });
+    return;
+  }
+
+  const client = await db.connect();
+
+  try {
+    await ensureDisplayAdvertisingSupport(client);
+    const settings = await saveDisplayAdSettings(client, parsedBody.data);
+    res.status(200).json({ settings });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to save display marketing settings',
+      detail: error instanceof Error ? error.message : 'Unknown error'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+setupRouter.post('/marketing/display/ads', async (req, res) => {
+  const parsedBody = saveDisplayAdSchema.safeParse(req.body);
+
+  if (!parsedBody.success) {
+    res.status(400).json({ error: parsedBody.error.issues });
+    return;
+  }
+
+  const client = await db.connect();
+
+  try {
+    await ensureDisplayAdvertisingSupport(client);
+    const ad = await createDisplayAd(client, parsedBody.data);
+    res.status(201).json({ ad });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to create display ad',
+      detail: error instanceof Error ? error.message : 'Unknown error'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+setupRouter.patch('/marketing/display/ads/:adId', async (req, res) => {
+  const parsedParams = displayAdIdParams.safeParse(req.params);
+  const parsedBody = saveDisplayAdSchema.safeParse(req.body);
+
+  if (!parsedParams.success) {
+    res.status(400).json({ error: parsedParams.error.issues });
+    return;
+  }
+
+  if (!parsedBody.success) {
+    res.status(400).json({ error: parsedBody.error.issues });
+    return;
+  }
+
+  const client = await db.connect();
+
+  try {
+    await ensureDisplayAdvertisingSupport(client);
+    const ad = await updateDisplayAd(client, parsedParams.data.adId, parsedBody.data);
+
+    if (!ad) {
+      res.status(404).json({ error: 'Display ad not found' });
+      return;
+    }
+
+    res.status(200).json({ ad });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to update display ad',
+      detail: error instanceof Error ? error.message : 'Unknown error'
+    });
+  } finally {
+    client.release();
+  }
+});
+
+setupRouter.delete('/marketing/display/ads/:adId', async (req, res) => {
+  const parsedParams = displayAdIdParams.safeParse(req.params);
+
+  if (!parsedParams.success) {
+    res.status(400).json({ error: parsedParams.error.issues });
+    return;
+  }
+
+  const client = await db.connect();
+
+  try {
+    await ensureDisplayAdvertisingSupport(client);
+    const deleted = await deleteDisplayAd(client, parsedParams.data.adId);
+
+    if (!deleted) {
+      res.status(404).json({ error: 'Display ad not found' });
+      return;
+    }
+
+    res.status(200).json({ deleted: true });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to delete display ad',
       detail: error instanceof Error ? error.message : 'Unknown error'
     });
   } finally {

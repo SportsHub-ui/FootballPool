@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
 import { LandingMetrics } from './LandingMetrics'
+import { LandingMarketingMaintenance } from './LandingMarketingMaintenance'
 import { LandingNotificationTemplates } from './LandingNotificationTemplates'
 import { LandingPlayerMaintenance } from './LandingPlayerMaintenance'
 import { LandingPoolMaintenance } from './LandingPoolMaintenance'
@@ -100,6 +101,8 @@ type DisplayBoardLaunchResponse = {
   games: LandingGame[]
   selectedGameId: number | null
   board: LandingBoard | null
+  displayAds?: DisplayAdItem[]
+  displayAdSettings?: Partial<DisplayAdSettings> | null
 }
 
 type LandingUserOption = {
@@ -143,6 +146,22 @@ type TeamBrand = {
   logo: string
 }
 
+type DisplayAdItem = {
+  id: string | number
+  title: string
+  body?: string
+  footer?: string
+  imageUrl?: string
+  accentColor?: string
+}
+
+type DisplayAdSettings = {
+  adsEnabled: boolean
+  frequencySeconds: number
+  durationSeconds: number
+  shrinkPercent: number
+}
+
 const API_BASE = (import.meta.env.VITE_API_BASE_URL ?? '')
   .toString()
   .trim()
@@ -155,6 +174,12 @@ const DEFAULT_DISPLAY_REFRESH_SECONDS = Math.max(
   Number.parseInt((import.meta.env.VITE_DISPLAY_REFRESH_SECONDS ?? '30').toString(), 10) || 30
 )
 const DEFAULT_DISPLAY_TIME_ZONE = (import.meta.env.VITE_DISPLAY_TIME_ZONE ?? '').toString().trim()
+const DEFAULT_DISPLAY_AD_SETTINGS: DisplayAdSettings = {
+  adsEnabled: false,
+  frequencySeconds: 180,
+  durationSeconds: 30,
+  shrinkPercent: 80
+}
 
 const NFL_TEAM_BRANDS: TeamBrand[] = [
   { key: 'cardinals', color: '#97233f', accent: '#000000', logo: 'https://a.espncdn.com/i/teamlogos/nfl/500/ari.png' },
@@ -255,6 +280,39 @@ const resolveDisplayRefreshSeconds = (value: string | null | undefined): number 
   return parsed
 }
 
+const normalizeDisplayAdSettings = (value?: Partial<DisplayAdSettings> | null): DisplayAdSettings => ({
+  adsEnabled: Boolean(value?.adsEnabled ?? DEFAULT_DISPLAY_AD_SETTINGS.adsEnabled),
+  frequencySeconds: Math.min(
+    3600,
+    Math.max(15, Number(value?.frequencySeconds ?? DEFAULT_DISPLAY_AD_SETTINGS.frequencySeconds) || DEFAULT_DISPLAY_AD_SETTINGS.frequencySeconds)
+  ),
+  durationSeconds: Math.min(
+    600,
+    Math.max(5, Number(value?.durationSeconds ?? DEFAULT_DISPLAY_AD_SETTINGS.durationSeconds) || DEFAULT_DISPLAY_AD_SETTINGS.durationSeconds)
+  ),
+  shrinkPercent: Math.min(
+    95,
+    Math.max(50, Number(value?.shrinkPercent ?? DEFAULT_DISPLAY_AD_SETTINGS.shrinkPercent) || DEFAULT_DISPLAY_AD_SETTINGS.shrinkPercent)
+  )
+})
+
+const normalizeDisplayAdItems = (value?: DisplayAdItem[] | null): DisplayAdItem[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value
+    .map((item, index) => ({
+      id: item.id ?? `display-ad-${index}`,
+      title: (item.title ?? '').toString().trim(),
+      body: item.body?.toString().trim() || undefined,
+      footer: item.footer?.toString().trim() || undefined,
+      imageUrl: item.imageUrl?.toString().trim() || undefined,
+      accentColor: item.accentColor?.toString().trim() || undefined
+    }))
+    .filter((item) => item.title)
+}
+
 const formatDate = (value: string | null | undefined, options?: { timeZone?: string | null }): string => {
   const dateValue = value ? new Date(value) : new Date()
 
@@ -271,6 +329,34 @@ const formatClockTime = (value: Date, timeZone?: string | null): string => new I
   minute: '2-digit',
   timeZone: timeZone ?? undefined
 }).format(value)
+
+function DisplayAdCard({ ad, compact = false }: { ad: DisplayAdItem; compact?: boolean }) {
+  const imageSrc = ad.imageUrl ? resolveImageUrl(ad.imageUrl) : ''
+
+  return (
+    <article
+      className={`display-ad-card ${compact ? 'is-compact' : ''}`}
+      style={{ ['--display-ad-accent' as string]: ad.accentColor ?? '#ffd54f' }}
+    >
+      {imageSrc ? (
+        <div className="display-ad-card-visual">
+          <img src={imageSrc} alt={ad.title} className="display-ad-card-image" />
+        </div>
+      ) : (
+        <div className="display-ad-card-visual is-placeholder">
+          <span>AD</span>
+        </div>
+      )}
+
+      <div className="display-ad-card-copy">
+        <span className="display-ad-card-label">Sponsored</span>
+        <strong className="display-ad-card-title">{ad.title}</strong>
+        {ad.body ? <p className="display-ad-card-body">{ad.body}</p> : null}
+        {ad.footer ? <span className="display-ad-card-footer">{ad.footer}</span> : null}
+      </div>
+    </article>
+  )
+}
 
 const isCompletedGame = (game: LandingGame | null): boolean => {
   if (!game) return false
@@ -501,11 +587,15 @@ export function LandingPage() {
   })
   const displayOnlyMode = Boolean(displayToken)
   const [showLogin, setShowLogin] = useState(false)
-  const [activePage, setActivePage] = useState<'Squares' | 'Metrics' | 'Notifications' | 'Players' | 'Teams' | 'Pools' | 'Schedules' | 'Users'>('Squares')
+  const [activePage, setActivePage] = useState<'Squares' | 'Metrics' | 'Marketing' | 'Notifications' | 'Players' | 'Teams' | 'Pools' | 'Schedules' | 'Users'>('Squares')
   const [busy, setBusy] = useState<string | null>(null)
   const [loginError, setLoginError] = useState<string | null>(null)
   const [pageError, setPageError] = useState<string | null>(null)
   const [pageNotice, setPageNotice] = useState<string | null>(null)
+  const [displayAdVisible, setDisplayAdVisible] = useState(false)
+  const [activeDisplayAdIndex, setActiveDisplayAdIndex] = useState(0)
+  const [displayAdItems, setDisplayAdItems] = useState<DisplayAdItem[]>([])
+  const [displayAdSettings, setDisplayAdSettings] = useState<DisplayAdSettings>(DEFAULT_DISPLAY_AD_SETTINGS)
   const [loginForm, setLoginForm] = useState({ email: '', password: '' })
   const [pools, setPools] = useState<LandingPool[]>([])
   const [selectedPoolId, setSelectedPoolId] = useState<number | null>(null)
@@ -673,12 +763,20 @@ export function LandingPage() {
 
       const launch = data as DisplayBoardLaunchResponse
       const linkedPool = launch.pool ?? null
+      const nextDisplayAdItems = normalizeDisplayAdItems(launch.displayAds)
+      const nextDisplayAdSettings = normalizeDisplayAdSettings(launch.displayAdSettings)
 
       setPools(linkedPool ? [linkedPool] : [])
       setSelectedPoolId(linkedPool?.id ?? null)
       setGames(launch.games ?? [])
       setSelectedGameId(launch.selectedGameId ?? null)
       setBoard(launch.board ?? null)
+      setDisplayAdItems(nextDisplayAdItems)
+      setDisplayAdSettings(nextDisplayAdSettings)
+      setActiveDisplayAdIndex((current) => (nextDisplayAdItems.length > 0 ? current % nextDisplayAdItems.length : 0))
+      if (!nextDisplayAdSettings.adsEnabled || nextDisplayAdItems.length === 0) {
+        setDisplayAdVisible(false)
+      }
       setSimulationStatus(null)
       setLastDisplayRefreshAt(formatClockTime(new Date(), displayTimeZone))
     } catch (error) {
@@ -693,6 +791,9 @@ export function LandingPage() {
         setGames([])
         setSelectedGameId(null)
         setBoard(null)
+        setDisplayAdItems([])
+        setDisplayAdSettings(DEFAULT_DISPLAY_AD_SETTINGS)
+        setDisplayAdVisible(false)
       }
     } finally {
       if (quiet) {
@@ -831,6 +932,52 @@ export function LandingPage() {
       eventSource.close()
     }
   }, [activePage, board?.gameId, displayOnlyMode, displayRefreshSeconds, displayToken, games, selectedGameId, selectedPoolId, token])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !displayOnlyMode || !displayAdSettings.adsEnabled || displayAdItems.length === 0) {
+      setDisplayAdVisible(false)
+      setActiveDisplayAdIndex(0)
+      return
+    }
+
+    let showTimer: number | null = null
+    let hideTimer: number | null = null
+    let cancelled = false
+
+    const scheduleNextAdWindow = () => {
+      showTimer = window.setTimeout(() => {
+        if (cancelled) {
+          return
+        }
+
+        setDisplayAdVisible(true)
+
+        hideTimer = window.setTimeout(() => {
+          if (cancelled) {
+            return
+          }
+
+          setDisplayAdVisible(false)
+          setActiveDisplayAdIndex((current) => (current + 1) % displayAdItems.length)
+          scheduleNextAdWindow()
+        }, displayAdSettings.durationSeconds * 1000)
+      }, displayAdSettings.frequencySeconds * 1000)
+    }
+
+    scheduleNextAdWindow()
+
+    return () => {
+      cancelled = true
+
+      if (showTimer != null) {
+        window.clearTimeout(showTimer)
+      }
+
+      if (hideTimer != null) {
+        window.clearTimeout(hideTimer)
+      }
+    }
+  }, [displayAdItems.length, displayAdSettings.adsEnabled, displayAdSettings.durationSeconds, displayAdSettings.frequencySeconds, displayOnlyMode])
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -1246,6 +1393,14 @@ export function LandingPage() {
   }, [board, latestScoredQuarter, scoreSegments, selectedGame, selectedPool, simulationStatus])
 
   const showQuarterSummaries = quarterSummaries.length > 0
+  const showDisplayAds = displayOnlyMode && displayAdSettings.adsEnabled && displayAdItems.length > 0 && displayAdVisible
+  const activeDisplayAd = showDisplayAds
+    ? displayAdItems[activeDisplayAdIndex % displayAdItems.length] ?? null
+    : null
+  const secondaryDisplayAd = showDisplayAds && displayAdItems.length > 1
+    ? (displayAdItems[(activeDisplayAdIndex + 1) % displayAdItems.length] ?? activeDisplayAd)
+    : null
+  const displayAdScale = Math.min(0.95, Math.max(0.5, displayAdSettings.shrinkPercent / 100))
   const featuredDisplaySummary = useMemo(() => {
     if (!displayOnlyMode || quarterSummaries.length === 0) {
       return null
@@ -1293,7 +1448,7 @@ export function LandingPage() {
         <>
           <nav className="landing-nav-bar">
             <div className="landing-nav-links">
-              {(['Squares', 'Notifications', 'Players', 'Teams', 'Pools', 'Schedules', 'Users'] as const).map((item) => (
+              {(['Squares', 'Notifications', 'Marketing', 'Players', 'Teams', 'Pools', 'Schedules', 'Users'] as const).map((item) => (
                 <button
                   key={item}
                   type="button"
@@ -1325,7 +1480,7 @@ export function LandingPage() {
             <section className="landing-login-card">
               <div>
                 <h2>Sign in</h2>
-                <p>Access follower pools and keep your view personalized.</p>
+                <p>Use the email for an existing user. Any non-empty password works right now.</p>
               </div>
               <form className="landing-login-form" onSubmit={handleLogin}>
                 <input
@@ -1439,13 +1594,16 @@ export function LandingPage() {
 
           {selectedPool && board ? (
             <>
-              <div
-                className={`pool-board ${displayOnlyMode ? 'is-display-only' : ''}`}
-              style={{
-                ['--team-primary' as string]: board.teamPrimaryColor ?? primaryBrand.color,
-                ['--team-secondary' as string]: board.teamSecondaryColor ?? '#111'
-              }}
-            >
+              <div className={`display-ad-layout ${showDisplayAds ? 'is-ad-mode' : ''}`}>
+                <div className="display-board-stage">
+                  <div
+                    className={`pool-board ${displayOnlyMode ? 'is-display-only' : ''} ${showDisplayAds ? 'is-ad-mode' : ''}`}
+                  style={{
+                    ['--team-primary' as string]: board.teamPrimaryColor ?? primaryBrand.color,
+                    ['--team-secondary' as string]: board.teamSecondaryColor ?? '#111',
+                    ['--display-ad-scale' as string]: `${displayAdScale}`
+                  }}
+                >
               <div className="pool-board-header">
                 {!displayOnlyMode ? (
                   <button
@@ -1622,7 +1780,21 @@ export function LandingPage() {
                   </div>
                 </div>
               </div>
-            </div>
+                  </div>
+                </div>
+
+                {showDisplayAds && activeDisplayAd ? (
+                  <aside className="display-ad-sidebar" aria-label="Display advertising panel">
+                    <DisplayAdCard ad={activeDisplayAd} />
+                  </aside>
+                ) : null}
+
+                {showDisplayAds && secondaryDisplayAd ? (
+                  <section className="display-ad-banner" aria-label="Display advertising banner">
+                    <DisplayAdCard ad={secondaryDisplayAd} compact />
+                  </section>
+                ) : null}
+              </div>
 
               {!displayOnlyMode && board?.payoutSummary ? <PayoutSummaryPanel summary={board.payoutSummary} title="Pool payout schedule" /> : null}
             </>
@@ -1729,6 +1901,14 @@ export function LandingPage() {
           apiBase={API_BASE}
           selectedPoolId={selectedPoolId}
           onSelectPool={handlePoolChange}
+          onRequireSignIn={() => setShowLogin(true)}
+        />
+      ) : activePage === 'Marketing' ? (
+        <LandingMarketingMaintenance
+          pools={pools}
+          token={token}
+          authHeaders={authHeaders}
+          apiBase={API_BASE}
           onRequireSignIn={() => setShowLogin(true)}
         />
       ) : activePage === 'Notifications' ? (

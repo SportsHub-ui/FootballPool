@@ -162,6 +162,20 @@ describe('Football Pool API', () => {
   describe('Setup Endpoints - Users', () => {
     let createdUserId: number
 
+    it('should allow creating the first user before anyone has signed in', async () => {
+      const response = await request(app)
+        .post('/api/setup/users')
+        .send({
+          firstName: 'Bootstrap',
+          lastName: 'Organizer',
+          email: `bootstrap-${Date.now()}@example.com`,
+          phone: '5550001111'
+        })
+
+      expect(response.status).toBe(201)
+      expect(response.body).toHaveProperty('id')
+    })
+
     it('should require organizer role to create user', async () => {
       const response = await request(app)
         .post('/api/setup/users')

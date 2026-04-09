@@ -537,7 +537,7 @@ export function ParticipantView() {
           {loginError && <div className="error-message">{loginError}</div>}
           
           <p style={{ marginTop: '1rem', fontSize: '0.9rem', color: '#666' }}>
-            Demo: Use any email address with any password
+            Use the email for an existing user and any non-empty password.
           </p>
         </div>
       </div>
