@@ -36,6 +36,7 @@ type LandingUserRecord = {
 type LandingUsersResponse = {
   signedIn: boolean
   canManage: boolean
+  bootstrapMode?: boolean
   pools: LandingPool[]
   users: LandingUserRecord[]
 }
@@ -138,6 +139,7 @@ export function LandingUserMaintenance({
   const [userListHeight, setUserListHeight] = useState(USER_LIST_DEFAULT_HEIGHT)
   const [isCreatingNew, setIsCreatingNew] = useState(false)
   const [canManageUsers, setCanManageUsers] = useState(Boolean(token))
+  const [bootstrapMode, setBootstrapMode] = useState(false)
 
   const request = async <T,>(path: string, init?: RequestInit): Promise<T> => {
     const response = await fetch(`${apiBase}${path}`, init)
@@ -178,6 +180,7 @@ export function LandingUserMaintenance({
       })
 
       const nextPools = result.pools?.length ? result.pools : pools
+      setBootstrapMode(Boolean(result.bootstrapMode))
       setCanManageUsers(Boolean(result.canManage))
       setUsers(result.users)
 
@@ -191,6 +194,7 @@ export function LandingUserMaintenance({
       const nextUser = result.users.find((user) => user.id === nextSelectedUserId) ?? null
       loadUserIntoForm(nextUser, nextPools)
     } catch (fetchError) {
+      setBootstrapMode(false)
       setCanManageUsers(false)
       setError(fetchError instanceof Error ? fetchError.message : 'Failed to load user maintenance data')
       setUsers([])
@@ -233,6 +237,10 @@ export function LandingUserMaintenance({
   )
 
   const heroSubtitle = useMemo(() => {
+    if (bootstrapMode) {
+      return 'No users exist yet. Create the first organizer account here, then sign in with that email and any non-empty password.'
+    }
+
     if (pools.length === 0) {
       return 'No authorized pools are available for user maintenance yet.'
     }
@@ -242,7 +250,7 @@ export function LandingUserMaintenance({
       : 'You can review visible user records below. Sign in as an organizer to make updates.'
 
     return `${visibilityText} ${users.length} user record${users.length === 1 ? '' : 's'} across ${pools.length} pool${pools.length === 1 ? '' : 's'}.`
-  }, [canManageUsers, pools.length, users.length])
+  }, [bootstrapMode, canManageUsers, pools.length, users.length])
 
   const onSelectUser = (userId: number): void => {
     const user = users.find((entry) => entry.id === userId) ?? null

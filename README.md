@@ -190,6 +190,8 @@ These cleanup commands preserve `football_pool.schema_migrations` and the seeded
   - `http://localhost:5173/?display=<display_token>&refresh=15&tz=America/Chicago`
 - The display view is optimized for TVs / projectors and hides menus, sign-in, pool/game selectors, and payout schedule details.
 - The display screen now includes a scoreboard-style header, auto-refresh polling, and still listens for live score updates through SSE.
+- Optional advertising mode can periodically shrink the display board to make space for sponsor content on the right and bottom of the screen.
+- Display advertising is now managed in the organizer **Marketing** section, where you can enable ads, control the rotation cadence, and maintain image/text creatives.
 - If `tz` is omitted, the frontend uses `VITE_DISPLAY_TIME_ZONE` when configured, otherwise it falls back to the display device's local browser timezone.
 - Frontend environment defaults for display mode:
   - `VITE_DISPLAY_REFRESH_SECONDS=30`

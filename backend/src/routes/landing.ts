@@ -9,6 +9,7 @@ import { ensurePoolDisplayTokenSupport } from '../services/poolDisplay';
 import { getPoolSimulationStatus } from '../services/poolSimulation';
 import { ensureNotificationSupport } from '../services/notifications';
 import { loadPoolPayoutConfig, resolvePoolPayoutsForRound } from '../services/poolPayouts';
+import { ensureDisplayAdvertisingSupport, loadDisplayAdvertising } from '../services/displayAds';
 import { resolveWinningSquareNumber } from '../services/scoreProcessing';
 import { buildMatchupDisplayLabel } from '../utils/matchupLabels';
 
@@ -717,6 +718,9 @@ landingRouter.get('/users', async (req, res) => {
 
       const pools = await loadAccessiblePools(client, userId, canManage);
       const teams = await loadLandingTeams(client, userId, canManage);
+      const bootstrapResult = await client.query<{ user_count: string }>(`SELECT COUNT(*)::text AS user_count FROM football_pool.users`);
+      const bootstrapMode = Number(bootstrapResult.rows[0]?.user_count ?? 0) === 0;
+      const effectiveCanManage = canManage || bootstrapMode;
       const poolIds = pools.map((pool) => Number(pool.id)).filter((poolId) => Number.isFinite(poolId));
       const teamIds = teams.map((team) => Number(team.id)).filter((teamId) => Number.isFinite(teamId));
 
@@ -770,7 +774,7 @@ landingRouter.get('/users', async (req, res) => {
                   up.pool_id NULLS LAST,
                   t.team_name NULLS LAST,
                   pt.team_id NULLS LAST`,
-        [poolIds, teamIds, canManage]
+        [poolIds, teamIds, effectiveCanManage]
       );
 
       type LandingUserSummary = {
@@ -844,7 +848,8 @@ landingRouter.get('/users', async (req, res) => {
 
       return res.json({
         signedIn: userId !== null,
-        canManage,
+        canManage: effectiveCanManage,
+        bootstrapMode,
         pools,
         users: Array.from(usersMap.values())
       });
@@ -1144,8 +1149,10 @@ landingRouter.get('/display/:displayToken', async (req, res) => {
         return res.status(404).json({ error: 'Pool display link not found' });
       }
 
+      await ensureDisplayAdvertisingSupport(client);
       const games = await loadPoolGames(client, Number(pool.id));
       const simulationStatus = await getPoolSimulationStatus(client, Number(pool.id)).catch(() => null);
+      const { settings: displayAdSettings, ads: displayAds } = await loadDisplayAdvertising(client);
       const selectedGameId = pickDisplayGameId(
         games as Array<{
           id: number;
@@ -1168,7 +1175,9 @@ landingRouter.get('/display/:displayToken', async (req, res) => {
         pool,
         games,
         selectedGameId,
-        board
+        board,
+        displayAds,
+        displayAdSettings
       });
     } finally {
       client.release();

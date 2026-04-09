@@ -21,15 +21,26 @@ authRouter.post('/login', async (req, res) => {
   try {
     const client = await db.connect();
     try {
-      // In a real app, passwords would be hashed with bcrypt
-      // For this demo, we'll accept any password and just verify the email exists
+      const bootstrapResult = await client.query<{ user_count: string }>(
+        `SELECT COUNT(*)::text AS user_count FROM football_pool.users`
+      );
+      const userCount = Number(bootstrapResult.rows[0]?.user_count ?? 0);
+
+      if (userCount === 0) {
+        return res.status(409).json({
+          error: 'No users exist yet. Create the first organizer account on the Users page, then sign in with that email and any non-empty password.'
+        });
+      }
+
+      // In a real app, passwords would be hashed with bcrypt.
+      // For now, any non-empty password is accepted and we only verify the email exists.
       const result = await client.query(
         `SELECT id, first_name, last_name, email FROM football_pool.users WHERE email = $1`,
         [parsed.data.email]
       );
 
       if (result.rows.length === 0) {
-        return res.status(401).json({ error: 'Invalid email or password' });
+        return res.status(401).json({ error: 'No user was found for that email address.' });
       }
 
       const user = result.rows[0];
