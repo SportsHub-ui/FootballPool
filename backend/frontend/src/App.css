@@ -1917,10 +1917,16 @@ button:disabled {
 }
 
 .landing-page-shell.is-display-only {
-  --landing-gap: clamp(0.18rem, 0.55vh, 0.45rem);
-  --landing-digit-size: clamp(2rem, 3.2vh, 2.75rem);
-  --landing-square-size: clamp(3.35rem, 7.2vh, 5.15rem);
-  padding: clamp(0.2rem, 0.55vh, 0.45rem);
+  --landing-gap: clamp(0.14rem, 0.42vh, 0.32rem);
+  --landing-digit-size: clamp(1.8rem, 2.8vh, 2.45rem);
+  --landing-square-size: clamp(3rem, 6.25vh, 4.55rem);
+  min-height: 100vh;
+  min-height: 100dvh;
+  height: 100vh;
+  height: 100dvh;
+  padding: clamp(0.12rem, 0.35vh, 0.28rem);
+  box-sizing: border-box;
+  overflow: hidden;
   align-content: stretch;
   background: radial-gradient(circle at top, #12243a 0%, #08111d 58%, #050a12 100%);
 }
@@ -1992,15 +1998,17 @@ button:disabled {
 }
 
 .landing-placeholder-card.is-display-only {
-  min-height: calc(100dvh - (2 * clamp(0.25rem, 0.7vh, 0.6rem)));
+  min-height: 0;
   height: 100%;
+  overflow: hidden;
   align-content: stretch;
 }
 
 .display-ad-layout {
   display: grid;
-  min-height: 100%;
+  min-height: 0;
   height: 100%;
+  overflow: hidden;
 }
 
 .display-board-stage {
@@ -2025,7 +2033,7 @@ button:disabled {
 
 .display-ad-layout.is-ad-mode.has-sidebar-ads.has-banner-ads {
   grid-template-columns: minmax(0, 1fr) clamp(210px, 19vw, 290px);
-  grid-template-rows: minmax(0, 1fr) clamp(118px, 17vh, 176px);
+  grid-template-rows: minmax(0, 1fr) auto;
 }
 
 .display-ad-layout.is-ad-mode.has-sidebar-ads:not(.has-banner-ads) {
@@ -2033,7 +2041,7 @@ button:disabled {
 }
 
 .display-ad-layout.is-ad-mode.has-banner-ads:not(.has-sidebar-ads) {
-  grid-template-rows: minmax(0, 1fr) clamp(118px, 17vh, 176px);
+  grid-template-rows: minmax(0, 1fr) auto;
 }
 
 .display-ad-layout.is-ad-mode .display-board-stage {
@@ -2080,6 +2088,18 @@ button:disabled {
 
 .pool-board.is-display-only .pool-board-grid-wrap {
   height: 100%;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.pool-board.is-display-only .board-middle,
+.pool-board.is-display-only .board-grid {
+  min-height: 0;
+  height: 100%;
+}
+
+.pool-board.is-display-only .board-grid {
+  grid-auto-rows: minmax(0, 1fr);
 }
 
 .display-scoreboard-spotlight {
@@ -2199,14 +2219,23 @@ button:disabled {
 .display-ad-banner {
   grid-column: 1;
   grid-row: 2;
-  padding: clamp(0.35rem, 0.8vh, 0.6rem) clamp(0.45rem, 0.8vw, 0.8rem);
+  display: flex;
+  align-items: stretch;
+  min-height: clamp(168px, 22vh, 248px);
+  padding:
+    clamp(0.55rem, 1vh, 0.8rem)
+    clamp(0.6rem, 1vw, 1rem)
+    max(clamp(1.25rem, 2.2vh, 1.75rem), env(safe-area-inset-bottom, 0px));
   border-top: 1px solid rgba(255, 255, 255, 0.08);
+  box-sizing: border-box;
 }
 
 .display-ad-banner-grid {
   display: grid;
   gap: clamp(0.35rem, 0.8vh, 0.6rem);
   min-height: 100%;
+  width: 100%;
+  align-items: stretch;
 }
 
 .display-ad-card {
@@ -2226,7 +2255,8 @@ button:disabled {
 }
 
 .display-ad-card.is-compact {
-  grid-template-columns: clamp(70px, 6vw, 92px) minmax(0, 1fr);
+  min-height: clamp(128px, 16vh, 176px);
+  grid-template-columns: clamp(72px, 6vw, 96px) minmax(0, 1fr);
   grid-template-rows: 1fr;
   align-items: center;
 }
@@ -2279,12 +2309,13 @@ button:disabled {
 
 .display-ad-card-body {
   margin: 0;
-  font-size: clamp(0.76rem, 0.95vw, 0.95rem);
-  line-height: 1.35;
+  font-size: clamp(0.8rem, 1vw, 1rem);
+  line-height: 1.4;
   color: #d7e3f1;
   overflow: hidden;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  line-clamp: 4;
+  -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
 }
 

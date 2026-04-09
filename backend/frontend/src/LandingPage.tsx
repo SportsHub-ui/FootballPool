@@ -993,6 +993,28 @@ export function LandingPage() {
   }, [activePage, board?.gameId, displayOnlyMode, displayRefreshSeconds, displayToken, games, selectedGameId, selectedPoolId, token])
 
   useEffect(() => {
+    if (typeof document === 'undefined') {
+      return
+    }
+
+    const rootElement = document.documentElement
+    const bodyElement = document.body
+
+    if (displayOnlyMode) {
+      rootElement.classList.add('kiosk-display-mode')
+      bodyElement.classList.add('kiosk-display-mode')
+    } else {
+      rootElement.classList.remove('kiosk-display-mode')
+      bodyElement.classList.remove('kiosk-display-mode')
+    }
+
+    return () => {
+      rootElement.classList.remove('kiosk-display-mode')
+      bodyElement.classList.remove('kiosk-display-mode')
+    }
+  }, [displayOnlyMode])
+
+  useEffect(() => {
     const hasFallbackBannerMessage = Boolean(displayAdSettings.defaultBannerMessage?.trim()) && displayAdSettings.bannerCount > 0
     const totalDisplayAdWindows = displayAdItems.length + (hasFallbackBannerMessage ? 1 : 0)
 
