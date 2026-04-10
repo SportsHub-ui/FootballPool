@@ -694,6 +694,8 @@ export function LandingPage() {
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null)
   const [board, setBoard] = useState<LandingBoard | null>(null)
   const [selectedSquare, setSelectedSquare] = useState<number | null>(null)
+  const [selectedSquares, setSelectedSquares] = useState<number[]>([])
+  const [showSquareAssignmentModal, setShowSquareAssignmentModal] = useState(false)
   const [simulationStatus, setSimulationStatus] = useState<SimulationControlStatus | null>(null)
   const simulationAdvanceSource: 'espn' = 'espn'
   const [assignForm, setAssignForm] = useState({
@@ -767,6 +769,8 @@ export function LandingPage() {
     setBusy('loading')
     setPageError(null)
     setSelectedSquare(null)
+    setSelectedSquares([])
+    setShowSquareAssignmentModal(false)
 
     try {
       const response = await fetch(`${API_BASE}/api/landing/pools/${poolId}/games`, {
@@ -840,6 +844,8 @@ export function LandingPage() {
       setPageError(null)
       setPageNotice(null)
       setSelectedSquare(null)
+      setSelectedSquares([])
+      setShowSquareAssignmentModal(false)
     }
 
     try {
@@ -1147,6 +1153,8 @@ export function LandingPage() {
     setShowLogin(false)
     setLoginError(null)
     setSelectedSquare(null)
+    setSelectedSquares([])
+    setShowSquareAssignmentModal(false)
     setParticipantOptions([])
     setPlayerOptions([])
     setAssignForm({
@@ -1163,6 +1171,9 @@ export function LandingPage() {
       setGames([])
       setSelectedGameId(null)
       setBoard(null)
+      setSelectedSquare(null)
+      setSelectedSquares([])
+      setShowSquareAssignmentModal(false)
       setSimulationStatus(null)
       return
     }
@@ -1172,6 +1183,9 @@ export function LandingPage() {
 
   const handleGameChange = async (gameId: number | null) => {
     setSelectedGameId(gameId)
+    setSelectedSquare(null)
+    setSelectedSquares([])
+    setShowSquareAssignmentModal(false)
 
     if (!selectedPoolId) {
       return
@@ -1210,7 +1224,7 @@ export function LandingPage() {
     setPlayerOptions(playersData?.players ?? [])
   }
 
-  const handleOpenSquareAssignment = async (square: LandingBoardSquare) => {
+  const handleToggleSquareSelection = async (square: LandingBoardSquare) => {
     if (!token) {
       setShowLogin(true)
       return
@@ -1220,35 +1234,81 @@ export function LandingPage() {
       return
     }
 
-    setSelectedSquare(square.square_num)
+    const isSelected = selectedSquares.includes(square.square_num)
+    const nextSelection = isSelected
+      ? selectedSquares.filter((value) => value !== square.square_num)
+      : [...selectedSquares, square.square_num].sort((left, right) => left - right)
+    const nextPrimarySquare = isSelected ? (nextSelection[0] ?? null) : square.square_num
+
+    setSelectedSquares(nextSelection)
+    setSelectedSquare(nextPrimarySquare)
+    setShowSquareAssignmentModal(false)
     setAssignForm({
       participantId: square.participant_id != null ? String(square.participant_id) : '',
       playerId: square.player_id != null ? String(square.player_id) : '',
       paidFlg: Boolean(square.paid_flg),
       reassign: false
     })
-    setBusy('square-options')
     setPageError(null)
+
+    if (participantOptions.length > 0 || playerOptions.length > 0) {
+      return
+    }
+
+    setBusy('square-options')
 
     try {
       await loadSquareOptions(selectedPoolId)
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'Failed to load square assignment options')
       setSelectedSquare(null)
+      setSelectedSquares([])
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handleOpenSelectedSquareAssignment = async () => {
+    if (!token) {
+      setShowLogin(true)
+      return
+    }
+
+    if (!selectedPoolId || selectedSquares.length === 0) {
+      setPageError('Select one or more squares first')
+      return
+    }
+
+    setShowSquareAssignmentModal(true)
+    setPageError(null)
+
+    if (participantOptions.length > 0 || playerOptions.length > 0) {
+      return
+    }
+
+    setBusy('square-options')
+
+    try {
+      await loadSquareOptions(selectedPoolId)
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'Failed to load square assignment options')
+      setShowSquareAssignmentModal(false)
     } finally {
       setBusy(null)
     }
   }
 
   const handleCloseSquareAssignment = () => {
+    setShowSquareAssignmentModal(false)
     setSelectedSquare(null)
+    setSelectedSquares([])
   }
 
   const handleAssignSquare = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
-    if (!selectedPoolId || selectedSquare == null) {
-      setPageError('Select a square first')
+    if (!selectedPoolId || selectedSquares.length === 0) {
+      setPageError('Select one or more squares first')
       return
     }
 
@@ -1256,25 +1316,30 @@ export function LandingPage() {
     setPageError(null)
 
     try {
-      const response = await fetch(`${API_BASE}/api/setup/pools/${selectedPoolId}/squares/${selectedSquare}`, {
-        method: 'PATCH',
-        headers: authHeaders,
-        body: JSON.stringify({
-          participantId: assignForm.participantId ? Number(assignForm.participantId) : null,
-          playerId: assignForm.playerId ? Number(assignForm.playerId) : null,
-          paidFlg: assignForm.paidFlg,
-          reassign: assignForm.reassign
+      for (const squareNum of selectedSquares) {
+        const response = await fetch(`${API_BASE}/api/setup/pools/${selectedPoolId}/squares/${squareNum}`, {
+          method: 'PATCH',
+          headers: authHeaders,
+          body: JSON.stringify({
+            participantId: assignForm.participantId ? Number(assignForm.participantId) : null,
+            playerId: assignForm.playerId ? Number(assignForm.playerId) : null,
+            paidFlg: assignForm.paidFlg,
+            reassign: assignForm.reassign
+          })
         })
-      })
 
-      const data = await response.json().catch(() => null)
+        const data = await response.json().catch(() => null)
 
-      if (!response.ok) {
-        throw new Error(getApiErrorMessage(data, 'Failed to update square assignment'))
+        if (!response.ok) {
+          throw new Error(getApiErrorMessage(data, `Failed to update square ${squareNum}`))
+        }
       }
 
       await loadBoard(selectedPoolId, selectedGameId)
+      setPageNotice(selectedSquares.length > 1 ? `Updated ${selectedSquares.length} squares.` : `Updated square ${selectedSquares[0]}.`)
+      setShowSquareAssignmentModal(false)
       setSelectedSquare(null)
+      setSelectedSquares([])
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'Failed to update square assignment')
     } finally {
@@ -1283,8 +1348,8 @@ export function LandingPage() {
   }
 
   const handleClearSquareAssignment = async () => {
-    if (!selectedPoolId || selectedSquare == null) {
-      setPageError('Select a square first')
+    if (!selectedPoolId || selectedSquares.length === 0) {
+      setPageError('Select one or more squares first')
       return
     }
 
@@ -1292,21 +1357,23 @@ export function LandingPage() {
     setPageError(null)
 
     try {
-      const response = await fetch(`${API_BASE}/api/setup/pools/${selectedPoolId}/squares/${selectedSquare}`, {
-        method: 'PATCH',
-        headers: authHeaders,
-        body: JSON.stringify({
-          participantId: null,
-          playerId: null,
-          paidFlg: false,
-          reassign: true
+      for (const squareNum of selectedSquares) {
+        const response = await fetch(`${API_BASE}/api/setup/pools/${selectedPoolId}/squares/${squareNum}`, {
+          method: 'PATCH',
+          headers: authHeaders,
+          body: JSON.stringify({
+            participantId: null,
+            playerId: null,
+            paidFlg: false,
+            reassign: true
+          })
         })
-      })
 
-      const data = await response.json().catch(() => null)
+        const data = await response.json().catch(() => null)
 
-      if (!response.ok) {
-        throw new Error(getApiErrorMessage(data, 'Failed to clear square assignment'))
+        if (!response.ok) {
+          throw new Error(getApiErrorMessage(data, `Failed to clear square ${squareNum}`))
+        }
       }
 
       setAssignForm({
@@ -1316,7 +1383,10 @@ export function LandingPage() {
         reassign: false
       })
       await loadBoard(selectedPoolId, selectedGameId)
+      setPageNotice(selectedSquares.length > 1 ? `Cleared ${selectedSquares.length} squares.` : `Cleared square ${selectedSquares[0]}.`)
+      setShowSquareAssignmentModal(false)
       setSelectedSquare(null)
+      setSelectedSquares([])
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'Failed to clear square assignment')
     } finally {
@@ -1464,6 +1534,10 @@ export function LandingPage() {
 
     return board.squares.find((square) => square.square_num === selectedSquare) ?? null
   }, [board, selectedSquare])
+
+  const selectedSquareSummary = selectedSquares.length > 10
+    ? `${selectedSquares.slice(0, 10).join(', ')} +${selectedSquares.length - 10} more`
+    : selectedSquares.join(', ')
 
   const latestScoredQuarter = getLatestScoredQuarter(selectedGame)
   const scoreSegments = useMemo(
@@ -1773,6 +1847,40 @@ export function LandingPage() {
                   ) : null}
                 </div>
               ) : null}
+
+              {hasActiveSelection ? (
+                <div className="landing-board-dev-actions">
+                  <p className="small landing-selection-hint">
+                    {selectedSquares.length > 0
+                      ? `Selected squares: ${selectedSquareSummary}`
+                      : 'Click one or more squares, then assign them together with one save.'}
+                  </p>
+                  <div className="landing-selection-actions">
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={() => void handleOpenSelectedSquareAssignment()}
+                      disabled={busy !== null || selectedSquares.length === 0}
+                    >
+                      {selectedSquares.length > 1
+                        ? `Assign ${selectedSquares.length} squares`
+                        : selectedSquares.length === 1
+                          ? `Assign square ${selectedSquares[0]}`
+                          : 'Select squares to assign'}
+                    </button>
+                    {selectedSquares.length > 0 ? (
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={handleCloseSquareAssignment}
+                        disabled={busy !== null}
+                      >
+                        Clear selection
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -1900,7 +2008,7 @@ export function LandingPage() {
                                   const isCurrentLeader = Boolean(square.is_current_score_leader)
                                   const winClass = hasWeekWin ? 'win-3' : hasSeasonWin ? 'win-1' : 'win-0'
                                   const winStateClass = hasWeekWin ? 'is-week-win' : hasSeasonWin ? 'is-season-win' : ''
-                                  const isSelectedSquare = selectedSquare === square.square_num
+                                  const isSelectedSquare = selectedSquares.includes(square.square_num)
                                   const ownershipClass = square.participant_id ? 'owned' : 'open'
                                   const paymentStateClass = !square.participant_id
                                     ? 'is-open'
@@ -1921,7 +2029,7 @@ export function LandingPage() {
                                       key={square.square_num}
                                       type="button"
                                       className={`landing-square-card ${ownershipClass} ${paymentStateClass} ${square.paid_flg ? 'paid' : ''} ${winClass} ${winStateClass} ${isCurrentLeader ? 'is-current-win' : ''} ${isSelectedSquare ? 'is-selected' : ''} ${hasActiveSelection ? 'is-manageable' : ''}`}
-                                      onClick={hasActiveSelection ? () => void handleOpenSquareAssignment(square) : undefined}
+                                      onClick={hasActiveSelection ? () => void handleToggleSquareSelection(square) : undefined}
                                       aria-label={squareTooltip}
                                     >
                                       {square.participant_id ? (
@@ -2026,7 +2134,7 @@ export function LandingPage() {
                                   const isCurrentLeader = Boolean(square.is_current_score_leader)
                                   const winClass = hasWeekWin ? 'win-3' : hasSeasonWin ? 'win-1' : 'win-0'
                                   const winStateClass = hasWeekWin ? 'is-week-win' : hasSeasonWin ? 'is-season-win' : ''
-                                  const isSelectedSquare = selectedSquare === square.square_num
+                                  const isSelectedSquare = selectedSquares.includes(square.square_num)
                                   const ownershipClass = square.participant_id ? 'owned' : 'open'
                                   const paymentStateClass = !square.participant_id
                                     ? 'is-open'
@@ -2047,7 +2155,7 @@ export function LandingPage() {
                                       key={square.square_num}
                                       type="button"
                                       className={`landing-square-card ${ownershipClass} ${paymentStateClass} ${square.paid_flg ? 'paid' : ''} ${winClass} ${winStateClass} ${isCurrentLeader ? 'is-current-win' : ''} ${isSelectedSquare ? 'is-selected' : ''} ${hasActiveSelection ? 'is-manageable' : ''}`}
-                                      onClick={hasActiveSelection ? () => void handleOpenSquareAssignment(square) : undefined}
+                                      onClick={hasActiveSelection ? () => void handleToggleSquareSelection(square) : undefined}
                                       aria-label={squareTooltip}
                                     >
                                       {square.participant_id ? (
@@ -2154,7 +2262,7 @@ export function LandingPage() {
             </article>
           )}
 
-          {selectedSquare != null && canManageSquares ? (
+          {showSquareAssignmentModal && selectedSquares.length > 0 && canManageSquares ? (
             <div className="modal-backdrop" onClick={handleCloseSquareAssignment}>
               <div
                 className="modal-card"
@@ -2164,17 +2272,23 @@ export function LandingPage() {
                 onClick={(event) => event.stopPropagation()}
               >
                 <div className="modal-header">
-                  <h3 id="landing-square-modal-title">Square {selectedSquare}</h3>
+                  <h3 id="landing-square-modal-title">
+                    {selectedSquares.length > 1 ? `Assign ${selectedSquares.length} Squares` : `Square ${selectedSquare}`}
+                  </h3>
                   <button type="button" className="secondary compact" onClick={handleCloseSquareAssignment}>
                     Close
                   </button>
                 </div>
 
                 <p className="small">
-                  Current owner:{' '}
-                  {selectedBoardSquare?.participant_id
-                    ? `${selectedBoardSquare.participant_first_name ?? ''} ${selectedBoardSquare.participant_last_name ?? ''}`.trim() || `User #${selectedBoardSquare.participant_id}`
-                    : 'Unassigned'}
+                  <strong>Selected:</strong> {selectedSquareSummary}
+                </p>
+                <p className="small">
+                  {selectedSquares.length > 1
+                    ? 'These squares will all be updated with the same participant, member, and payment status.'
+                    : selectedBoardSquare?.participant_id
+                      ? `Current owner: ${`${selectedBoardSquare.participant_first_name ?? ''} ${selectedBoardSquare.participant_last_name ?? ''}`.trim() || `User #${selectedBoardSquare.participant_id}`}`
+                      : 'Current owner: Unassigned'}
                 </p>
 
                 <form onSubmit={handleAssignSquare} className="assign-form modal-assign-form">
@@ -2229,10 +2343,10 @@ export function LandingPage() {
                       onClick={handleClearSquareAssignment}
                       disabled={busy !== null || !selectedPoolId}
                     >
-                      {busy === 'clear-square' ? 'Clearing...' : 'Clear square'}
+                      {busy === 'clear-square' ? 'Clearing...' : selectedSquares.length > 1 ? 'Clear selected' : 'Clear square'}
                     </button>
                     <button className="primary" type="submit" disabled={busy !== null || !selectedPoolId}>
-                      {busy === 'assign-square' ? 'Saving...' : 'Save assignment'}
+                      {busy === 'assign-square' ? 'Saving...' : selectedSquares.length > 1 ? 'Save assignments' : 'Save assignment'}
                     </button>
                   </div>
                 </form>
