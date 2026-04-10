@@ -375,15 +375,28 @@ const loadPoolByDisplayToken = async (client: PoolClient, displayToken: string) 
 const pickDisplayGameId = (
   games: Array<{
     id: number;
+    game_dt?: string | null;
+    gameDate?: string | null;
+    state?: string | null;
     opponent?: string | null;
-    q1_primary_score?: number | null;
-    q1_opponent_score?: number | null;
-    q2_primary_score?: number | null;
-    q2_opponent_score?: number | null;
-    q3_primary_score?: number | null;
-    q3_opponent_score?: number | null;
+    q1_primary_score: number | null;
+    q1_opponent_score: number | null;
+    q2_primary_score: number | null;
+    q2_opponent_score: number | null;
+    q3_primary_score: number | null;
+    q3_opponent_score: number | null;
     q4_primary_score: number | null;
     q4_opponent_score: number | null;
+    q5_primary_score: number | null;
+    q5_opponent_score: number | null;
+    q6_primary_score: number | null;
+    q6_opponent_score: number | null;
+    q7_primary_score: number | null;
+    q7_opponent_score: number | null;
+    q8_primary_score: number | null;
+    q8_opponent_score: number | null;
+    q9_primary_score: number | null;
+    q9_opponent_score: number | null;
   }>,
   currentGameId?: number | null
 ): number | null => {
@@ -392,26 +405,57 @@ const pickDisplayGameId = (
   }
 
   const isByeGame = (game: { opponent?: string | null }): boolean => (game.opponent ?? '').trim().toUpperCase() === 'BYE';
-  const isCompletedGame = (game: { state?: string | null; q9_primary_score?: number | null; q9_opponent_score?: number | null; q4_primary_score: number | null; q4_opponent_score: number | null }): boolean => {
+  const isCompletedGame = (game: {
+    state?: string | null;
+    q9_primary_score?: number | null;
+    q9_opponent_score?: number | null;
+    q4_primary_score: number | null;
+    q4_opponent_score: number | null;
+  }): boolean => {
     const normalizedState = String(game.state ?? '').trim().toLowerCase();
     return ['completed', 'complete', 'closed', 'finished', 'final', 'post'].includes(normalizedState)
       || ((game.q9_primary_score ?? game.q4_primary_score) != null && (game.q9_opponent_score ?? game.q4_opponent_score) != null);
   };
 
+  const selectableGames = games.filter((game) => !isByeGame(game));
+
   if (currentGameId != null) {
-    const currentGame = games.find((game) => Number(game.id) === Number(currentGameId));
-    if (currentGame && !isByeGame(currentGame)) {
+    const currentGame = selectableGames.find((game) => Number(game.id) === Number(currentGameId));
+    if (currentGame) {
       return Number(currentGame.id);
     }
   }
 
-  const activeGame = games.find((game) => !isByeGame(game) && !isCompletedGame(game));
-  if (activeGame) {
-    return Number(activeGame.id);
+  const liveGame = selectableGames.find((game) => !isCompletedGame(game) && getLatestScoredQuarter(game) != null);
+  if (liveGame) {
+    return Number(liveGame.id);
   }
 
-  const lastCompletedGame = [...games].reverse().find((game) => !isByeGame(game) && isCompletedGame(game));
-  const selectedId = lastCompletedGame?.id ?? games.find((game) => !isByeGame(game))?.id ?? games[0]?.id ?? null;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const nextUpcomingGame = selectableGames.find((game) => {
+    const rawGameDate = game.game_dt ?? game.gameDate;
+
+    if (isCompletedGame(game) || !rawGameDate) {
+      return false;
+    }
+
+    const gameDate = new Date(rawGameDate);
+    if (Number.isNaN(gameDate.getTime())) {
+      return false;
+    }
+
+    gameDate.setHours(0, 0, 0, 0);
+    return gameDate >= today;
+  });
+
+  if (nextUpcomingGame) {
+    return Number(nextUpcomingGame.id);
+  }
+
+  const lastCompletedGame = [...selectableGames].reverse().find((game) => isCompletedGame(game));
+  const selectedId = lastCompletedGame?.id ?? selectableGames[0]?.id ?? games[0]?.id ?? null;
 
   return selectedId != null ? Number(selectedId) : null;
 };
@@ -453,26 +497,28 @@ const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, g
   const preferredGameId =
     gameId ?? pickDisplayGameId(games as Array<{
       id: number;
+      game_dt?: string | null;
+      gameDate?: string | null;
+      state?: string | null;
       opponent?: string | null;
-      q1_primary_score?: number | null;
-      q1_opponent_score?: number | null;
-      q2_primary_score?: number | null;
-      q2_opponent_score?: number | null;
-      q3_primary_score?: number | null;
-      q3_opponent_score?: number | null;
+      q1_primary_score: number | null;
+      q1_opponent_score: number | null;
+      q2_primary_score: number | null;
+      q2_opponent_score: number | null;
+      q3_primary_score: number | null;
+      q3_opponent_score: number | null;
       q4_primary_score: number | null;
       q4_opponent_score: number | null;
-      q5_primary_score?: number | null;
-      q5_opponent_score?: number | null;
-      q6_primary_score?: number | null;
-      q6_opponent_score?: number | null;
-      q7_primary_score?: number | null;
-      q7_opponent_score?: number | null;
-      q8_primary_score?: number | null;
-      q8_opponent_score?: number | null;
-      q9_primary_score?: number | null;
-      q9_opponent_score?: number | null;
-      state?: string | null;
+      q5_primary_score: number | null;
+      q5_opponent_score: number | null;
+      q6_primary_score: number | null;
+      q6_opponent_score: number | null;
+      q7_primary_score: number | null;
+      q7_opponent_score: number | null;
+      q8_primary_score: number | null;
+      q8_opponent_score: number | null;
+      q9_primary_score: number | null;
+      q9_opponent_score: number | null;
     }>);
 
   const selectedGame =
@@ -1211,15 +1257,28 @@ landingRouter.get('/display/:displayToken', async (req, res) => {
       const selectedGameId = pickDisplayGameId(
         games as Array<{
           id: number;
+          game_dt?: string | null;
+          gameDate?: string | null;
+          state?: string | null;
           opponent?: string | null;
-          q1_primary_score?: number | null;
-          q1_opponent_score?: number | null;
-          q2_primary_score?: number | null;
-          q2_opponent_score?: number | null;
-          q3_primary_score?: number | null;
-          q3_opponent_score?: number | null;
+          q1_primary_score: number | null;
+          q1_opponent_score: number | null;
+          q2_primary_score: number | null;
+          q2_opponent_score: number | null;
+          q3_primary_score: number | null;
+          q3_opponent_score: number | null;
           q4_primary_score: number | null;
           q4_opponent_score: number | null;
+          q5_primary_score: number | null;
+          q5_opponent_score: number | null;
+          q6_primary_score: number | null;
+          q6_opponent_score: number | null;
+          q7_primary_score: number | null;
+          q7_opponent_score: number | null;
+          q8_primary_score: number | null;
+          q8_opponent_score: number | null;
+          q9_primary_score: number | null;
+          q9_opponent_score: number | null;
         }>,
         simulationStatus?.currentGameId ?? null
       );
