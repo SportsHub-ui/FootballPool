@@ -543,7 +543,7 @@ const formatQuarterSquareOwner = (square: LandingBoardSquare | null | undefined,
 
 const formatGameOption = (game: LandingGame, primaryTeam: string): string => {
   const dateLabel = formatDate(game.game_dt)
-  const weekLabel = game.week_num != null ? `Week ${game.week_num} • ` : ''
+  const weekLabel = game.week_num != null ? `Game ${game.week_num} • ` : ''
   const isByeWeek = game.opponent.trim().toUpperCase() === 'BYE'
   const finalQuarter = getLatestScoredQuarter(game)
   const finalScores = finalQuarter != null ? getQuarterScores(game, finalQuarter) : { primaryScore: null, opponentScore: null }
@@ -1800,7 +1800,7 @@ export function LandingPage() {
               </label>
 
               <label className="field-block">
-                <span>Week / Game</span>
+                <span>Game</span>
                 <select
                   value={selectedGameId ?? ''}
                   onChange={(event) => {
@@ -1910,8 +1910,8 @@ export function LandingPage() {
                     className="pool-board-nav-arrow"
                     onClick={() => void handleGameChange(previousGameId)}
                     disabled={!previousGameId || busy === 'loading'}
-                    aria-label="Previous week"
-                    title="Previous week"
+                    aria-label="Previous game"
+                    title="Previous game"
                   >
                     ←
                   </button>
@@ -1930,8 +1930,8 @@ export function LandingPage() {
                     className="pool-board-nav-arrow"
                     onClick={() => void handleGameChange(nextGameId)}
                     disabled={!nextGameId || busy === 'loading'}
-                    aria-label="Next week"
-                    title="Next week"
+                    aria-label="Next game"
+                    title="Next game"
                   >
                     →
                   </button>
@@ -2257,7 +2257,7 @@ export function LandingPage() {
             <article className="panel">
               <h2>{pools.length > 0 ? 'Select Pool' : 'No Pools Available'}</h2>
               <p className="small">
-                {pools.length > 0 ? 'Choose a pool and week above to load the board.' : 'No squares board is available yet.'}
+                {pools.length > 0 ? 'Choose a pool and game above to load the board.' : 'No squares board is available yet.'}
               </p>
             </article>
           )}

@@ -137,7 +137,7 @@ const normalizeDigits = (value: Array<number | string> | null | undefined): Arra
 }
 
 const formatBoardGameOption = (game: Game): string => {
-  const weekLabel = game.week_num != null ? `Week ${game.week_num} • ` : ''
+  const weekLabel = game.week_num != null ? `Game ${game.week_num} • ` : ''
   return `${weekLabel}${new Date(game.game_dt).toLocaleDateString()} vs ${game.opponent}`
 }
 
@@ -797,7 +797,7 @@ export function ParticipantView() {
 
                   {poolGames.length > 0 ? (
                     <div className="board-game-selector">
-                      <label htmlFor="board-game-id">Week/Game</label>
+                      <label htmlFor="board-game-id">Game</label>
                       <select
                         id="board-game-id"
                         value={selectedGameId ?? ''}
