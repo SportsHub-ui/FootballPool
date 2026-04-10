@@ -57,6 +57,7 @@ type Game = {
   week_num: number | null
   opponent: string
   game_dt: string
+  state?: string | null
   is_simulation: boolean
   row_numbers: number[] | null
   col_numbers: number[] | null
@@ -68,6 +69,16 @@ type Game = {
   q3_opponent_score: number | null
   q4_primary_score: number | null
   q4_opponent_score: number | null
+  q5_primary_score: number | null
+  q5_opponent_score: number | null
+  q6_primary_score: number | null
+  q6_opponent_score: number | null
+  q7_primary_score: number | null
+  q7_opponent_score: number | null
+  q8_primary_score: number | null
+  q8_opponent_score: number | null
+  q9_primary_score: number | null
+  q9_opponent_score: number | null
 }
 
 type BoardSquare = {
@@ -208,7 +219,17 @@ const getGameScoreForQuarter = (game: Game, quarter: number): string => {
         ? game.q2_primary_score
         : quarter === 3
           ? game.q3_primary_score
-          : game.q4_primary_score
+          : quarter === 4
+            ? game.q4_primary_score
+            : quarter === 5
+              ? game.q5_primary_score
+              : quarter === 6
+                ? game.q6_primary_score
+                : quarter === 7
+                  ? game.q7_primary_score
+                  : quarter === 8
+                    ? game.q8_primary_score
+                    : game.q9_primary_score
   const opponentScore =
     quarter === 1
       ? game.q1_opponent_score
@@ -216,7 +237,17 @@ const getGameScoreForQuarter = (game: Game, quarter: number): string => {
         ? game.q2_opponent_score
         : quarter === 3
           ? game.q3_opponent_score
-          : game.q4_opponent_score
+          : quarter === 4
+            ? game.q4_opponent_score
+            : quarter === 5
+              ? game.q5_opponent_score
+              : quarter === 6
+                ? game.q6_opponent_score
+                : quarter === 7
+                  ? game.q7_opponent_score
+                  : quarter === 8
+                    ? game.q8_opponent_score
+                    : game.q9_opponent_score
 
   return primaryScore !== null && opponentScore !== null ? `${primaryScore}-${opponentScore}` : 'TBD'
 }
@@ -733,7 +764,7 @@ export function ParticipantView() {
                                   <button
                                     key={sq.id}
                                     type="button"
-                                    className={`board-square ${sq.participant_id ? 'owned' : 'open'} ${winClass} ${winStateClass} ${isCurrentLeader ? 'current-win' : ''}`}
+                                    className={`board-square ${sq.participant_id ? 'owned' : 'open'} ${sq.paid_flg ? 'paid' : ''} ${winClass} ${winStateClass} ${isCurrentLeader ? 'current-win' : ''}`}
                                     aria-label={squareTooltip}
                                   >
                                     {sq.participant_id ? (

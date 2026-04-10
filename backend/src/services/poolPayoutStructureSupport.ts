@@ -11,6 +11,15 @@ export const ensurePoolPayoutStructureSupport = async (client: PoolClient): Prom
       `);
 
       await client.query(`
+        ALTER TABLE football_pool.pool
+        ADD COLUMN IF NOT EXISTS q5_payout INTEGER NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS q6_payout INTEGER NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS q7_payout INTEGER NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS q8_payout INTEGER NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS q9_payout INTEGER NOT NULL DEFAULT 0
+      `);
+
+      await client.query(`
         UPDATE football_pool.pool
         SET payout_schedule_mode = COALESCE(NULLIF(TRIM(payout_schedule_mode), ''), 'uniform')
       `);
@@ -51,6 +60,11 @@ export const ensurePoolPayoutStructureSupport = async (client: PoolClient): Prom
           q2_payout INTEGER NOT NULL DEFAULT 0,
           q3_payout INTEGER NOT NULL DEFAULT 0,
           q4_payout INTEGER NOT NULL DEFAULT 0,
+          q5_payout INTEGER NOT NULL DEFAULT 0,
+          q6_payout INTEGER NOT NULL DEFAULT 0,
+          q7_payout INTEGER NOT NULL DEFAULT 0,
+          q8_payout INTEGER NOT NULL DEFAULT 0,
+          q9_payout INTEGER NOT NULL DEFAULT 0,
           created_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
           CONSTRAINT pool_payout_rule_round_sequence_check CHECK (round_sequence IS NULL OR round_sequence >= 1)
@@ -58,10 +72,18 @@ export const ensurePoolPayoutStructureSupport = async (client: PoolClient): Prom
       `);
 
       await client.query(`
+        ALTER TABLE football_pool.pool_payout_rule
+        ADD COLUMN IF NOT EXISTS q5_payout INTEGER NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS q6_payout INTEGER NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS q7_payout INTEGER NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS q8_payout INTEGER NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS q9_payout INTEGER NOT NULL DEFAULT 0
+      `);
+
+      await client.query(`
         CREATE INDEX IF NOT EXISTS idx_pool_payout_rule_pool_id
         ON football_pool.pool_payout_rule (pool_id)
       `);
-
       await client.query(`
         CREATE UNIQUE INDEX IF NOT EXISTS uq_pool_payout_rule_pool_round_sequence
         ON football_pool.pool_payout_rule (pool_id, round_sequence)

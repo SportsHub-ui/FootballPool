@@ -37,6 +37,7 @@ type LandingGame = {
   week_num: number | null
   opponent: string
   game_dt: string
+  state?: string | null
   is_simulation: boolean
   row_numbers: number[] | null
   col_numbers: number[] | null
@@ -48,6 +49,16 @@ type LandingGame = {
   q3_opponent_score: number | null
   q4_primary_score: number | null
   q4_opponent_score: number | null
+  q5_primary_score: number | null
+  q5_opponent_score: number | null
+  q6_primary_score: number | null
+  q6_opponent_score: number | null
+  q7_primary_score: number | null
+  q7_opponent_score: number | null
+  q8_primary_score: number | null
+  q8_opponent_score: number | null
+  q9_primary_score: number | null
+  q9_opponent_score: number | null
 }
 
 type LandingBoardSquare = {
@@ -417,11 +428,27 @@ function DisplayAdCard({ ad, compact = false }: { ad: DisplayAdItem; compact?: b
 
 const isCompletedGame = (game: LandingGame | null): boolean => {
   if (!game) return false
-  return game.q4_primary_score !== null && game.q4_opponent_score !== null
+
+  const normalizedState = String(game.state ?? '').trim().toLowerCase()
+  if (['completed', 'complete', 'closed', 'finished', 'final', 'post'].includes(normalizedState)) {
+    return true
+  }
+
+  if (normalizedState) {
+    return false
+  }
+
+  return (game.q9_primary_score !== null && game.q9_opponent_score !== null)
+    || (game.q4_primary_score !== null && game.q4_opponent_score !== null)
 }
 
 const getLatestScoredQuarter = (game: LandingGame | null): number | null => {
   if (!game) return null
+  if (game.q9_primary_score !== null && game.q9_opponent_score !== null) return 9
+  if (game.q8_primary_score !== null && game.q8_opponent_score !== null) return 8
+  if (game.q7_primary_score !== null && game.q7_opponent_score !== null) return 7
+  if (game.q6_primary_score !== null && game.q6_opponent_score !== null) return 6
+  if (game.q5_primary_score !== null && game.q5_opponent_score !== null) return 5
   if (game.q4_primary_score !== null && game.q4_opponent_score !== null) return 4
   if (game.q3_primary_score !== null && game.q3_opponent_score !== null) return 3
   if (game.q2_primary_score !== null && game.q2_opponent_score !== null) return 2
@@ -436,7 +463,12 @@ const getQuarterScores = (
   if (quarter === 1) return { primaryScore: game.q1_primary_score, opponentScore: game.q1_opponent_score }
   if (quarter === 2) return { primaryScore: game.q2_primary_score, opponentScore: game.q2_opponent_score }
   if (quarter === 3) return { primaryScore: game.q3_primary_score, opponentScore: game.q3_opponent_score }
-  return { primaryScore: game.q4_primary_score, opponentScore: game.q4_opponent_score }
+  if (quarter === 4) return { primaryScore: game.q4_primary_score, opponentScore: game.q4_opponent_score }
+  if (quarter === 5) return { primaryScore: game.q5_primary_score, opponentScore: game.q5_opponent_score }
+  if (quarter === 6) return { primaryScore: game.q6_primary_score, opponentScore: game.q6_opponent_score }
+  if (quarter === 7) return { primaryScore: game.q7_primary_score, opponentScore: game.q7_opponent_score }
+  if (quarter === 8) return { primaryScore: game.q8_primary_score, opponentScore: game.q8_opponent_score }
+  return { primaryScore: game.q9_primary_score, opponentScore: game.q9_opponent_score }
 }
 
 const getDisplayScores = (
@@ -513,9 +545,11 @@ const formatGameOption = (game: LandingGame, primaryTeam: string): string => {
   const dateLabel = formatDate(game.game_dt)
   const weekLabel = game.week_num != null ? `Week ${game.week_num} • ` : ''
   const isByeWeek = game.opponent.trim().toUpperCase() === 'BYE'
+  const finalQuarter = getLatestScoredQuarter(game)
+  const finalScores = finalQuarter != null ? getQuarterScores(game, finalQuarter) : { primaryScore: null, opponentScore: null }
 
-  if (isCompletedGame(game)) {
-    return `${weekLabel}${dateLabel} • ${primaryTeam} ${game.q4_primary_score}-${game.q4_opponent_score} ${game.opponent}`
+  if (isCompletedGame(game) && finalScores.primaryScore != null && finalScores.opponentScore != null) {
+    return `${weekLabel}${dateLabel} • ${primaryTeam} ${finalScores.primaryScore}-${finalScores.opponentScore} ${game.opponent}`
   }
 
   if (isByeWeek) {
@@ -1491,6 +1525,7 @@ export function LandingPage() {
     })
   }, [board, latestScoredQuarter, scoreSegments, selectedGame, selectedPool, simulationStatus])
 
+  const hasCompactQuarterSummaryLayout = quarterSummaries.length >= 6
   const showQuarterSummaries = quarterSummaries.length > 0
   const displayAdScale = Math.min(0.95, Math.max(0.5, displayAdSettings.shrinkPercent / 100))
   const displayAdSidebarCount = Math.min(4, Math.max(0, Number(displayAdSettings.sidebarCount ?? 1) || 0))
@@ -1866,6 +1901,12 @@ export function LandingPage() {
                                   const winClass = hasWeekWin ? 'win-3' : hasSeasonWin ? 'win-1' : 'win-0'
                                   const winStateClass = hasWeekWin ? 'is-week-win' : hasSeasonWin ? 'is-season-win' : ''
                                   const isSelectedSquare = selectedSquare === square.square_num
+                                  const ownershipClass = square.participant_id ? 'owned' : 'open'
+                                  const paymentStateClass = !square.participant_id
+                                    ? 'is-open'
+                                    : square.paid_flg
+                                      ? 'is-filled'
+                                      : 'is-unpaid'
                                   const displayOwnerName = displayOnlyMode
                                     ? `${square.participant_first_name ?? ''} ${square.participant_last_name ? `${square.participant_last_name.charAt(0)}.` : ''}`.trim()
                                     : ''
@@ -1879,7 +1920,7 @@ export function LandingPage() {
                                     <button
                                       key={square.square_num}
                                       type="button"
-                                      className={`landing-square-card ${square.participant_id ? 'owned' : 'open'} ${square.paid_flg ? 'paid' : ''} ${winClass} ${winStateClass} ${isCurrentLeader ? 'is-current-win' : ''} ${isSelectedSquare ? 'is-selected' : ''} ${hasActiveSelection ? 'is-manageable' : ''}`}
+                                      className={`landing-square-card ${ownershipClass} ${paymentStateClass} ${square.paid_flg ? 'paid' : ''} ${winClass} ${winStateClass} ${isCurrentLeader ? 'is-current-win' : ''} ${isSelectedSquare ? 'is-selected' : ''} ${hasActiveSelection ? 'is-manageable' : ''}`}
                                       onClick={hasActiveSelection ? () => void handleOpenSquareAssignment(square) : undefined}
                                       aria-label={squareTooltip}
                                     >
@@ -1909,7 +1950,7 @@ export function LandingPage() {
                       </div>
 
                       {showQuarterSummaries ? (
-                        <aside className="board-quarter-summary-panel" aria-label="Current score winners and leaders">
+                        <aside className={`board-quarter-summary-panel ${hasCompactQuarterSummaryLayout ? 'is-compact' : ''}`} aria-label="Current score winners and leaders">
                           {quarterSummaries.map((summary) => (
                             <article key={summary.id} className={`board-quarter-card is-${summary.status}`}>
                               <div className="board-quarter-card-header">
@@ -1986,6 +2027,12 @@ export function LandingPage() {
                                   const winClass = hasWeekWin ? 'win-3' : hasSeasonWin ? 'win-1' : 'win-0'
                                   const winStateClass = hasWeekWin ? 'is-week-win' : hasSeasonWin ? 'is-season-win' : ''
                                   const isSelectedSquare = selectedSquare === square.square_num
+                                  const ownershipClass = square.participant_id ? 'owned' : 'open'
+                                  const paymentStateClass = !square.participant_id
+                                    ? 'is-open'
+                                    : square.paid_flg
+                                      ? 'is-filled'
+                                      : 'is-unpaid'
                                   const displayOwnerName = displayOnlyMode
                                     ? `${square.participant_first_name ?? ''} ${square.participant_last_name ? `${square.participant_last_name.charAt(0)}.` : ''}`.trim()
                                     : ''
@@ -1999,7 +2046,7 @@ export function LandingPage() {
                                     <button
                                       key={square.square_num}
                                       type="button"
-                                      className={`landing-square-card ${square.participant_id ? 'owned' : 'open'} ${square.paid_flg ? 'paid' : ''} ${winClass} ${winStateClass} ${isCurrentLeader ? 'is-current-win' : ''} ${isSelectedSquare ? 'is-selected' : ''} ${hasActiveSelection ? 'is-manageable' : ''}`}
+                                      className={`landing-square-card ${ownershipClass} ${paymentStateClass} ${square.paid_flg ? 'paid' : ''} ${winClass} ${winStateClass} ${isCurrentLeader ? 'is-current-win' : ''} ${isSelectedSquare ? 'is-selected' : ''} ${hasActiveSelection ? 'is-manageable' : ''}`}
                                       onClick={hasActiveSelection ? () => void handleOpenSquareAssignment(square) : undefined}
                                       aria-label={squareTooltip}
                                     >
@@ -2029,7 +2076,7 @@ export function LandingPage() {
                       </div>
 
                       {showQuarterSummaries ? (
-                        <aside className="board-quarter-summary-panel" aria-label="Current score winners and leaders">
+                        <aside className={`board-quarter-summary-panel ${hasCompactQuarterSummaryLayout ? 'is-compact' : ''}`} aria-label="Current score winners and leaders">
                           {quarterSummaries.map((summary) => (
                             <article key={summary.id} className={`board-quarter-card is-${summary.status}`}>
                               <div className="board-quarter-card-header">

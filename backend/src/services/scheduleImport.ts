@@ -1,6 +1,7 @@
 ﻿import type { PoolClient } from 'pg';
 import { getPoolLeagueDefinition } from '../config/poolLeagues';
 import { getPoolTypeDefinition } from '../config/poolTypes';
+import { syncPoolGameBoardNumbers } from './poolBoardNumbers';
 
 type PoolScheduleContext = {
   id: number;
@@ -189,6 +190,19 @@ const fetchEspnTeams = async (leagueCode: string | null | undefined): Promise<Es
       sportCode: definition.sportCode,
       leagueCode: definition.leagueCode
     }));
+};
+
+export const syncSportTeamsForLeague = async (
+  client: PoolClient,
+  leagueCode: string | null | undefined
+): Promise<number> => {
+  const teams = await fetchEspnTeams(leagueCode);
+
+  for (const team of teams) {
+    await upsertSportTeamFromEspn(client, team);
+  }
+
+  return teams.length;
 };
 
 const scoreTeamMatch = (team: EspnTeam, hints: string[]): number => {
@@ -528,11 +542,13 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
     }
     await client.query(
       `INSERT INTO football_pool.pool_game (pool_id, game_id, row_numbers, column_numbers, created_at, updated_at)
-       VALUES ($1, $2, '[]', '[]', NOW(), NOW())`,
+       VALUES ($1, $2, NULL, NULL, NOW(), NOW())`,
       [poolId, gameId]
     );
     created += 1;
   }
+
+  await syncPoolGameBoardNumbers(client, poolId);
 
   return {
     season: Number(pool.season),

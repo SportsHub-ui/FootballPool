@@ -1,15 +1,11 @@
-import { normalizePayoutsForLeague } from './poolLeagues'
+import { normalizePayoutsForLeague, type PayoutValues } from './poolLeagues'
 
 export const poolPayoutScheduleModeValues = ['uniform', 'by_round'] as const
 export type PoolPayoutScheduleMode = (typeof poolPayoutScheduleModeValues)[number]
 
-export type RoundPayoutConfig = {
+export type RoundPayoutConfig = PayoutValues & {
   roundLabel: string
   roundSequence?: number | null
-  q1Payout: number
-  q2Payout: number
-  q3Payout: number
-  q4Payout: number
 }
 
 const normalizeRoundLabel = (value?: string | null): string => String(value ?? '').trim()
@@ -36,7 +32,12 @@ export const normalizeRoundPayouts = (
         q1Payout: roundPayout.q1Payout,
         q2Payout: roundPayout.q2Payout,
         q3Payout: roundPayout.q3Payout,
-        q4Payout: roundPayout.q4Payout
+        q4Payout: roundPayout.q4Payout,
+        q5Payout: roundPayout.q5Payout,
+        q6Payout: roundPayout.q6Payout,
+        q7Payout: roundPayout.q7Payout,
+        q8Payout: roundPayout.q8Payout,
+        q9Payout: roundPayout.q9Payout
       })
 
       return {

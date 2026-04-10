@@ -30,7 +30,7 @@ export const buildRandomDigitOrder = (): number[] => shuffle([...defaultDigitOrd
 export const getPoolBoardNumberMode = (value: unknown): PoolBoardNumberMode =>
   value === 'same_for_tournament' ? 'same_for_tournament' : 'per_game';
 
-const toDigitOrderOrNull = (value: unknown): number[] | null => {
+export const toDigitOrderOrNull = (value: unknown): number[] | null => {
   if (typeof value === 'string') {
     try {
       return toDigitOrderOrNull(JSON.parse(value));
@@ -56,6 +56,7 @@ const loadPoolBoardConfig = async (
   poolId: number
 ): Promise<{
   mode: PoolBoardNumberMode;
+  poolType: string | null;
   tournamentRowNumbers: number[] | null;
   tournamentColumnNumbers: number[] | null;
 }> => {
@@ -63,10 +64,12 @@ const loadPoolBoardConfig = async (
 
   const result = await client.query<{
     board_number_mode: string | null;
+    pool_type: string | null;
     tournament_row_numbers: unknown;
     tournament_column_numbers: unknown;
   }>(
     `SELECT COALESCE(board_number_mode, 'per_game') AS board_number_mode,
+            pool_type,
             tournament_row_numbers,
             tournament_column_numbers
      FROM football_pool.pool
@@ -79,6 +82,7 @@ const loadPoolBoardConfig = async (
 
   return {
     mode: getPoolBoardNumberMode(row?.board_number_mode),
+    poolType: typeof row?.pool_type === 'string' ? row.pool_type : null,
     tournamentRowNumbers: toDigitOrderOrNull(row?.tournament_row_numbers),
     tournamentColumnNumbers: toDigitOrderOrNull(row?.tournament_column_numbers)
   };
@@ -134,12 +138,6 @@ export const syncPoolGameBoardNumbers = async (
   const overwriteExisting = Boolean(options?.overwriteExisting);
   const onlyGameId = options?.onlyGameId ?? null;
   const config = await loadPoolBoardConfig(client, poolId);
-
-  if (config.mode !== 'same_for_tournament') {
-    return;
-  }
-
-  const sharedBoardNumbers = await getOrCreateSharedTournamentBoardNumbers(client, poolId);
   const params: Array<number | string> = [poolId];
   let gameFilter = '';
 
@@ -148,16 +146,54 @@ export const syncPoolGameBoardNumbers = async (
     gameFilter = ` AND game_id = $${params.length}`;
   }
 
-  params.push(JSON.stringify(sharedBoardNumbers.rowNumbers), JSON.stringify(sharedBoardNumbers.columnNumbers));
+  const missingBoardFilter = overwriteExisting
+    ? ''
+    : `
+       AND (
+         row_numbers IS NULL
+         OR column_numbers IS NULL
+         OR COALESCE(jsonb_array_length(row_numbers), 0) <> 10
+         OR COALESCE(jsonb_array_length(column_numbers), 0) <> 10
+       )`;
 
-  await client.query(
-    `UPDATE football_pool.pool_game
-     SET row_numbers = $${params.length - 1}::jsonb,
-         column_numbers = $${params.length}::jsonb,
-         updated_at = NOW()
-     WHERE pool_id = $1${gameFilter}${
-       overwriteExisting ? '' : '\n       AND (row_numbers IS NULL OR column_numbers IS NULL)'
-     }`,
+  if (config.mode === 'same_for_tournament') {
+    const sharedBoardNumbers = await getOrCreateSharedTournamentBoardNumbers(client, poolId);
+    params.push(JSON.stringify(sharedBoardNumbers.rowNumbers), JSON.stringify(sharedBoardNumbers.columnNumbers));
+
+    await client.query(
+      `UPDATE football_pool.pool_game
+       SET row_numbers = $${params.length - 1}::jsonb,
+           column_numbers = $${params.length}::jsonb,
+           updated_at = NOW()
+       WHERE pool_id = $1${gameFilter}${missingBoardFilter}`,
+      params
+    );
+
+    return;
+  }
+
+  if (config.poolType === 'tournament') {
+    return;
+  }
+
+  const missingGames = await client.query<{ id: number }>(
+    `SELECT id
+     FROM football_pool.pool_game
+     WHERE pool_id = $1${gameFilter}${missingBoardFilter}
+     ORDER BY id`,
     params
   );
+
+  for (const game of missingGames.rows) {
+    const boardNumbers = await resolvePoolGameBoardNumbers(client, poolId);
+
+    await client.query(
+      `UPDATE football_pool.pool_game
+       SET row_numbers = $2::jsonb,
+           column_numbers = $3::jsonb,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [Number(game.id), JSON.stringify(boardNumbers.rowNumbers), JSON.stringify(boardNumbers.columnNumbers)]
+    );
+  }
 };

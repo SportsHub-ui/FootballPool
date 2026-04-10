@@ -1,7 +1,7 @@
 ﻿import type { PoolClient } from 'pg';
 import { db } from '../config/db';
 import { env } from '../config/env';
-import { getPoolLeagueDefinition } from '../config/poolLeagues';
+import { getActiveScoreSegmentNumbers, getPoolLeagueDefinition } from '../config/poolLeagues';
 import {
   processGameScoresWithClient,
   type QuarterScoresInput,
@@ -78,7 +78,7 @@ interface GameLookupRow {
   time_remaining_in_quarter: string | null;
 }
 
-type QuarterKey = '1' | '2' | '3' | '4';
+type QuarterKey = '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9';
 type QuarterScoreMap = Partial<Record<QuarterKey, { home?: number | null; away?: number | null }>>;
 
 type EspnCompetitor = {
@@ -132,24 +132,100 @@ const EMPTY_SCORES: QuarterScoresInput = {
   q3PrimaryScore: null,
   q3OpponentScore: null,
   q4PrimaryScore: null,
-  q4OpponentScore: null
+  q4OpponentScore: null,
+  q5PrimaryScore: null,
+  q5OpponentScore: null,
+  q6PrimaryScore: null,
+  q6OpponentScore: null,
+  q7PrimaryScore: null,
+  q7OpponentScore: null,
+  q8PrimaryScore: null,
+  q8OpponentScore: null,
+  q9PrimaryScore: null,
+  q9OpponentScore: null
 };
 
 const scoreboardCache = new Map<string, { expiresAt: number; data: EspnScoreboardResponse }>();
 
-const buildDeterministicMockScores = (gameId: number): QuarterScoresInput => {
-  const base = (gameId * 7) % 10;
+const setQuarterScoresOnInput = (
+  scores: QuarterScoresInput,
+  quarter: number,
+  values: { primaryScore: number | null; opponentScore: number | null }
+): void => {
+  if (quarter === 1) {
+    scores.q1PrimaryScore = values.primaryScore;
+    scores.q1OpponentScore = values.opponentScore;
+    return;
+  }
+  if (quarter === 2) {
+    scores.q2PrimaryScore = values.primaryScore;
+    scores.q2OpponentScore = values.opponentScore;
+    return;
+  }
+  if (quarter === 3) {
+    scores.q3PrimaryScore = values.primaryScore;
+    scores.q3OpponentScore = values.opponentScore;
+    return;
+  }
+  if (quarter === 4) {
+    scores.q4PrimaryScore = values.primaryScore;
+    scores.q4OpponentScore = values.opponentScore;
+    return;
+  }
+  if (quarter === 5) {
+    scores.q5PrimaryScore = values.primaryScore;
+    scores.q5OpponentScore = values.opponentScore;
+    return;
+  }
+  if (quarter === 6) {
+    scores.q6PrimaryScore = values.primaryScore;
+    scores.q6OpponentScore = values.opponentScore;
+    return;
+  }
+  if (quarter === 7) {
+    scores.q7PrimaryScore = values.primaryScore;
+    scores.q7OpponentScore = values.opponentScore;
+    return;
+  }
+  if (quarter === 8) {
+    scores.q8PrimaryScore = values.primaryScore;
+    scores.q8OpponentScore = values.opponentScore;
+    return;
+  }
 
-  return {
-    q1PrimaryScore: (base + 3) % 10,
-    q1OpponentScore: (base + 7) % 10,
-    q2PrimaryScore: ((base + 1) % 10) + 10,
-    q2OpponentScore: ((base + 5) % 10) + 10,
-    q3PrimaryScore: ((base + 4) % 10) + 20,
-    q3OpponentScore: ((base + 6) % 10) + 20,
-    q4PrimaryScore: ((base + 2) % 10) + 30,
-    q4OpponentScore: ((base + 8) % 10) + 30
-  };
+  scores.q9PrimaryScore = values.primaryScore;
+  scores.q9OpponentScore = values.opponentScore;
+};
+
+const getQuarterScoresFromInput = (
+  scores: QuarterScoresInput,
+  quarter: number
+): { primaryScore: number | null; opponentScore: number | null } => {
+  if (quarter === 1) return { primaryScore: scores.q1PrimaryScore, opponentScore: scores.q1OpponentScore };
+  if (quarter === 2) return { primaryScore: scores.q2PrimaryScore, opponentScore: scores.q2OpponentScore };
+  if (quarter === 3) return { primaryScore: scores.q3PrimaryScore, opponentScore: scores.q3OpponentScore };
+  if (quarter === 4) return { primaryScore: scores.q4PrimaryScore, opponentScore: scores.q4OpponentScore };
+  if (quarter === 5) return { primaryScore: scores.q5PrimaryScore, opponentScore: scores.q5OpponentScore };
+  if (quarter === 6) return { primaryScore: scores.q6PrimaryScore, opponentScore: scores.q6OpponentScore };
+  if (quarter === 7) return { primaryScore: scores.q7PrimaryScore, opponentScore: scores.q7OpponentScore };
+  if (quarter === 8) return { primaryScore: scores.q8PrimaryScore, opponentScore: scores.q8OpponentScore };
+  return { primaryScore: scores.q9PrimaryScore, opponentScore: scores.q9OpponentScore };
+};
+
+const buildDeterministicMockScores = (gameId: number, leagueCode?: string | null): QuarterScoresInput => {
+  const base = (gameId * 7) % 10;
+  const scores: QuarterScoresInput = { ...EMPTY_SCORES };
+  const activeSegments = getActiveScoreSegmentNumbers(leagueCode);
+
+  for (const quarter of activeSegments) {
+    const offset = (quarter - 1) * 10;
+    setQuarterScoresOnInput(scores, quarter, {
+      primaryScore: ((base + quarter + 2) % 10) + offset,
+      opponentScore: ((base + quarter + 6) % 10) + offset
+    });
+  }
+
+  return scores;
 };
 
 const normalize = (value: string): string => value.trim().toLowerCase();
@@ -221,14 +297,15 @@ const toQuarterScoreMap = (value: unknown): QuarterScoreMap => {
   return {};
 };
 
-const toCumulativeQuarterScores = (lineScores: unknown): [number | null, number | null, number | null, number | null] => {
+const toCumulativeQuarterScores = (lineScores: unknown): Array<number | null> => {
   if (!Array.isArray(lineScores) || lineScores.length === 0) {
-    return [null, null, null, null];
+    return Array.from({ length: 9 }, () => null);
   }
 
   let runningTotal = 0;
   let sequenceBroken = false;
-  const cumulative = Array.from({ length: 4 }, (_, index) => {
+
+  return Array.from({ length: 9 }, (_, index) => {
     if (sequenceBroken) {
       return null;
     }
@@ -246,9 +323,7 @@ const toCumulativeQuarterScores = (lineScores: unknown): [number | null, number 
 
     runningTotal += value;
     return runningTotal;
-  }) as [number | null, number | null, number | null, number | null];
-
-  return cumulative;
+  });
 };
 
 const buildFallbackQuarterScoresFromFinal = (primaryFinal: number, opponentFinal: number): QuarterScoresInput => {
@@ -263,6 +338,7 @@ const buildFallbackQuarterScoresFromFinal = (primaryFinal: number, opponentFinal
   const q4Opponent = opponentFinal;
 
   return {
+    ...EMPTY_SCORES,
     q1PrimaryScore: q1Primary,
     q1OpponentScore: q1Opponent,
     q2PrimaryScore: q2Primary,
@@ -280,63 +356,70 @@ const buildSportAwareScoresFromCompetition = (
   opponentCompetitor: EspnCompetitor | null | undefined,
   state: string
 ): QuarterScoresInput => {
-  const [q1Primary, q2Primary, q3Primary, q4Primary] = toCumulativeQuarterScores(primaryCompetitor?.linescores);
-  const [q1Opponent, q2Opponent, q3Opponent, q4Opponent] = toCumulativeQuarterScores(opponentCompetitor?.linescores);
+  const primaryCumulative = toCumulativeQuarterScores(primaryCompetitor?.linescores);
+  const opponentCumulative = toCumulativeQuarterScores(opponentCompetitor?.linescores);
   const primaryFinal = toNullableScore(primaryCompetitor?.score);
   const opponentFinal = toNullableScore(opponentCompetitor?.score);
   const normalizedSport = String(target.sportCode ?? '').trim().toUpperCase();
   const normalizedLeague = String(target.leagueCode ?? '').trim().toUpperCase();
 
   if (normalizedSport === 'BASEBALL') {
-    return state === 'completed' && primaryFinal != null && opponentFinal != null
-      ? {
-          ...EMPTY_SCORES,
-          q4PrimaryScore: primaryFinal,
-          q4OpponentScore: opponentFinal
-        }
-      : EMPTY_SCORES;
+    const scores: QuarterScoresInput = { ...EMPTY_SCORES };
+
+    for (let inning = 1; inning <= 8; inning += 1) {
+      setQuarterScoresOnInput(scores, inning, {
+        primaryScore: primaryCumulative[inning - 1] ?? null,
+        opponentScore: opponentCumulative[inning - 1] ?? null
+      });
+    }
+
+    if (state === 'completed' && primaryFinal != null && opponentFinal != null) {
+      setQuarterScoresOnInput(scores, 9, {
+        primaryScore: primaryFinal,
+        opponentScore: opponentFinal
+      });
+    }
+
+    return scores;
   }
 
   if (normalizedLeague === 'NCAAB') {
     return {
-      q1PrimaryScore: q1Primary,
-      q1OpponentScore: q1Opponent,
-      q2PrimaryScore: null,
-      q2OpponentScore: null,
-      q3PrimaryScore: null,
-      q3OpponentScore: null,
-      q4PrimaryScore: state === 'completed' ? (q2Primary ?? primaryFinal) : null,
-      q4OpponentScore: state === 'completed' ? (q2Opponent ?? opponentFinal) : null
+      ...EMPTY_SCORES,
+      q1PrimaryScore: primaryCumulative[0] ?? null,
+      q1OpponentScore: opponentCumulative[0] ?? null,
+      q9PrimaryScore: state === 'completed' ? (primaryCumulative[1] ?? primaryFinal) : null,
+      q9OpponentScore: state === 'completed' ? (opponentCumulative[1] ?? opponentFinal) : null
     };
   }
 
   if (normalizedSport === 'HOCKEY') {
     return {
-      q1PrimaryScore: q1Primary,
-      q1OpponentScore: q1Opponent,
-      q2PrimaryScore: q2Primary,
-      q2OpponentScore: q2Opponent,
-      q3PrimaryScore: null,
-      q3OpponentScore: null,
-      q4PrimaryScore: state === 'completed' ? (q3Primary ?? primaryFinal) : null,
-      q4OpponentScore: state === 'completed' ? (q3Opponent ?? opponentFinal) : null
+      ...EMPTY_SCORES,
+      q1PrimaryScore: primaryCumulative[0] ?? null,
+      q1OpponentScore: opponentCumulative[0] ?? null,
+      q2PrimaryScore: primaryCumulative[1] ?? null,
+      q2OpponentScore: opponentCumulative[1] ?? null,
+      q9PrimaryScore: state === 'completed' ? (primaryCumulative[2] ?? primaryFinal) : null,
+      q9OpponentScore: state === 'completed' ? (opponentCumulative[2] ?? opponentFinal) : null
     };
   }
 
   const quarterBreakdownExists =
-    [q1Primary, q2Primary, q3Primary, q4Primary].some((value) => value != null) &&
-    [q1Opponent, q2Opponent, q3Opponent, q4Opponent].some((value) => value != null);
+    primaryCumulative.slice(0, 4).some((value) => value != null) &&
+    opponentCumulative.slice(0, 4).some((value) => value != null);
 
   if (quarterBreakdownExists) {
     return {
-      q1PrimaryScore: q1Primary,
-      q1OpponentScore: q1Opponent,
-      q2PrimaryScore: q2Primary,
-      q2OpponentScore: q2Opponent,
-      q3PrimaryScore: q3Primary,
-      q3OpponentScore: q3Opponent,
-      q4PrimaryScore: q4Primary ?? (state === 'completed' ? primaryFinal : null),
-      q4OpponentScore: q4Opponent ?? (state === 'completed' ? opponentFinal : null)
+      ...EMPTY_SCORES,
+      q1PrimaryScore: primaryCumulative[0] ?? null,
+      q1OpponentScore: opponentCumulative[0] ?? null,
+      q2PrimaryScore: primaryCumulative[1] ?? null,
+      q2OpponentScore: opponentCumulative[1] ?? null,
+      q3PrimaryScore: primaryCumulative[2] ?? null,
+      q3OpponentScore: opponentCumulative[2] ?? null,
+      q4PrimaryScore: primaryCumulative[3] ?? (state === 'completed' ? primaryFinal : null),
+      q4OpponentScore: opponentCumulative[3] ?? (state === 'completed' ? opponentFinal : null)
     };
   }
 
@@ -344,24 +427,22 @@ const buildSportAwareScoresFromCompetition = (
     return buildFallbackQuarterScoresFromFinal(primaryFinal, opponentFinal);
   }
 
-  return EMPTY_SCORES;
+  return { ...EMPTY_SCORES };
 };
 
-const inferGameStateFromScores = (scores: QuarterScoresInput): string => {
-  if (scores.q4PrimaryScore != null && scores.q4OpponentScore != null) {
+const inferGameStateFromScores = (scores: QuarterScoresInput, leagueCode?: string | null): string => {
+  const activeSegments = getActiveScoreSegmentNumbers(leagueCode);
+  const finalQuarter = activeSegments[activeSegments.length - 1] ?? 4;
+  const finalScores = getQuarterScoresFromInput(scores, finalQuarter);
+
+  if (finalScores.primaryScore != null && finalScores.opponentScore != null) {
     return 'completed';
   }
 
-  if (
-    scores.q1PrimaryScore != null ||
-    scores.q1OpponentScore != null ||
-    scores.q2PrimaryScore != null ||
-    scores.q2OpponentScore != null ||
-    scores.q3PrimaryScore != null ||
-    scores.q3OpponentScore != null ||
-    scores.q4PrimaryScore != null ||
-    scores.q4OpponentScore != null
-  ) {
+  if (activeSegments.some((quarter) => {
+    const quarterScores = getQuarterScoresFromInput(scores, quarter);
+    return quarterScores.primaryScore != null || quarterScores.opponentScore != null;
+  })) {
     return 'in_progress';
   }
 
@@ -371,26 +452,45 @@ const inferGameStateFromScores = (scores: QuarterScoresInput): string => {
 const normalizeGameState = (value: unknown): string => {
   const raw = normalize(String(value ?? 'scheduled'));
 
-  if (['post', 'final', 'completed', 'complete', 'closed', 'finished'].some((keyword) => raw.includes(keyword))) {
+  if (!raw) {
+    return 'scheduled';
+  }
+
+  if (['postponed', 'ppd', 'rescheduled', 'delayed', 'suspended', 'cancelled', 'canceled'].some((keyword) => raw.includes(keyword))) {
+    return 'scheduled';
+  }
+
+  if (['final', 'completed', 'complete', 'closed', 'finished'].some((keyword) => raw.includes(keyword))) {
     return 'completed';
   }
 
-  if (['in', 'live', 'progress'].some((keyword) => raw.includes(keyword))) {
+  if (
+    raw === 'in' ||
+    raw.startsWith('in ') ||
+    raw.startsWith('in_') ||
+    ['live', 'progress', 'halftime', 'midgame'].some((keyword) => raw.includes(keyword))
+  ) {
     return 'in_progress';
   }
 
   return 'scheduled';
 };
 
-const inferCurrentQuarter = (scores: QuarterScoresInput, preferredQuarter?: number | null): number | null => {
+const inferCurrentQuarter = (scores: QuarterScoresInput, preferredQuarter?: number | null, leagueCode?: string | null): number | null => {
   if (preferredQuarter != null && Number.isFinite(Number(preferredQuarter))) {
     return Number(preferredQuarter);
   }
 
-  if (scores.q4PrimaryScore != null || scores.q4OpponentScore != null) return 4;
-  if (scores.q3PrimaryScore != null || scores.q3OpponentScore != null) return 3;
-  if (scores.q2PrimaryScore != null || scores.q2OpponentScore != null) return 2;
-  if (scores.q1PrimaryScore != null || scores.q1OpponentScore != null) return 1;
+  const activeSegments = getActiveScoreSegmentNumbers(leagueCode);
+
+  for (let index = activeSegments.length - 1; index >= 0; index -= 1) {
+    const quarter = activeSegments[index];
+    const quarterScores = getQuarterScoresFromInput(scores, quarter);
+    if (quarterScores.primaryScore != null || quarterScores.opponentScore != null) {
+      return quarter;
+    }
+  }
+
   return null;
 };
 
@@ -402,14 +502,29 @@ const scoresEqual = (left: QuarterScoresInput, right: QuarterScoresInput): boole
   left.q3PrimaryScore === right.q3PrimaryScore &&
   left.q3OpponentScore === right.q3OpponentScore &&
   left.q4PrimaryScore === right.q4PrimaryScore &&
-  left.q4OpponentScore === right.q4OpponentScore
+  left.q4OpponentScore === right.q4OpponentScore &&
+  left.q5PrimaryScore === right.q5PrimaryScore &&
+  left.q5OpponentScore === right.q5OpponentScore &&
+  left.q6PrimaryScore === right.q6PrimaryScore &&
+  left.q6OpponentScore === right.q6OpponentScore &&
+  left.q7PrimaryScore === right.q7PrimaryScore &&
+  left.q7OpponentScore === right.q7OpponentScore &&
+  left.q8PrimaryScore === right.q8PrimaryScore &&
+  left.q8OpponentScore === right.q8OpponentScore &&
+  left.q9PrimaryScore === right.q9PrimaryScore &&
+  left.q9OpponentScore === right.q9OpponentScore
 );
 
 const buildScoresByQuarterJson = (scores: QuarterScoresInput): QuarterScoreMap => ({
   '1': { home: scores.q1PrimaryScore, away: scores.q1OpponentScore },
   '2': { home: scores.q2PrimaryScore, away: scores.q2OpponentScore },
   '3': { home: scores.q3PrimaryScore, away: scores.q3OpponentScore },
-  '4': { home: scores.q4PrimaryScore, away: scores.q4OpponentScore }
+  '4': { home: scores.q4PrimaryScore, away: scores.q4OpponentScore },
+  '5': { home: scores.q5PrimaryScore, away: scores.q5OpponentScore },
+  '6': { home: scores.q6PrimaryScore, away: scores.q6OpponentScore },
+  '7': { home: scores.q7PrimaryScore, away: scores.q7OpponentScore },
+  '8': { home: scores.q8PrimaryScore, away: scores.q8OpponentScore },
+  '9': { home: scores.q9PrimaryScore, away: scores.q9OpponentScore }
 });
 
 const extractScoresFromDbValue = (
@@ -420,6 +535,7 @@ const extractScoresFromDbValue = (
   const map = toQuarterScoreMap(scoresByQuarter);
 
   return {
+    ...EMPTY_SCORES,
     q1PrimaryScore: toNullableScore(map['1']?.home),
     q1OpponentScore: toNullableScore(map['1']?.away),
     q2PrimaryScore: toNullableScore(map['2']?.home),
@@ -427,7 +543,17 @@ const extractScoresFromDbValue = (
     q3PrimaryScore: toNullableScore(map['3']?.home),
     q3OpponentScore: toNullableScore(map['3']?.away),
     q4PrimaryScore: toNullableScore(map['4']?.home) ?? toNullableScore(finalScoreHome),
-    q4OpponentScore: toNullableScore(map['4']?.away) ?? toNullableScore(finalScoreAway)
+    q4OpponentScore: toNullableScore(map['4']?.away) ?? toNullableScore(finalScoreAway),
+    q5PrimaryScore: toNullableScore(map['5']?.home),
+    q5OpponentScore: toNullableScore(map['5']?.away),
+    q6PrimaryScore: toNullableScore(map['6']?.home),
+    q6OpponentScore: toNullableScore(map['6']?.away),
+    q7PrimaryScore: toNullableScore(map['7']?.home),
+    q7OpponentScore: toNullableScore(map['7']?.away),
+    q8PrimaryScore: toNullableScore(map['8']?.home),
+    q8OpponentScore: toNullableScore(map['8']?.away),
+    q9PrimaryScore: toNullableScore(map['9']?.home),
+    q9OpponentScore: toNullableScore(map['9']?.away)
   };
 };
 
@@ -682,7 +808,10 @@ const buildEspnUpdateFromCompetition = (
   const state = normalizeGameState(
     competition.status?.type?.completed
       ? 'completed'
-      : competition.status?.type?.state ?? competition.status?.type?.description ?? target.state
+      : competition.status?.type?.description ??
+          competition.status?.type?.detail ??
+          competition.status?.type?.state ??
+          target.state
   );
 
   const scores = buildSportAwareScoresFromCompetition(target, primaryCompetitor, opponentCompetitor, state);
@@ -787,17 +916,25 @@ export const getGameIngestionUpdate = async (
     return getScoresFromEspn(gameId);
   }
 
-  const scores = buildDeterministicMockScores(gameId);
-  return {
-    gameId,
-    source,
-    scores,
-    state: inferGameStateFromScores(scores),
-    currentQuarter: inferCurrentQuarter(scores),
-    timeRemainingInQuarter: null,
-    espnEventId: null,
-    espnEventUid: null,
-    detectedAt: new Date().toISOString()
+  const client = await db.connect();
+
+  try {
+    const target = await loadGameTargetWithClient(client, gameId);
+    const scores = buildDeterministicMockScores(gameId, target?.leagueCode);
+
+    return {
+      gameId,
+      source,
+      scores,
+      state: inferGameStateFromScores(scores, target?.leagueCode),
+      currentQuarter: inferCurrentQuarter(scores, null, target?.leagueCode),
+      timeRemainingInQuarter: null,
+      espnEventId: null,
+      espnEventUid: null,
+      detectedAt: new Date().toISOString()
+    };
+  } finally {
+    client.release();
   };
 };
 
@@ -824,17 +961,20 @@ const applyGameIngestionUpdateWithClient = async (
     time_remaining_in_quarter: string | null;
     espn_event_id: string | null;
     espn_event_uid: string | null;
+    league_code: string | null;
   }>(
-    `SELECT scores_by_quarter,
-            final_score_home,
-            final_score_away,
-            state,
-            current_quarter,
-            time_remaining_in_quarter,
-            espn_event_id,
-            espn_event_uid
-     FROM football_pool.game
-     WHERE id = $1
+    `SELECT g.scores_by_quarter,
+            g.final_score_home,
+            g.final_score_away,
+            g.state,
+            g.current_quarter,
+            g.time_remaining_in_quarter,
+            g.espn_event_id,
+            g.espn_event_uid,
+            COALESCE(primary_team.league_code, 'NFL') AS league_code
+     FROM football_pool.game g
+     LEFT JOIN football_pool.sport_team primary_team ON primary_team.id = g.home_team_id
+     WHERE g.id = $1
      LIMIT 1`,
     [update.gameId]
   );
@@ -844,10 +984,18 @@ const applyGameIngestionUpdateWithClient = async (
   }
 
   const existing = existingResult.rows[0];
+  const activeSegments = getActiveScoreSegmentNumbers(existing.league_code);
+  const finalSegment = activeSegments[activeSegments.length - 1] ?? 4;
+  const finalScores = getQuarterScoresFromInput(update.scores, finalSegment);
   const existingScores = extractScoresFromDbValue(existing.scores_by_quarter, existing.final_score_home, existing.final_score_away);
-  const nextState = normalizeGameState(update.state || inferGameStateFromScores(update.scores));
-  const nextQuarter = nextState === 'scheduled' ? null : inferCurrentQuarter(update.scores, update.currentQuarter);
-  const nextClock = nextState === 'completed' ? '0:00' : update.timeRemainingInQuarter ?? null;
+  const nextState = normalizeGameState(update.state || inferGameStateFromScores(update.scores, existing.league_code));
+  const nextQuarter = nextState === 'scheduled' ? null : inferCurrentQuarter(update.scores, update.currentQuarter, existing.league_code);
+  const nextClock = nextState === 'completed' ? '0:00' : nextState === 'scheduled' ? null : update.timeRemainingInQuarter ?? null;
+  const hasActiveScores = activeSegments.some((quarter) => {
+    const quarterScores = getQuarterScoresFromInput(update.scores, quarter);
+    return quarterScores.primaryScore != null || quarterScores.opponentScore != null;
+  });
+  const shouldClearExistingWinnings = nextState === 'scheduled' && !hasActiveScores;
 
   const changed =
     !scoresEqual(existingScores, update.scores) ||
@@ -872,8 +1020,8 @@ const applyGameIngestionUpdateWithClient = async (
        WHERE id = $9`,
       [
         JSON.stringify(buildScoresByQuarterJson(update.scores)),
-        update.scores.q4PrimaryScore,
-        update.scores.q4OpponentScore,
+        finalScores.primaryScore,
+        finalScores.opponentScore,
         nextState,
         nextQuarter,
         nextClock,
@@ -882,10 +1030,17 @@ const applyGameIngestionUpdateWithClient = async (
         update.gameId
       ]
     );
-
   }
 
-  const shouldProcess = changed || Boolean(options?.forceProcess);
+  if (shouldClearExistingWinnings) {
+    await client.query(
+      `DELETE FROM football_pool.winnings_ledger
+       WHERE game_id = $1`,
+      [update.gameId]
+    );
+  }
+
+  const shouldProcess = !shouldClearExistingWinnings && (changed || Boolean(options?.forceProcess));
   const results = shouldProcess
     ? await processGameScoresWithClient(client, update.gameId, update.scores)
     : [];

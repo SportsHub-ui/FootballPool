@@ -6,17 +6,13 @@ import {
   type PoolPayoutScheduleMode,
   type PoolRoundPayoutInput
 } from '../config/poolPayoutSchedules';
+import { type PayoutValues } from '../config/poolLeagues';
 import { ensurePoolPayoutStructureSupport } from './poolPayoutStructureSupport';
 
 export type PoolPayoutConfig = {
   payoutScheduleMode: PoolPayoutScheduleMode;
   winnerLoserMode: boolean;
-  defaultPayouts: {
-    q1Payout: number;
-    q2Payout: number;
-    q3Payout: number;
-    q4Payout: number;
-  };
+  defaultPayouts: PayoutValues;
   roundPayouts: PoolRoundPayoutInput[];
 };
 
@@ -31,6 +27,11 @@ export const loadPoolPayoutConfig = async (client: PoolClient, poolId: number): 
     q2_payout: number | null;
     q3_payout: number | null;
     q4_payout: number | null;
+    q5_payout: number | null;
+    q6_payout: number | null;
+    q7_payout: number | null;
+    q8_payout: number | null;
+    q9_payout: number | null;
   }>(
     `SELECT league_code,
             payout_schedule_mode,
@@ -38,7 +39,12 @@ export const loadPoolPayoutConfig = async (client: PoolClient, poolId: number): 
             COALESCE(q1_payout, 0) AS q1_payout,
             COALESCE(q2_payout, 0) AS q2_payout,
             COALESCE(q3_payout, 0) AS q3_payout,
-            COALESCE(q4_payout, 0) AS q4_payout
+            COALESCE(q4_payout, 0) AS q4_payout,
+            COALESCE(q5_payout, 0) AS q5_payout,
+            COALESCE(q6_payout, 0) AS q6_payout,
+            COALESCE(q7_payout, 0) AS q7_payout,
+            COALESCE(q8_payout, 0) AS q8_payout,
+            COALESCE(q9_payout, 0) AS q9_payout
      FROM football_pool.pool
      WHERE id = $1
      LIMIT 1`,
@@ -58,13 +64,23 @@ export const loadPoolPayoutConfig = async (client: PoolClient, poolId: number): 
     q2_payout: number | null;
     q3_payout: number | null;
     q4_payout: number | null;
+    q5_payout: number | null;
+    q6_payout: number | null;
+    q7_payout: number | null;
+    q8_payout: number | null;
+    q9_payout: number | null;
   }>(
     `SELECT round_label,
             round_sequence,
             q1_payout,
             q2_payout,
             q3_payout,
-            q4_payout
+            q4_payout,
+            q5_payout,
+            q6_payout,
+            q7_payout,
+            q8_payout,
+            q9_payout
      FROM football_pool.pool_payout_rule
      WHERE pool_id = $1
      ORDER BY COALESCE(round_sequence, 32767), LOWER(round_label), id`,
@@ -78,7 +94,12 @@ export const loadPoolPayoutConfig = async (client: PoolClient, poolId: number): 
       q1Payout: Number(pool.q1_payout ?? 0),
       q2Payout: Number(pool.q2_payout ?? 0),
       q3Payout: Number(pool.q3_payout ?? 0),
-      q4Payout: Number(pool.q4_payout ?? 0)
+      q4Payout: Number(pool.q4_payout ?? 0),
+      q5Payout: Number(pool.q5_payout ?? 0),
+      q6Payout: Number(pool.q6_payout ?? 0),
+      q7Payout: Number(pool.q7_payout ?? 0),
+      q8Payout: Number(pool.q8_payout ?? 0),
+      q9Payout: Number(pool.q9_payout ?? 0)
     },
     roundPayouts: normalizePoolRoundPayouts(
       pool.league_code,
@@ -88,7 +109,12 @@ export const loadPoolPayoutConfig = async (client: PoolClient, poolId: number): 
         q1Payout: Number(row.q1_payout ?? 0),
         q2Payout: Number(row.q2_payout ?? 0),
         q3Payout: Number(row.q3_payout ?? 0),
-        q4Payout: Number(row.q4_payout ?? 0)
+        q4Payout: Number(row.q4_payout ?? 0),
+        q5Payout: Number(row.q5_payout ?? 0),
+        q6Payout: Number(row.q6_payout ?? 0),
+        q7Payout: Number(row.q7_payout ?? 0),
+        q8Payout: Number(row.q8_payout ?? 0),
+        q9Payout: Number(row.q9_payout ?? 0)
       }))
     )
   };
@@ -128,10 +154,15 @@ export const replacePoolRoundPayouts = async (
          q2_payout,
          q3_payout,
          q4_payout,
+         q5_payout,
+         q6_payout,
+         q7_payout,
+         q8_payout,
+         q9_payout,
          created_at,
          updated_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW())`,
       [
         options.poolId,
         roundPayout.roundLabel,
@@ -139,7 +170,12 @@ export const replacePoolRoundPayouts = async (
         roundPayout.q1Payout,
         roundPayout.q2Payout,
         roundPayout.q3Payout,
-        roundPayout.q4Payout
+        roundPayout.q4Payout,
+        roundPayout.q5Payout,
+        roundPayout.q6Payout,
+        roundPayout.q7Payout,
+        roundPayout.q8Payout,
+        roundPayout.q9Payout
       ]
     );
   }
@@ -151,11 +187,7 @@ export const resolvePoolPayoutsForRound = (
   payoutConfig: PoolPayoutConfig,
   roundLabel?: string | null,
   roundSequence?: number | null
-): {
-  q1Payout: number;
-  q2Payout: number;
-  q3Payout: number;
-  q4Payout: number;
+): PayoutValues & {
   winnerLoserMode: boolean;
 } => {
   const resolvedPayouts = resolveConfiguredPayouts({

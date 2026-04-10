@@ -56,10 +56,20 @@ const scoreUpdateSchema = z.object({
   q3PrimaryScore: z.number().int().nonnegative().nullable(),
   q3OpponentScore: z.number().int().nonnegative().nullable(),
   q4PrimaryScore: z.number().int().nonnegative().nullable(),
-  q4OpponentScore: z.number().int().nonnegative().nullable()
+  q4OpponentScore: z.number().int().nonnegative().nullable(),
+  q5PrimaryScore: z.number().int().nonnegative().nullable().optional().default(null),
+  q5OpponentScore: z.number().int().nonnegative().nullable().optional().default(null),
+  q6PrimaryScore: z.number().int().nonnegative().nullable().optional().default(null),
+  q6OpponentScore: z.number().int().nonnegative().nullable().optional().default(null),
+  q7PrimaryScore: z.number().int().nonnegative().nullable().optional().default(null),
+  q7OpponentScore: z.number().int().nonnegative().nullable().optional().default(null),
+  q8PrimaryScore: z.number().int().nonnegative().nullable().optional().default(null),
+  q8OpponentScore: z.number().int().nonnegative().nullable().optional().default(null),
+  q9PrimaryScore: z.number().int().nonnegative().nullable().optional().default(null),
+  q9OpponentScore: z.number().int().nonnegative().nullable().optional().default(null)
 });
 
-type QuarterKey = '1' | '2' | '3' | '4'
+type QuarterKey = '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9'
 type QuarterScoreMap = Partial<Record<QuarterKey, { home?: number | null; away?: number | null }>>
 
 const toQuarterScoreMap = (value: unknown): QuarterScoreMap => {
@@ -120,7 +130,17 @@ const buildGameResponse = (row: Record<string, unknown>) => {
     q3_primary_score: toNullableNumber(scores['3']?.home),
     q3_opponent_score: toNullableNumber(scores['3']?.away),
     q4_primary_score: toNullableNumber(scores['4']?.home),
-    q4_opponent_score: toNullableNumber(scores['4']?.away)
+    q4_opponent_score: toNullableNumber(scores['4']?.away),
+    q5_primary_score: toNullableNumber(scores['5']?.home),
+    q5_opponent_score: toNullableNumber(scores['5']?.away),
+    q6_primary_score: toNullableNumber(scores['6']?.home),
+    q6_opponent_score: toNullableNumber(scores['6']?.away),
+    q7_primary_score: toNullableNumber(scores['7']?.home),
+    q7_opponent_score: toNullableNumber(scores['7']?.away),
+    q8_primary_score: toNullableNumber(scores['8']?.home),
+    q8_opponent_score: toNullableNumber(scores['8']?.away),
+    q9_primary_score: toNullableNumber(scores['9']?.home),
+    q9_opponent_score: toNullableNumber(scores['9']?.away)
   }
 }
 
@@ -637,6 +657,16 @@ gamesRouter.patch('/:gameId/scores', async (req, res) => {
         q3_opponent_score: result.scores.q3OpponentScore,
         q4_primary_score: result.scores.q4PrimaryScore,
         q4_opponent_score: result.scores.q4OpponentScore,
+        q5_primary_score: result.scores.q5PrimaryScore,
+        q5_opponent_score: result.scores.q5OpponentScore,
+        q6_primary_score: result.scores.q6PrimaryScore,
+        q6_opponent_score: result.scores.q6OpponentScore,
+        q7_primary_score: result.scores.q7PrimaryScore,
+        q7_opponent_score: result.scores.q7OpponentScore,
+        q8_primary_score: result.scores.q8PrimaryScore,
+        q8_opponent_score: result.scores.q8OpponentScore,
+        q9_primary_score: result.scores.q9PrimaryScore,
+        q9_opponent_score: result.scores.q9OpponentScore,
         state: result.state,
         current_quarter: result.currentQuarter,
         time_remaining_in_quarter: result.timeRemainingInQuarter
