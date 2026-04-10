@@ -269,7 +269,11 @@ participantRouter.get('/pools/:poolId/games', async (req, res) => {
                 g.state,
                 g.scores_by_quarter,
                 nth.name AS home_team_name,
-                nta.name AS away_team_name
+                nth.primary_color AS home_team_primary_color,
+                nth.logo_url AS home_team_logo_url,
+                nta.name AS away_team_name,
+                nta.primary_color AS away_team_primary_color,
+                nta.logo_url AS away_team_logo_url
          FROM football_pool.pool_game pg
          JOIN football_pool.game g ON g.id = pg.game_id
          LEFT JOIN football_pool.sport_team nth ON nth.id = g.home_team_id
@@ -311,7 +315,11 @@ participantRouter.get('/pools/:poolId/games', async (req, res) => {
           home_team_id: row.home_team_id,
           away_team_id: row.away_team_id,
           home_team_name: row.home_team_name,
+          home_team_primary_color: row.home_team_primary_color ?? null,
+          home_team_logo_url: row.home_team_logo_url ?? null,
           away_team_name: row.away_team_name,
+          away_team_primary_color: row.away_team_primary_color ?? null,
+          away_team_logo_url: row.away_team_logo_url ?? null,
           opponent: buildMatchupDisplayLabel(row.home_team_name, row.away_team_name, {
             roundLabel: row.round_label ?? null,
             fallback: 'Opponent'
@@ -369,11 +377,12 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
                 COALESCE(p.winner_loser_flg, FALSE) AS winner_loser_flg,
                 p.league_code,
                 t.team_name,
-                t.primary_color,
+                COALESCE(NULLIF(t.primary_color, ''), st.primary_color) AS primary_color,
                 t.secondary_color,
-                t.logo_file
+                COALESCE(NULLIF(t.logo_file, ''), st.logo_url) AS logo_file
          FROM football_pool.pool p
          LEFT JOIN football_pool.organization t ON t.id = p.team_id
+         LEFT JOIN football_pool.sport_team st ON st.id = COALESCE(p.primary_sport_team_id, t.sport_team_id)
          WHERE p.id = $1`,
         [poolId]
       );

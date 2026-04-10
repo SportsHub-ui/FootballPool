@@ -2539,6 +2539,8 @@ setupRouter.get('/sport-teams', async (req, res) => {
               abbreviation,
               sport_code,
               league_code,
+              primary_color,
+              logo_url,
               espn_team_uid
        FROM football_pool.sport_team
        WHERE ($1::text IS NULL OR UPPER(COALESCE(league_code, '')) = $1)
@@ -2564,6 +2566,8 @@ setupRouter.get('/sport-teams', async (req, res) => {
                 abbreviation,
                 sport_code,
                 league_code,
+                primary_color,
+                logo_url,
                 espn_team_uid
          FROM football_pool.sport_team
          WHERE ($1::text IS NULL OR UPPER(COALESCE(league_code, '')) = $1)

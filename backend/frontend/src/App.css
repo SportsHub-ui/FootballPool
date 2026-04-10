@@ -945,6 +945,7 @@ button:disabled {
   letter-spacing: 0;
   font-size: 1.28rem;
   line-height: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 0 10px rgba(0, 0, 0, 0.18);
 }
 
 .board-axis-top {
@@ -1021,6 +1022,10 @@ button:disabled {
   object-fit: contain;
   border-radius: 3px;
   background: rgba(255, 255, 255, 0.2);
+}
+
+.board-axis-left .axis-team-logo {
+  transform: rotate(90deg);
 }
 
 .board-grid {
@@ -2408,6 +2413,8 @@ button:disabled {
   line-height: 1.05;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  color: #f8fafc;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

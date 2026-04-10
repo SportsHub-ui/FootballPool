@@ -35,6 +35,12 @@ type LandingGame = {
   game_id: number // normalized shared game PK
   pool_id: number
   week_num: number | null
+  home_team_name?: string | null
+  home_team_primary_color?: string | null
+  home_team_logo_url?: string | null
+  away_team_name?: string | null
+  away_team_primary_color?: string | null
+  away_team_logo_url?: string | null
   opponent: string
   game_dt: string
   state?: string | null
@@ -246,6 +252,72 @@ const resolveImageUrl = (value: string): string => {
   return `${API_BASE}/images/${value}`
 }
 
+const parseHexColor = (value: string | null | undefined): { r: number; g: number; b: number } | null => {
+  const cleaned = String(value ?? '').trim().replace(/^#/, '')
+
+  if (/^[0-9a-fA-F]{3}$/.test(cleaned)) {
+    return {
+      r: Number.parseInt(`${cleaned[0]}${cleaned[0]}`, 16),
+      g: Number.parseInt(`${cleaned[1]}${cleaned[1]}`, 16),
+      b: Number.parseInt(`${cleaned[2]}${cleaned[2]}`, 16)
+    }
+  }
+
+  if (!/^[0-9a-fA-F]{6}$/.test(cleaned)) {
+    return null
+  }
+
+  return {
+    r: Number.parseInt(cleaned.slice(0, 2), 16),
+    g: Number.parseInt(cleaned.slice(2, 4), 16),
+    b: Number.parseInt(cleaned.slice(4, 6), 16)
+  }
+}
+
+const getRelativeLuminance = (channel: number): number => {
+  const normalized = channel / 255
+  return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4
+}
+
+const getContrastRatio = (backgroundColor: string | null | undefined, foregroundColor: string | null | undefined): number | null => {
+  const background = parseHexColor(backgroundColor)
+  const foreground = parseHexColor(foregroundColor)
+
+  if (!background || !foreground) {
+    return null
+  }
+
+  const backgroundLuminance =
+    0.2126 * getRelativeLuminance(background.r) +
+    0.7152 * getRelativeLuminance(background.g) +
+    0.0722 * getRelativeLuminance(background.b)
+  const foregroundLuminance =
+    0.2126 * getRelativeLuminance(foreground.r) +
+    0.7152 * getRelativeLuminance(foreground.g) +
+    0.0722 * getRelativeLuminance(foreground.b)
+
+  const lighter = Math.max(backgroundLuminance, foregroundLuminance)
+  const darker = Math.min(backgroundLuminance, foregroundLuminance)
+
+  return (lighter + 0.05) / (darker + 0.05)
+}
+
+const getReadableTextColor = (backgroundColor: string | null | undefined, preferredColor: string | null | undefined): string => {
+  const preferred = String(preferredColor ?? '').trim()
+  const preferredContrast = getContrastRatio(backgroundColor, preferred)
+
+  if (preferred && preferredContrast != null && preferredContrast >= 4.5) {
+    return preferred
+  }
+
+  const darkCandidate = '#111827'
+  const lightCandidate = '#FFFFFF'
+  const darkContrast = getContrastRatio(backgroundColor, darkCandidate) ?? 0
+  const lightContrast = getContrastRatio(backgroundColor, lightCandidate) ?? 0
+
+  return lightContrast >= darkContrast ? lightCandidate : darkCandidate
+}
+
 const resolveTeamBrand = (
   teamName: string,
   fallbackColor: string,
@@ -256,14 +328,50 @@ const resolveTeamBrand = (
   const match = NFL_TEAM_BRANDS.find((team) => lowered.includes(team.key))
 
   if (match) {
-    return match
+    return {
+      ...match,
+      accent: getReadableTextColor(match.color, match.accent)
+    }
   }
 
   return {
     key: teamName,
     color: fallbackColor,
-    accent: fallbackAccent,
+    accent: getReadableTextColor(fallbackColor, fallbackAccent),
     logo: fallbackLogo ?? ''
+  }
+}
+
+const normalizeTeamKey = (value: string | null | undefined): string =>
+  String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+
+const resolveMatchupBranding = (
+  game: LandingGame | null | undefined,
+  primaryTeamName: string | null | undefined
+): {
+  primaryColor: string | null
+  primaryLogo: string | null
+  opponentColor: string | null
+  opponentLogo: string | null
+} => {
+  const normalizedPrimary = normalizeTeamKey(primaryTeamName)
+  const normalizedHome = normalizeTeamKey(game?.home_team_name)
+  const normalizedAway = normalizeTeamKey(game?.away_team_name)
+
+  if (normalizedPrimary && normalizedAway === normalizedPrimary && normalizedHome !== normalizedPrimary) {
+    return {
+      primaryColor: game?.away_team_primary_color ?? null,
+      primaryLogo: game?.away_team_logo_url ?? null,
+      opponentColor: game?.home_team_primary_color ?? null,
+      opponentLogo: game?.home_team_logo_url ?? null
+    }
+  }
+
+  return {
+    primaryColor: game?.home_team_primary_color ?? null,
+    primaryLogo: game?.home_team_logo_url ?? null,
+    opponentColor: game?.away_team_primary_color ?? null,
+    opponentLogo: game?.away_team_logo_url ?? null
   }
 }
 
@@ -1460,40 +1568,58 @@ export function LandingPage() {
     [games, selectedGameId]
   )
 
+  const selectedGameBranding = useMemo(
+    () => resolveMatchupBranding(selectedGame, board?.primaryTeam ?? null),
+    [selectedGame, board?.primaryTeam]
+  )
+
   const primaryBrand = useMemo(() => {
     if (board?.winnerLoserMode) {
+      const winnerBarColor = board?.teamPrimaryColor ?? selectedPool?.primary_color ?? '#8a8f98'
       return {
         key: 'winner-score',
-        color: board?.teamPrimaryColor ?? selectedPool?.primary_color ?? '#8a8f98',
-        accent: board?.teamSecondaryColor ?? selectedPool?.secondary_color ?? '#233042',
+        color: winnerBarColor,
+        accent: getReadableTextColor(winnerBarColor, board?.teamSecondaryColor ?? selectedPool?.secondary_color ?? '#233042'),
         logo: ''
       }
     }
 
     const teamName = board?.primaryTeam ?? selectedPool?.team_name ?? 'Preferred Team'
-    const fallbackLogo = selectedPool?.logo_file ? resolveImageUrl(selectedPool.logo_file) : null
+    const fallbackLogo = board?.teamLogo
+      ? resolveImageUrl(board.teamLogo)
+      : selectedGameBranding.primaryLogo
+        ? resolveImageUrl(selectedGameBranding.primaryLogo)
+        : selectedPool?.logo_file
+          ? resolveImageUrl(selectedPool.logo_file)
+          : null
 
     return resolveTeamBrand(
       teamName,
-      board?.teamPrimaryColor ?? selectedPool?.primary_color ?? '#8a8f98',
+      selectedGameBranding.primaryColor ?? board?.teamPrimaryColor ?? selectedPool?.primary_color ?? '#8a8f98',
       board?.teamSecondaryColor ?? selectedPool?.secondary_color ?? '#233042',
       fallbackLogo
     )
-  }, [board, selectedPool])
+  }, [board, selectedGameBranding, selectedPool])
 
   const opponentBrand = useMemo(() => {
     if (board?.winnerLoserMode) {
       return {
         key: 'losing-score',
         color: '#5f6368',
-        accent: '#ffffff',
+        accent: getReadableTextColor('#5f6368', '#ffffff'),
         logo: ''
       }
     }
 
     const opponentName = board?.opponent ?? selectedGame?.opponent ?? 'Opponent'
-    return resolveTeamBrand(opponentName, '#5f6368', '#ffffff', null)
-  }, [board, selectedGame])
+    const fallbackLogo = selectedGameBranding.opponentLogo ? resolveImageUrl(selectedGameBranding.opponentLogo) : null
+    return resolveTeamBrand(
+      opponentName,
+      selectedGameBranding.opponentColor ?? '#5f6368',
+      '#ffffff',
+      fallbackLogo
+    )
+  }, [board, selectedGame, selectedGameBranding])
 
   const logoSrc = selectedPool?.logo_file ? resolveImageUrl(selectedPool.logo_file) : DEFAULT_POOL_LOGO
   const topDigits = normalizeDigits(board?.colNumbers)

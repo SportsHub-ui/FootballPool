@@ -186,7 +186,11 @@ const loadPoolGames = async (client: PoolClient, poolId: number) => {
             pg.pool_id,
             g.week_number AS week_num,
             home_team.name AS home_team_name,
+            home_team.primary_color AS home_team_primary_color,
+            home_team.logo_url AS home_team_logo_url,
             away_team.name AS away_team_name,
+            away_team.primary_color AS away_team_primary_color,
+            away_team.logo_url AS away_team_logo_url,
             away_team.name AS opponent,
             COALESCE(g.kickoff_at, g.game_date::timestamp) AS game_dt,
             COALESCE(g.is_simulation, FALSE) AS is_simulation,
@@ -227,12 +231,13 @@ const loadAccessiblePools = async (client: PoolClient, userId: number | null, ca
             COALESCE(p.sign_in_req_flg, FALSE) AS sign_in_req_flg,
             COALESCE(p.display_token, '') AS display_token,
             t.team_name,
-            t.primary_color,
+            COALESCE(NULLIF(t.primary_color, ''), st.primary_color) AS primary_color,
             t.secondary_color,
-            t.logo_file,
+            COALESCE(NULLIF(t.logo_file, ''), st.logo_url) AS logo_file,
             COALESCE(t.has_members_flg, TRUE) AS has_members_flg
      FROM football_pool.pool p
      LEFT JOIN football_pool.organization t ON t.id = p.team_id
+     LEFT JOIN football_pool.sport_team st ON st.id = COALESCE(p.primary_sport_team_id, t.sport_team_id)
      LEFT JOIN football_pool.user_pool up
        ON up.pool_id = p.id
       AND up.user_id = $1
@@ -268,12 +273,13 @@ const loadAccessiblePool = async (client: PoolClient, poolId: number, userId: nu
             COALESCE(p.sign_in_req_flg, FALSE) AS sign_in_req_flg,
             COALESCE(p.display_token, '') AS display_token,
             t.team_name,
-            t.primary_color,
+            COALESCE(NULLIF(t.primary_color, ''), st.primary_color) AS primary_color,
             t.secondary_color,
-            t.logo_file,
+            COALESCE(NULLIF(t.logo_file, ''), st.logo_url) AS logo_file,
             COALESCE(t.has_members_flg, TRUE) AS has_members_flg
      FROM football_pool.pool p
      LEFT JOIN football_pool.organization t ON t.id = p.team_id
+     LEFT JOIN football_pool.sport_team st ON st.id = COALESCE(p.primary_sport_team_id, t.sport_team_id)
      LEFT JOIN football_pool.user_pool up
        ON up.pool_id = p.id
       AND up.user_id = $2
@@ -358,12 +364,13 @@ const loadPoolByDisplayToken = async (client: PoolClient, displayToken: string) 
             COALESCE(p.sign_in_req_flg, FALSE) AS sign_in_req_flg,
             COALESCE(p.display_token, '') AS display_token,
             t.team_name,
-            t.primary_color,
+            COALESCE(NULLIF(t.primary_color, ''), st.primary_color) AS primary_color,
             t.secondary_color,
-            t.logo_file,
+            COALESCE(NULLIF(t.logo_file, ''), st.logo_url) AS logo_file,
             COALESCE(t.has_members_flg, TRUE) AS has_members_flg
      FROM football_pool.pool p
      LEFT JOIN football_pool.organization t ON t.id = p.team_id
+     LEFT JOIN football_pool.sport_team st ON st.id = COALESCE(p.primary_sport_team_id, t.sport_team_id)
      WHERE p.display_token = $1
      LIMIT 1`,
     [displayToken]
