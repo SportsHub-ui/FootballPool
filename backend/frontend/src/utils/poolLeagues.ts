@@ -1,17 +1,35 @@
 export const supportedLeagueCodes = ['NFL', 'NCAAF', 'NCAAB', 'MLB', 'NBA', 'NHL'] as const
+export const allPayoutSlotKeys = ['q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q7', 'q8', 'q9'] as const
 
 export type SupportedLeagueCode = (typeof supportedLeagueCodes)[number]
 export type SupportedSportCode = 'FOOTBALL' | 'BASKETBALL' | 'BASEBALL' | 'HOCKEY'
-export type PayoutSlotKey = 'q1' | 'q2' | 'q3' | 'q4'
+export type PayoutSlotKey = (typeof allPayoutSlotKeys)[number]
+export type PayoutValueKey = `${PayoutSlotKey}Payout`
+export type ScoreSegmentNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
+export type PayoutValues = Record<PayoutValueKey, number>
+export type PayoutLabelMap = Record<PayoutSlotKey, string>
 
 export type PoolLeagueDefinition = {
   leagueCode: SupportedLeagueCode
   sportCode: SupportedSportCode
   label: string
   activePayoutSlots: PayoutSlotKey[]
-  payoutLabels: Record<PayoutSlotKey, string>
+  payoutLabels: PayoutLabelMap
   regularSeasonGameCount: number
 }
+
+const buildPayoutLabels = (overrides: Partial<PayoutLabelMap>): PayoutLabelMap => ({
+  q1: 'Unused',
+  q2: 'Unused',
+  q3: 'Unused',
+  q4: 'Unused',
+  q5: 'Unused',
+  q6: 'Unused',
+  q7: 'Unused',
+  q8: 'Unused',
+  q9: 'Unused',
+  ...overrides
+})
 
 const poolLeagueDefinitions: Record<SupportedLeagueCode, PoolLeagueDefinition> = {
   NFL: {
@@ -19,7 +37,7 @@ const poolLeagueDefinitions: Record<SupportedLeagueCode, PoolLeagueDefinition> =
     sportCode: 'FOOTBALL',
     label: 'NFL',
     activePayoutSlots: ['q1', 'q2', 'q3', 'q4'],
-    payoutLabels: { q1: 'Q1 payout', q2: 'Halftime payout', q3: 'Q3 payout', q4: 'Final payout' },
+    payoutLabels: buildPayoutLabels({ q1: 'Q1 payout', q2: 'Halftime payout', q3: 'Q3 payout', q4: 'Final payout' }),
     regularSeasonGameCount: 17
   },
   NCAAF: {
@@ -27,7 +45,7 @@ const poolLeagueDefinitions: Record<SupportedLeagueCode, PoolLeagueDefinition> =
     sportCode: 'FOOTBALL',
     label: 'NCAAF',
     activePayoutSlots: ['q1', 'q2', 'q3', 'q4'],
-    payoutLabels: { q1: 'Q1 payout', q2: 'Halftime payout', q3: 'Q3 payout', q4: 'Final payout' },
+    payoutLabels: buildPayoutLabels({ q1: 'Q1 payout', q2: 'Halftime payout', q3: 'Q3 payout', q4: 'Final payout' }),
     regularSeasonGameCount: 12
   },
   NBA: {
@@ -35,7 +53,7 @@ const poolLeagueDefinitions: Record<SupportedLeagueCode, PoolLeagueDefinition> =
     sportCode: 'BASKETBALL',
     label: 'NBA',
     activePayoutSlots: ['q1', 'q2', 'q3', 'q4'],
-    payoutLabels: { q1: 'Q1 payout', q2: 'Halftime payout', q3: 'Q3 payout', q4: 'Final payout' },
+    payoutLabels: buildPayoutLabels({ q1: 'Q1 payout', q2: 'Halftime payout', q3: 'Q3 payout', q4: 'Final payout' }),
     regularSeasonGameCount: 82
   },
   NCAAB: {
@@ -43,7 +61,7 @@ const poolLeagueDefinitions: Record<SupportedLeagueCode, PoolLeagueDefinition> =
     sportCode: 'BASKETBALL',
     label: 'NCAAB',
     activePayoutSlots: ['q1', 'q4'],
-    payoutLabels: { q1: '1st half payout', q2: 'Unused', q3: 'Unused', q4: 'Final payout' },
+    payoutLabels: buildPayoutLabels({ q1: '1st half payout', q4: 'Final payout' }),
     regularSeasonGameCount: 31
   },
   NHL: {
@@ -51,34 +69,72 @@ const poolLeagueDefinitions: Record<SupportedLeagueCode, PoolLeagueDefinition> =
     sportCode: 'HOCKEY',
     label: 'NHL',
     activePayoutSlots: ['q1', 'q2', 'q4'],
-    payoutLabels: { q1: '1st period payout', q2: '2nd period payout', q3: 'Unused', q4: 'Final payout' },
+    payoutLabels: buildPayoutLabels({ q1: '1st period payout', q2: '2nd period payout', q4: 'Final payout' }),
     regularSeasonGameCount: 82
   },
   MLB: {
     leagueCode: 'MLB',
     sportCode: 'BASEBALL',
     label: 'MLB',
-    activePayoutSlots: ['q4'],
-    payoutLabels: { q1: 'Unused', q2: 'Unused', q3: 'Unused', q4: 'Final payout' },
+    activePayoutSlots: ['q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q7', 'q8', 'q9'],
+    payoutLabels: buildPayoutLabels({
+      q1: '1st inning payout',
+      q2: '2nd inning payout',
+      q3: '3rd inning payout',
+      q4: '4th inning payout',
+      q5: '5th inning payout',
+      q6: '6th inning payout',
+      q7: '7th inning payout',
+      q8: '8th inning payout',
+      q9: 'Final inning payout'
+    }),
     regularSeasonGameCount: 162
   }
 }
+
+const payoutSlotQuarterMap: Record<PayoutSlotKey, ScoreSegmentNumber> = {
+  q1: 1,
+  q2: 2,
+  q3: 3,
+  q4: 4,
+  q5: 5,
+  q6: 6,
+  q7: 7,
+  q8: 8,
+  q9: 9
+}
+
+const getOrdinalLabel = (value: number): string => {
+  if (value % 100 >= 11 && value % 100 <= 13) return `${value}th`
+  if (value % 10 === 1) return `${value}st`
+  if (value % 10 === 2) return `${value}nd`
+  if (value % 10 === 3) return `${value}rd`
+  return `${value}th`
+}
+
+export const buildEmptyPayoutValues = (): PayoutValues => ({
+  q1Payout: 0,
+  q2Payout: 0,
+  q3Payout: 0,
+  q4Payout: 0,
+  q5Payout: 0,
+  q6Payout: 0,
+  q7Payout: 0,
+  q8Payout: 0,
+  q9Payout: 0
+})
+
+export const getPayoutValueForSlot = (entry: Partial<PayoutValues> | null | undefined, slot: PayoutSlotKey): number =>
+  Number(entry?.[`${slot}Payout` as PayoutValueKey] ?? 0)
 
 export const getPoolLeagueDefinition = (leagueCode?: string | null): PoolLeagueDefinition => {
   const normalized = String(leagueCode ?? 'NFL').trim().toUpperCase() as SupportedLeagueCode
   return poolLeagueDefinitions[normalized] ?? poolLeagueDefinitions.NFL
 }
 
-const payoutSlotQuarterMap: Record<PayoutSlotKey, 1 | 2 | 3 | 4> = {
-  q1: 1,
-  q2: 2,
-  q3: 3,
-  q4: 4
-}
-
 export type ScoreSegmentDefinition = {
   slot: PayoutSlotKey
-  quarter: 1 | 2 | 3 | 4
+  quarter: ScoreSegmentNumber
   shortLabel: string
   fullLabel: string
 }
@@ -90,20 +146,20 @@ const getCompactScoreSegmentLabel = (
 ): string => {
   const normalizedLabel = payoutLabel.trim().toLowerCase()
 
-  if (slot === 'q4' || normalizedLabel.includes('final')) {
+  if (slot === 'q9' || normalizedLabel.includes('final')) {
     return 'Final'
   }
 
   if (normalizedLabel.includes('half')) {
-    return slot === 'q1' ? '1st Half' : 'Halftime'
+    return slot === 'q1' ? '1st Half' : 'Final'
   }
 
   if (normalizedLabel.includes('period')) {
-    return slot === 'q1' ? '1st Period' : slot === 'q2' ? '2nd Period' : '3rd Period'
+    return slot === 'q1' ? '1st Period' : slot === 'q2' ? '2nd Period' : 'Final'
   }
 
   if (leagueCode === 'MLB') {
-    return 'Final'
+    return `${getOrdinalLabel(payoutSlotQuarterMap[slot])} Inning`
   }
 
   return slot.toUpperCase()
@@ -138,6 +194,14 @@ export const getSimulationStepDescriptor = (options?: {
   const segments = getScoreSegmentDefinitions(options)
   const segmentLabels = segments.map((segment) => segment.fullLabel.toLowerCase()).join(' ')
 
+  if (segmentLabels.includes('inning')) {
+    return {
+      modeLabel: 'By Inning',
+      singularLabel: 'Inning',
+      pluralLabel: 'innings'
+    }
+  }
+
   if (segmentLabels.includes('half')) {
     return {
       modeLabel: 'By Half',
@@ -171,14 +235,15 @@ export const getSimulationStepDescriptor = (options?: {
 
 export const normalizePayoutsForLeague = (
   leagueCode: string | null | undefined,
-  payouts: { q1Payout: number; q2Payout: number; q3Payout: number; q4Payout: number }
-): { q1Payout: number; q2Payout: number; q3Payout: number; q4Payout: number } => {
+  payouts: PayoutValues
+): PayoutValues => {
   const activeSlots = new Set(getPoolLeagueDefinition(leagueCode).activePayoutSlots)
+  const normalized = buildEmptyPayoutValues()
 
-  return {
-    q1Payout: activeSlots.has('q1') ? Math.max(0, Number(payouts.q1Payout) || 0) : 0,
-    q2Payout: activeSlots.has('q2') ? Math.max(0, Number(payouts.q2Payout) || 0) : 0,
-    q3Payout: activeSlots.has('q3') ? Math.max(0, Number(payouts.q3Payout) || 0) : 0,
-    q4Payout: activeSlots.has('q4') ? Math.max(0, Number(payouts.q4Payout) || 0) : 0
+  for (const slot of allPayoutSlotKeys) {
+    const valueKey = `${slot}Payout` as PayoutValueKey
+    normalized[valueKey] = activeSlots.has(slot) ? Math.max(0, Number(payouts[valueKey]) || 0) : 0
   }
+
+  return normalized
 }

@@ -1,15 +1,11 @@
-import { normalizePayoutsForLeague } from './poolLeagues';
+import { buildEmptyPayoutValues, normalizePayoutsForLeague, type PayoutValues } from './poolLeagues';
 
 export const poolPayoutScheduleModeValues = ['uniform', 'by_round'] as const;
 export type PoolPayoutScheduleMode = (typeof poolPayoutScheduleModeValues)[number];
 
-export type PoolRoundPayoutInput = {
+export type PoolRoundPayoutInput = PayoutValues & {
   roundLabel: string;
   roundSequence?: number | null;
-  q1Payout: number;
-  q2Payout: number;
-  q3Payout: number;
-  q4Payout: number;
 };
 
 const normalizeRoundLabel = (value?: string | null): string => String(value ?? '').trim();
@@ -36,7 +32,12 @@ export const normalizePoolRoundPayouts = (
         q1Payout: roundPayout.q1Payout,
         q2Payout: roundPayout.q2Payout,
         q3Payout: roundPayout.q3Payout,
-        q4Payout: roundPayout.q4Payout
+        q4Payout: roundPayout.q4Payout,
+        q5Payout: roundPayout.q5Payout,
+        q6Payout: roundPayout.q6Payout,
+        q7Payout: roundPayout.q7Payout,
+        q8Payout: roundPayout.q8Payout,
+        q9Payout: roundPayout.q9Payout
       });
 
       return {
@@ -93,11 +94,11 @@ export const findMatchingRoundPayout = (
 
 export const resolveConfiguredPayouts = (options: {
   payoutScheduleMode?: string | null;
-  defaultPayouts: { q1Payout: number; q2Payout: number; q3Payout: number; q4Payout: number };
+  defaultPayouts: PayoutValues;
   roundPayouts?: PoolRoundPayoutInput[];
   roundLabel?: string | null;
   roundSequence?: number | null;
-}): { q1Payout: number; q2Payout: number; q3Payout: number; q4Payout: number } => {
+}): PayoutValues => {
   const payoutScheduleMode = getPoolPayoutScheduleMode(options.payoutScheduleMode);
 
   if (payoutScheduleMode !== 'by_round') {
@@ -106,18 +107,18 @@ export const resolveConfiguredPayouts = (options: {
 
   const matchingRoundPayout = findMatchingRoundPayout(options.roundPayouts ?? [], options.roundLabel, options.roundSequence);
   if (!matchingRoundPayout) {
-    return {
-      q1Payout: 0,
-      q2Payout: 0,
-      q3Payout: 0,
-      q4Payout: 0
-    };
+    return buildEmptyPayoutValues();
   }
 
   return {
     q1Payout: Number(matchingRoundPayout.q1Payout ?? 0),
     q2Payout: Number(matchingRoundPayout.q2Payout ?? 0),
     q3Payout: Number(matchingRoundPayout.q3Payout ?? 0),
-    q4Payout: Number(matchingRoundPayout.q4Payout ?? 0)
+    q4Payout: Number(matchingRoundPayout.q4Payout ?? 0),
+    q5Payout: Number(matchingRoundPayout.q5Payout ?? 0),
+    q6Payout: Number(matchingRoundPayout.q6Payout ?? 0),
+    q7Payout: Number(matchingRoundPayout.q7Payout ?? 0),
+    q8Payout: Number(matchingRoundPayout.q8Payout ?? 0),
+    q9Payout: Number(matchingRoundPayout.q9Payout ?? 0)
   };
 };

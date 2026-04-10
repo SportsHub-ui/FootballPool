@@ -611,6 +611,81 @@ describe('Football Pool API', () => {
       expect(createdPool?.q3_payout).toBe(0)
     })
 
+    it('should auto-sync missing MLB sport teams when a league list is requested', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        const url = String(input)
+
+        if (url.includes('/sports/baseball/mlb/teams')) {
+          return new Response(
+            JSON.stringify({
+              sports: [
+                {
+                  leagues: [
+                    {
+                      teams: [
+                        {
+                          team: {
+                            id: '1',
+                            uid: 's:10~l:442~t:1',
+                            displayName: 'Chicago Cubs',
+                            shortDisplayName: 'Cubs',
+                            abbreviation: 'CHC',
+                            slug: 'chicago-cubs',
+                            color: '0E3386',
+                            logos: [{ href: 'https://example.com/cubs.png' }]
+                          }
+                        },
+                        {
+                          team: {
+                            id: '2',
+                            uid: 's:10~l:442~t:2',
+                            displayName: 'Los Angeles Dodgers',
+                            shortDisplayName: 'Dodgers',
+                            abbreviation: 'LAD',
+                            slug: 'los-angeles-dodgers',
+                            color: '005A9C',
+                            logos: [{ href: 'https://example.com/dodgers.png' }]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }),
+            {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' }
+            }
+          )
+        }
+
+        return new Response('Not found', { status: 404 })
+      })
+
+      try {
+        await db.query(`DELETE FROM football_pool.sport_team WHERE league_code = 'MLB'`)
+
+        const response = await request(app)
+          .get('/api/setup/sport-teams?leagueCode=MLB')
+          .set(organizerHeaders)
+
+        expect(response.status).toBe(200)
+        expect(response.body.sportTeams.length).toBeGreaterThanOrEqual(2)
+        expect(
+          response.body.sportTeams.some(
+            (team: { name: string; league_code: string; sport_code: string }) =>
+              team.name === 'Chicago Cubs' && team.league_code === 'MLB' && team.sport_code === 'BASEBALL'
+          )
+        ).toBe(true)
+        expect(
+          response.body.sportTeams.some((team: { name: string }) => team.name === 'Los Angeles Dodgers')
+        ).toBe(true)
+      } finally {
+        fetchSpy.mockRestore()
+      }
+    })
+
     it('should allow tournament pools without a preferred team and persist winner/loser scoring', async () => {
       const poolName = `Tournament Pool ${Date.now()}`
       const createResponse = await request(app)
@@ -1409,7 +1484,194 @@ describe('Football Pool API', () => {
 
       expect(response.status).toBe(200)
       expect(response.body.game).toHaveProperty('id')
+      expect(Array.isArray(response.body.game.row_numbers)).toBe(true)
+      expect(response.body.game.row_numbers).toHaveLength(10)
+      expect(Array.isArray(response.body.game.col_numbers)).toBe(true)
+      expect(response.body.game.col_numbers).toHaveLength(10)
       gameId = response.body.game.id
+    })
+
+    it('should populate board numbers when Fill Schedule imports an MLB season pool', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        const url = String(input)
+
+        if (url.includes('/teams/1/schedule?season=2026&seasontype=2')) {
+          return new Response(
+            JSON.stringify({
+              events: [
+                {
+                  id: '401700001',
+                  uid: 's:10~l:442~e:401700001',
+                  date: '2026-04-01T18:20:00Z',
+                  competitions: [
+                    {
+                      id: '401700001',
+                      date: '2026-04-01T18:20:00Z',
+                      competitors: [
+                        {
+                          team: {
+                            id: '1',
+                            uid: 's:10~l:442~t:1',
+                            displayName: 'Chicago Cubs',
+                            shortDisplayName: 'Cubs',
+                            abbreviation: 'CHC',
+                            slug: 'chicago-cubs'
+                          }
+                        },
+                        {
+                          team: {
+                            id: '2',
+                            uid: 's:10~l:442~t:2',
+                            displayName: 'St. Louis Cardinals',
+                            shortDisplayName: 'Cardinals',
+                            abbreviation: 'STL',
+                            slug: 'st-louis-cardinals'
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  id: '401700002',
+                  uid: 's:10~l:442~e:401700002',
+                  date: '2026-04-03T18:20:00Z',
+                  competitions: [
+                    {
+                      id: '401700002',
+                      date: '2026-04-03T18:20:00Z',
+                      competitors: [
+                        {
+                          team: {
+                            id: '1',
+                            uid: 's:10~l:442~t:1',
+                            displayName: 'Chicago Cubs',
+                            shortDisplayName: 'Cubs',
+                            abbreviation: 'CHC',
+                            slug: 'chicago-cubs'
+                          }
+                        },
+                        {
+                          team: {
+                            id: '3',
+                            uid: 's:10~l:442~t:3',
+                            displayName: 'Milwaukee Brewers',
+                            shortDisplayName: 'Brewers',
+                            abbreviation: 'MIL',
+                            slug: 'milwaukee-brewers'
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }),
+            {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' }
+            }
+          )
+        }
+
+        if (url.includes('/sports/baseball/mlb/teams')) {
+          return new Response(
+            JSON.stringify({
+              sports: [
+                {
+                  leagues: [
+                    {
+                      teams: [
+                        {
+                          team: {
+                            id: '1',
+                            uid: 's:10~l:442~t:1',
+                            displayName: 'Chicago Cubs',
+                            shortDisplayName: 'Cubs',
+                            abbreviation: 'CHC',
+                            slug: 'chicago-cubs',
+                            color: '0E3386',
+                            logos: [{ href: 'https://example.com/cubs.png' }]
+                          }
+                        },
+                        {
+                          team: {
+                            id: '2',
+                            uid: 's:10~l:442~t:2',
+                            displayName: 'St. Louis Cardinals',
+                            shortDisplayName: 'Cardinals',
+                            abbreviation: 'STL',
+                            slug: 'st-louis-cardinals',
+                            color: 'C41E3A',
+                            logos: [{ href: 'https://example.com/cardinals.png' }]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }),
+            {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' }
+            }
+          )
+        }
+
+        return new Response('Not found', { status: 404 })
+      })
+
+      try {
+        const teamResponse = await request(app)
+          .post('/api/setup/teams')
+          .set(organizerHeaders)
+          .send({ teamName: `MLB Import Team ${Date.now()}` })
+
+        expect(teamResponse.status).toBe(201)
+
+        const poolResponse = await request(app)
+          .post('/api/setup/pools')
+          .set(organizerHeaders)
+          .send({
+            poolName: `MLB Import Pool ${Date.now()}`,
+            teamId: teamResponse.body.id,
+            season: 2026,
+            leagueCode: 'MLB',
+            primaryTeam: 'Chicago Cubs',
+            squareCost: 20,
+            q1Payout: 100,
+            q2Payout: 100,
+            q3Payout: 100,
+            q4Payout: 100
+          })
+
+        expect(poolResponse.status).toBe(201)
+        const importedPoolId = Number(poolResponse.body.id)
+
+        const importResponse = await request(app)
+          .post(`/api/games/import/pool/${importedPoolId}`)
+          .set(organizerHeaders)
+
+        expect(importResponse.status).toBe(200)
+
+        const importedGamesResult = await db.query<{ row_numbers: unknown; column_numbers: unknown }>(
+          `SELECT row_numbers, column_numbers
+           FROM football_pool.pool_game
+           WHERE pool_id = $1
+           ORDER BY game_id`,
+          [importedPoolId]
+        )
+
+        expect(importedGamesResult.rows.length).toBe(2)
+        expect(
+          importedGamesResult.rows.every(
+            (row) => Array.isArray(row.row_numbers) && row.row_numbers.length === 10 && Array.isArray(row.column_numbers) && row.column_numbers.length === 10
+          )
+        ).toBe(true)
+      } finally {
+        fetchSpy.mockRestore()
+      }
     })
 
     it('should list games for a pool', async () => {
@@ -1447,6 +1709,132 @@ describe('Football Pool API', () => {
 
       expect(response.status).toBe(200)
       expect(response.body.game).toHaveProperty('q1_primary_score', 3)
+    })
+
+    it('should repair legacy empty board numbers before calculating winners', async () => {
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({ teamName: `Legacy Board Team ${Date.now()}` })
+
+      expect(teamResponse.status).toBe(201)
+
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `Legacy Board Pool ${Date.now()}`,
+          teamId: teamResponse.body.id,
+          season: 2026,
+          poolType: 'single_game',
+          leagueCode: 'MLB',
+          primaryTeam: 'Chicago Cubs',
+          boardNumberMode: 'same_for_tournament',
+          squareCost: 20,
+          q1Payout: 50,
+          q2Payout: 0,
+          q3Payout: 0,
+          q4Payout: 0
+        })
+
+      expect(poolResponse.status).toBe(201)
+      const legacyPoolId = Number(poolResponse.body.id)
+
+      const participantResponse = await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Legacy',
+          lastName: 'Winner',
+          email: `legacy-winner-${Date.now()}@example.com`,
+          phone: '5554422222'
+        })
+
+      expect(participantResponse.status).toBe(201)
+      const participantId = Number(participantResponse.body.id)
+
+      await request(app)
+        .post(`/api/setup/pools/${legacyPoolId}/squares/init`)
+        .set(organizerHeaders)
+        .send({})
+
+      const assignResponse = await request(app)
+        .patch(`/api/setup/pools/${legacyPoolId}/squares/12`)
+        .set(organizerHeaders)
+        .send({ participantId, playerId: null, paidFlg: true })
+
+      expect(assignResponse.status).toBe(200)
+
+      const gameResponse = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId: legacyPoolId,
+          weekNum: 1,
+          opponent: 'Legacy Opponent',
+          gameDate: '2026-07-05'
+        })
+
+      expect(gameResponse.status).toBe(200)
+      const legacyGameId = Number(gameResponse.body.game.id)
+
+      await db.query(
+        `UPDATE football_pool.pool
+         SET board_number_mode = 'same_for_tournament',
+             tournament_row_numbers = $2::jsonb,
+             tournament_column_numbers = $3::jsonb
+         WHERE id = $1`,
+        [
+          legacyPoolId,
+          JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+          JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+        ]
+      )
+
+      await db.query(
+        `UPDATE football_pool.pool_game
+         SET row_numbers = '[]'::jsonb,
+             column_numbers = '[]'::jsonb
+         WHERE pool_id = $1
+           AND game_id = $2`,
+        [legacyPoolId, legacyGameId]
+      )
+
+      const scoreResponse = await request(app)
+        .patch(`/api/games/${legacyGameId}/scores`)
+        .set(organizerHeaders)
+        .send({
+          q1PrimaryScore: 1,
+          q1OpponentScore: 1,
+          q2PrimaryScore: null,
+          q2OpponentScore: null,
+          q3PrimaryScore: null,
+          q3OpponentScore: null,
+          q4PrimaryScore: null,
+          q4OpponentScore: null
+        })
+
+      expect(scoreResponse.status).toBe(200)
+
+      const repairedBoardResult = await db.query<{ row_numbers: number[] | null; column_numbers: number[] | null }>(
+        `SELECT row_numbers, column_numbers
+         FROM football_pool.pool_game
+         WHERE pool_id = $1
+           AND game_id = $2`,
+        [legacyPoolId, legacyGameId]
+      )
+
+      expect(repairedBoardResult.rows[0]?.row_numbers).toHaveLength(10)
+      expect(repairedBoardResult.rows[0]?.column_numbers).toHaveLength(10)
+
+      const boardResponse = await request(app)
+        .get(`/api/landing/pools/${legacyPoolId}/board?gameId=${legacyGameId}`)
+        .set(organizerHeaders)
+
+      expect(boardResponse.status).toBe(200)
+
+      const winningSquare = boardResponse.body.board.squares.find((square: { square_num: number }) => square.square_num === 12)
+      expect(winningSquare?.current_game_won).toBe(50)
     })
 
     it('should use winner and loser digits when a pool is configured for winner/loser scoring', async () => {
@@ -1553,6 +1941,354 @@ describe('Football Pool API', () => {
 
       const winningSquare = boardResponse.body.board.squares.find((square: { square_num: number }) => square.square_num === 48)
       expect(winningSquare?.current_game_won).toBe(400)
+    })
+
+    it('should support baseball inning payouts and treat the ninth slot as the final inning for extra-inning games', async () => {
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({ teamName: `Baseball Inning Team ${Date.now()}` })
+
+      expect(teamResponse.status).toBe(201)
+
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `Baseball Inning Pool ${Date.now()}`,
+          teamId: teamResponse.body.id,
+          season: 2026,
+          poolType: 'single_game',
+          leagueCode: 'MLB',
+          primaryTeam: 'Cubs',
+          squareCost: 20,
+          q1Payout: 10,
+          q2Payout: 10,
+          q3Payout: 10,
+          q4Payout: 10,
+          q5Payout: 10,
+          q6Payout: 10,
+          q7Payout: 10,
+          q8Payout: 10,
+          q9Payout: 20
+        })
+
+      expect(poolResponse.status).toBe(201)
+      const baseballPoolId = Number(poolResponse.body.id)
+
+      const participantResponse = await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Baseball',
+          lastName: 'Winner',
+          email: `baseball-winner-${Date.now()}@example.com`,
+          phone: '5554411111'
+        })
+
+      expect(participantResponse.status).toBe(201)
+      const participantId = Number(participantResponse.body.id)
+
+      await request(app)
+        .post(`/api/setup/pools/${baseballPoolId}/squares/init`)
+        .set(organizerHeaders)
+        .send({})
+
+      const assignResponse = await request(app)
+        .patch(`/api/setup/pools/${baseballPoolId}/squares/12`)
+        .set(organizerHeaders)
+        .send({ participantId, playerId: null, paidFlg: true })
+
+      expect(assignResponse.status).toBe(200)
+
+      const gameResponse = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId: baseballPoolId,
+          weekNum: 1,
+          opponent: 'Cardinals',
+          gameDate: '2026-07-04'
+        })
+
+      expect(gameResponse.status).toBe(200)
+      const baseballGameId = Number(gameResponse.body.game.id)
+
+      await db.query(
+        `UPDATE football_pool.pool_game
+         SET row_numbers = $2::jsonb,
+             column_numbers = $3::jsonb
+         WHERE pool_id = $1
+           AND game_id = $4`,
+        [
+          baseballPoolId,
+          JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+          JSON.stringify([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]),
+          baseballGameId
+        ]
+      )
+
+      const scoreResponse = await request(app)
+        .patch(`/api/games/${baseballGameId}/scores`)
+        .set(organizerHeaders)
+        .send({
+          q1PrimaryScore: 1,
+          q1OpponentScore: 1,
+          q2PrimaryScore: 11,
+          q2OpponentScore: 11,
+          q3PrimaryScore: 21,
+          q3OpponentScore: 21,
+          q4PrimaryScore: 31,
+          q4OpponentScore: 31,
+          q5PrimaryScore: 41,
+          q5OpponentScore: 41,
+          q6PrimaryScore: 51,
+          q6OpponentScore: 51,
+          q7PrimaryScore: 61,
+          q7OpponentScore: 61,
+          q8PrimaryScore: 71,
+          q8OpponentScore: 71,
+          q9PrimaryScore: 101,
+          q9OpponentScore: 101
+        })
+
+      expect(scoreResponse.status).toBe(200)
+
+      const boardResponse = await request(app)
+        .get(`/api/landing/pools/${baseballPoolId}/board?gameId=${baseballGameId}`)
+        .set(organizerHeaders)
+
+      expect(boardResponse.status).toBe(200)
+      expect(boardResponse.body.board?.payoutSummary?.activeSlots).toEqual(['q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q7', 'q8', 'q9'])
+
+      const winningSquare = boardResponse.body.board.squares.find((square: { square_num: number }) => square.square_num === 12)
+      expect(winningSquare?.current_game_won).toBe(100)
+
+      const winningsResponse = await request(app)
+        .get(`/api/winnings/pool/${baseballPoolId}`)
+        .set(organizerHeaders)
+
+      expect(winningsResponse.status).toBe(200)
+      expect(winningsResponse.body).toHaveLength(9)
+      expect(Math.max(...winningsResponse.body.map((entry: { quarter: number }) => Number(entry.quarter)))).toBe(9)
+      expect(winningsResponse.body.find((entry: { quarter: number; amount_won: number }) => Number(entry.quarter) === 9)?.amount_won).toBe(20)
+    })
+
+    it('should treat postponed ESPN MLB games as scheduled and clear prior payouts', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        const url = String(input)
+
+        if (url.includes('/sports/baseball/mlb/scoreboard?dates=20260403')) {
+          return new Response(
+            JSON.stringify({
+              events: [
+                {
+                  id: '401814790',
+                  uid: 's:10~l:442~e:401814790',
+                  competitions: [
+                    {
+                      competitors: [
+                        {
+                          homeAway: 'home',
+                          score: '0',
+                          linescores: [],
+                          team: {
+                            id: '118',
+                            uid: 's:10~l:442~t:118',
+                            displayName: 'Milwaukee Brewers',
+                            shortDisplayName: 'Brewers',
+                            abbreviation: 'MIL'
+                          }
+                        },
+                        {
+                          homeAway: 'away',
+                          score: '0',
+                          linescores: [],
+                          team: {
+                            id: '7',
+                            uid: 's:10~l:442~t:7',
+                            displayName: 'Kansas City Royals',
+                            shortDisplayName: 'Royals',
+                            abbreviation: 'KC'
+                          }
+                        }
+                      ],
+                      status: {
+                        type: {
+                          completed: false,
+                          state: 'post',
+                          description: 'Postponed',
+                          detail: 'Postponed'
+                        },
+                        displayClock: '',
+                        period: null
+                      }
+                    }
+                  ]
+                }
+              ]
+            }),
+            {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' }
+            }
+          )
+        }
+
+        return new Response(JSON.stringify({ events: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      })
+
+      try {
+        const teamResponse = await request(app)
+          .post('/api/setup/teams')
+          .set(organizerHeaders)
+          .send({ teamName: `Postponed MLB Team ${Date.now()}` })
+
+        expect(teamResponse.status).toBe(201)
+
+        const poolResponse = await request(app)
+          .post('/api/setup/pools')
+          .set(organizerHeaders)
+          .send({
+            poolName: `Postponed MLB Pool ${Date.now()}`,
+            teamId: teamResponse.body.id,
+            season: 2026,
+            poolType: 'single_game',
+            leagueCode: 'MLB',
+            primaryTeam: 'Milwaukee Brewers',
+            squareCost: 20,
+            q1Payout: 10,
+            q2Payout: 10,
+            q3Payout: 10,
+            q4Payout: 10,
+            q5Payout: 10,
+            q6Payout: 10,
+            q7Payout: 10,
+            q8Payout: 10,
+            q9Payout: 20
+          })
+
+        expect(poolResponse.status).toBe(201)
+        const postponedPoolId = Number(poolResponse.body.id)
+
+        const participantResponse = await request(app)
+          .post('/api/setup/users')
+          .set(organizerHeaders)
+          .send({
+            firstName: 'Postponed',
+            lastName: 'Winner',
+            email: `postponed-winner-${Date.now()}@example.com`,
+            phone: '5554422222'
+          })
+
+        expect(participantResponse.status).toBe(201)
+        const participantId = Number(participantResponse.body.id)
+
+        await request(app)
+          .post(`/api/setup/pools/${postponedPoolId}/squares/init`)
+          .set(organizerHeaders)
+          .send({})
+
+        const assignResponse = await request(app)
+          .patch(`/api/setup/pools/${postponedPoolId}/squares/12`)
+          .set(organizerHeaders)
+          .send({ participantId, playerId: null, paidFlg: true })
+
+        expect(assignResponse.status).toBe(200)
+
+        const gameResponse = await request(app)
+          .post('/api/games')
+          .set(organizerHeaders)
+          .send({
+            poolId: postponedPoolId,
+            weekNum: 1,
+            opponent: 'Kansas City Royals',
+            gameDate: '2026-04-03'
+          })
+
+        expect(gameResponse.status).toBe(200)
+        const postponedGameId = Number(gameResponse.body.game.id)
+
+        await db.query(
+          `UPDATE football_pool.game
+           SET state = 'completed',
+               final_score_home = 1,
+               final_score_away = 1,
+               scores_by_quarter = $2::jsonb
+           WHERE id = $1`,
+          [
+            postponedGameId,
+            JSON.stringify({
+              '1': { home: null, away: null },
+              '2': { home: null, away: null },
+              '3': { home: null, away: null },
+              '4': { home: null, away: null },
+              '5': { home: null, away: null },
+              '6': { home: null, away: null },
+              '7': { home: null, away: null },
+              '8': { home: null, away: null },
+              '9': { home: 1, away: 1 }
+            })
+          ]
+        )
+
+        const winningsIdResult = await db.query<{ next_id: number }>(
+          'SELECT COALESCE(MAX(id), 0) + 1 AS next_id FROM football_pool.winnings_ledger'
+        )
+
+        await db.query(
+          `INSERT INTO football_pool.winnings_ledger
+             (id, game_id, pool_id, quarter, winner_user_id, amount_won, payout_status)
+           VALUES ($1, $2, $3, $4, $5, $6, 'pending')`,
+          [Number(winningsIdResult.rows[0]?.next_id ?? 1), postponedGameId, postponedPoolId, 9, participantId, 20]
+        )
+
+        const beforeRepairResult = await db.query<{ count: string }>(
+          `SELECT COUNT(*)::text AS count
+           FROM football_pool.winnings_ledger
+           WHERE game_id = $1`,
+          [postponedGameId]
+        )
+
+        expect(Number(beforeRepairResult.rows[0]?.count ?? '0')).toBeGreaterThan(0)
+
+        const ingestResponse = await request(app)
+          .post(`/api/ingestion/games/${postponedGameId}/scores`)
+          .set(organizerHeaders)
+          .send({ source: 'espn' })
+
+        expect(ingestResponse.status).toBe(200)
+        expect(ingestResponse.body.state).toBe('scheduled')
+
+        const repairedGameResult = await db.query<{
+          state: string
+          final_score_home: number | null
+          final_score_away: number | null
+        }>(
+          `SELECT state, final_score_home, final_score_away
+           FROM football_pool.game
+           WHERE id = $1`,
+          [postponedGameId]
+        )
+
+        expect(repairedGameResult.rows[0]?.state).toBe('scheduled')
+        expect(repairedGameResult.rows[0]?.final_score_home).toBeNull()
+        expect(repairedGameResult.rows[0]?.final_score_away).toBeNull()
+
+        const winningsResult = await db.query<{ count: string }>(
+          `SELECT COUNT(*)::text AS count
+           FROM football_pool.winnings_ledger
+           WHERE game_id = $1`,
+          [postponedGameId]
+        )
+
+        expect(Number(winningsResult.rows[0]?.count ?? '0')).toBe(0)
+      } finally {
+        fetchSpy.mockRestore()
+      }
     })
   })
 

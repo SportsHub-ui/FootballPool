@@ -1,7 +1,7 @@
 ﻿import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../config/db';
-import { getPoolLeagueDefinition } from '../config/poolLeagues';
+import { getPoolLeagueDefinition, getPayoutValueForSlot, type PayoutSlotKey } from '../config/poolLeagues';
 import { loadPoolPayoutConfig, resolvePoolPayoutsForRound } from '../services/poolPayouts';
 import { getPoolSimulationStatus } from '../services/poolSimulation';
 import { resolveWinningSquareNumber } from '../services/scoreProcessing';
@@ -18,7 +18,22 @@ const getLatestScoredQuarter = (game: {
   q3_opponent_score: number | null;
   q4_primary_score: number | null;
   q4_opponent_score: number | null;
+  q5_primary_score?: number | null;
+  q5_opponent_score?: number | null;
+  q6_primary_score?: number | null;
+  q6_opponent_score?: number | null;
+  q7_primary_score?: number | null;
+  q7_opponent_score?: number | null;
+  q8_primary_score?: number | null;
+  q8_opponent_score?: number | null;
+  q9_primary_score?: number | null;
+  q9_opponent_score?: number | null;
 }): number | null => {
+  if (game.q9_primary_score != null && game.q9_opponent_score != null) return 9;
+  if (game.q8_primary_score != null && game.q8_opponent_score != null) return 8;
+  if (game.q7_primary_score != null && game.q7_opponent_score != null) return 7;
+  if (game.q6_primary_score != null && game.q6_opponent_score != null) return 6;
+  if (game.q5_primary_score != null && game.q5_opponent_score != null) return 5;
   if (game.q4_primary_score != null && game.q4_opponent_score != null) return 4;
   if (game.q3_primary_score != null && game.q3_opponent_score != null) return 3;
   if (game.q2_primary_score != null && game.q2_opponent_score != null) return 2;
@@ -36,16 +51,31 @@ const getQuarterScores = (
     q3_opponent_score: number | null;
     q4_primary_score: number | null;
     q4_opponent_score: number | null;
+    q5_primary_score?: number | null;
+    q5_opponent_score?: number | null;
+    q6_primary_score?: number | null;
+    q6_opponent_score?: number | null;
+    q7_primary_score?: number | null;
+    q7_opponent_score?: number | null;
+    q8_primary_score?: number | null;
+    q8_opponent_score?: number | null;
+    q9_primary_score?: number | null;
+    q9_opponent_score?: number | null;
   },
   quarter: number
 ): { primaryScore: number | null; opponentScore: number | null } => {
   if (quarter === 1) return { primaryScore: game.q1_primary_score, opponentScore: game.q1_opponent_score };
   if (quarter === 2) return { primaryScore: game.q2_primary_score, opponentScore: game.q2_opponent_score };
   if (quarter === 3) return { primaryScore: game.q3_primary_score, opponentScore: game.q3_opponent_score };
-  return { primaryScore: game.q4_primary_score, opponentScore: game.q4_opponent_score };
+  if (quarter === 4) return { primaryScore: game.q4_primary_score, opponentScore: game.q4_opponent_score };
+  if (quarter === 5) return { primaryScore: game.q5_primary_score ?? null, opponentScore: game.q5_opponent_score ?? null };
+  if (quarter === 6) return { primaryScore: game.q6_primary_score ?? null, opponentScore: game.q6_opponent_score ?? null };
+  if (quarter === 7) return { primaryScore: game.q7_primary_score ?? null, opponentScore: game.q7_opponent_score ?? null };
+  if (quarter === 8) return { primaryScore: game.q8_primary_score ?? null, opponentScore: game.q8_opponent_score ?? null };
+  return { primaryScore: game.q9_primary_score ?? null, opponentScore: game.q9_opponent_score ?? null };
 };
 
-type QuarterKey = '1' | '2' | '3' | '4';
+type QuarterKey = '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9';
 type QuarterScoreMap = Partial<Record<QuarterKey, { home?: number | null; away?: number | null }>>;
 
 const toQuarterScoreMap = (value: unknown): QuarterScoreMap => {
@@ -83,7 +113,12 @@ const buildBoardPayoutSummary = (
       q1Payout: activePayouts.q1Payout,
       q2Payout: activePayouts.q2Payout,
       q3Payout: activePayouts.q3Payout,
-      q4Payout: activePayouts.q4Payout
+      q4Payout: activePayouts.q4Payout,
+      q5Payout: activePayouts.q5Payout,
+      q6Payout: activePayouts.q6Payout,
+      q7Payout: activePayouts.q7Payout,
+      q8Payout: activePayouts.q8Payout,
+      q9Payout: activePayouts.q9Payout
     },
     roundPayouts: payoutConfig.roundPayouts
   };
@@ -245,7 +280,7 @@ participantRouter.get('/pools/:poolId/games', async (req, res) => {
       );
 
       // Map scores_by_quarter JSONB to flat quarter scores for compatibility
-      type QuarterScoreMap = Partial<Record<'1' | '2' | '3' | '4', { home?: number | null; away?: number | null }>>;
+      type QuarterScoreMap = Partial<Record<'1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9', { home?: number | null; away?: number | null }>>;
       const toQuarterScoreMap = (value: unknown): QuarterScoreMap => {
         if (!value) return {};
         if (typeof value === 'string') {
@@ -289,7 +324,17 @@ participantRouter.get('/pools/:poolId/games', async (req, res) => {
           q3_primary_score: scores['3']?.home ?? null,
           q3_opponent_score: scores['3']?.away ?? null,
           q4_primary_score: scores['4']?.home ?? null,
-          q4_opponent_score: scores['4']?.away ?? null
+          q4_opponent_score: scores['4']?.away ?? null,
+          q5_primary_score: scores['5']?.home ?? null,
+          q5_opponent_score: scores['5']?.away ?? null,
+          q6_primary_score: scores['6']?.home ?? null,
+          q6_opponent_score: scores['6']?.away ?? null,
+          q7_primary_score: scores['7']?.home ?? null,
+          q7_opponent_score: scores['7']?.away ?? null,
+          q8_primary_score: scores['8']?.home ?? null,
+          q8_opponent_score: scores['8']?.away ?? null,
+          q9_primary_score: scores['9']?.home ?? null,
+          q9_opponent_score: scores['9']?.away ?? null
         };
       });
 
@@ -438,7 +483,17 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
             q3_primary_score: getQuarterScore(parseScores(selectedGameRow), '3', 'home'),
             q3_opponent_score: getQuarterScore(parseScores(selectedGameRow), '3', 'away'),
             q4_primary_score: getQuarterScore(parseScores(selectedGameRow), '4', 'home'),
-            q4_opponent_score: getQuarterScore(parseScores(selectedGameRow), '4', 'away')
+            q4_opponent_score: getQuarterScore(parseScores(selectedGameRow), '4', 'away'),
+            q5_primary_score: getQuarterScore(parseScores(selectedGameRow), '5', 'home'),
+            q5_opponent_score: getQuarterScore(parseScores(selectedGameRow), '5', 'away'),
+            q6_primary_score: getQuarterScore(parseScores(selectedGameRow), '6', 'home'),
+            q6_opponent_score: getQuarterScore(parseScores(selectedGameRow), '6', 'away'),
+            q7_primary_score: getQuarterScore(parseScores(selectedGameRow), '7', 'home'),
+            q7_opponent_score: getQuarterScore(parseScores(selectedGameRow), '7', 'away'),
+            q8_primary_score: getQuarterScore(parseScores(selectedGameRow), '8', 'home'),
+            q8_opponent_score: getQuarterScore(parseScores(selectedGameRow), '8', 'away'),
+            q9_primary_score: getQuarterScore(parseScores(selectedGameRow), '9', 'home'),
+            q9_opponent_score: getQuarterScore(parseScores(selectedGameRow), '9', 'away')
           }
         : null;
 
@@ -451,7 +506,7 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
       const currentLeaderSquare =
         selectedGame &&
         latestScoredQuarter != null &&
-        (selectedGame.q4_primary_score == null || selectedGame.q4_opponent_score == null)
+        !['completed', 'complete', 'closed', 'finished', 'final', 'post'].includes(String(selectedGame.state ?? '').trim().toLowerCase())
           ? resolveWinningSquareNumber(
               selectedGame.row_numbers,
               selectedGame.col_numbers,
@@ -473,28 +528,17 @@ participantRouter.get('/pools/:poolId/board', async (req, res) => {
           typeof game.round_label === 'string' ? game.round_label : null,
           game.round_sequence != null ? Number(game.round_sequence) : null
         );
-        const entries = [
-          {
-            quarter: 1,
-            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, getQuarterScore(scores, '1', 'away'), getQuarterScore(scores, '1', 'home'), winnerLoserMode),
-            amount: Number(gamePayouts.q1Payout ?? 0)
-          },
-          {
-            quarter: 2,
-            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, getQuarterScore(scores, '2', 'away'), getQuarterScore(scores, '2', 'home'), winnerLoserMode),
-            amount: Number(gamePayouts.q2Payout ?? 0)
-          },
-          {
-            quarter: 3,
-            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, getQuarterScore(scores, '3', 'away'), getQuarterScore(scores, '3', 'home'), winnerLoserMode),
-            amount: Number(gamePayouts.q3Payout ?? 0)
-          },
-          {
-            quarter: 4,
-            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, getQuarterScore(scores, '4', 'away'), getQuarterScore(scores, '4', 'home'), winnerLoserMode),
-            amount: Number(gamePayouts.q4Payout ?? 0)
-          }
-        ];
+        const activeSlots = getPoolLeagueDefinition(poolResult.rows[0]?.league_code).activePayoutSlots;
+        const entries = activeSlots.map((slot) => {
+          const quarter = Number(slot.slice(1));
+          const quarterKey = String(quarter) as QuarterKey;
+
+          return {
+            quarter,
+            squareNum: resolveWinningSquareNumber(game.row_numbers, game.col_numbers, getQuarterScore(scores, quarterKey, 'away'), getQuarterScore(scores, quarterKey, 'home'), winnerLoserMode),
+            amount: getPayoutValueForSlot(gamePayouts, slot)
+          };
+        });
 
         for (const entry of entries) {
           if (entry.squareNum == null || entry.amount <= 0) {

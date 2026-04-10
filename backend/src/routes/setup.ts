@@ -34,6 +34,7 @@ import { ensurePoolPayoutStructureSupport } from '../services/poolPayoutStructur
 import { replacePoolRoundPayouts } from '../services/poolPayouts';
 import { ensurePoolStructureSupport } from '../services/poolStructureSupport';
 import { poolBoardNumberModeValues, syncPoolGameBoardNumbers } from '../services/poolBoardNumbers';
+import { syncSportTeamsForLeague } from '../services/scheduleImport';
 import {
   availableNotificationVariables,
   notificationMarkupFormatValues,
@@ -121,7 +122,12 @@ const roundPayoutSchema = z.object({
   q1Payout: z.number().int().nonnegative().optional().default(0),
   q2Payout: z.number().int().nonnegative().optional().default(0),
   q3Payout: z.number().int().nonnegative().optional().default(0),
-  q4Payout: z.number().int().nonnegative().optional().default(0)
+  q4Payout: z.number().int().nonnegative().optional().default(0),
+  q5Payout: z.number().int().nonnegative().optional().default(0),
+  q6Payout: z.number().int().nonnegative().optional().default(0),
+  q7Payout: z.number().int().nonnegative().optional().default(0),
+  q8Payout: z.number().int().nonnegative().optional().default(0),
+  q9Payout: z.number().int().nonnegative().optional().default(0)
 });
 
 const memberAssignmentSchema = z
@@ -190,6 +196,11 @@ const createPoolSchema = z
     q2Payout: z.number().int().nonnegative(),
     q3Payout: z.number().int().nonnegative(),
     q4Payout: z.number().int().nonnegative(),
+    q5Payout: z.number().int().nonnegative().optional().default(0),
+    q6Payout: z.number().int().nonnegative().optional().default(0),
+    q7Payout: z.number().int().nonnegative().optional().default(0),
+    q8Payout: z.number().int().nonnegative().optional().default(0),
+    q9Payout: z.number().int().nonnegative().optional().default(0),
     contactNotificationLevel: notificationLevelSchema,
     contactNotifyOnSquareLead: z.boolean().optional()
   })
@@ -1806,7 +1817,12 @@ setupRouter.post('/pools', async (req, res) => {
       q1Payout: parsed.data.q1Payout,
       q2Payout: parsed.data.q2Payout,
       q3Payout: parsed.data.q3Payout,
-      q4Payout: parsed.data.q4Payout
+      q4Payout: parsed.data.q4Payout,
+      q5Payout: parsed.data.q5Payout,
+      q6Payout: parsed.data.q6Payout,
+      q7Payout: parsed.data.q7Payout,
+      q8Payout: parsed.data.q8Payout,
+      q9Payout: parsed.data.q9Payout
     });
     const primaryTeamName =
       primarySportTeam.primaryTeamName ??
@@ -1844,6 +1860,11 @@ setupRouter.post('/pools', async (req, res) => {
           q2_payout,
           q3_payout,
           q4_payout,
+          q5_payout,
+          q6_payout,
+          q7_payout,
+          q8_payout,
+          q9_payout,
           display_token,
           sign_in_req_flg,
           contact_notification_level,
@@ -1853,7 +1874,7 @@ setupRouter.post('/pools', async (req, res) => {
         VALUES (
           $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
           $11::date, $12::date, $13, $14, $15, $16, NULL, NULL,
-          $17, $18, $19, $20, $21, $22, FALSE, $23, $24, NOW()
+          $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, FALSE, $28, $29, NOW()
         )
       `,
       [
@@ -1878,6 +1899,11 @@ setupRouter.post('/pools', async (req, res) => {
         normalizedPayouts.q2Payout,
         normalizedPayouts.q3Payout,
         normalizedPayouts.q4Payout,
+        normalizedPayouts.q5Payout,
+        normalizedPayouts.q6Payout,
+        normalizedPayouts.q7Payout,
+        normalizedPayouts.q8Payout,
+        normalizedPayouts.q9Payout,
         displayToken,
         parsed.data.contactNotificationLevel ?? 'none',
         parsed.data.contactNotifyOnSquareLead ?? false
@@ -2502,9 +2528,12 @@ setupRouter.get('/sport-teams', async (req, res) => {
     return;
   }
 
+  const requestedLeagueCode = parsedQuery.data.leagueCode?.trim().toUpperCase() || null;
+  const shouldAttemptSync = requestedLeagueCode != null && supportedLeagueCodes.includes(requestedLeagueCode as (typeof supportedLeagueCodes)[number]);
+  const client = await db.connect();
+
   try {
-    const requestedLeagueCode = parsedQuery.data.leagueCode?.trim().toUpperCase() || null;
-    const result = await db.query(
+    let result = await client.query(
       `SELECT id,
               name,
               abbreviation,
@@ -2518,12 +2547,40 @@ setupRouter.get('/sport-teams', async (req, res) => {
       [requestedLeagueCode]
     );
 
+    if ((result.rowCount ?? 0) === 0 && shouldAttemptSync) {
+      await client.query('BEGIN');
+
+      try {
+        await syncSportTeamsForLeague(client, requestedLeagueCode);
+        await client.query('COMMIT');
+      } catch (syncError) {
+        await client.query('ROLLBACK');
+        console.warn(`[setup] failed to auto-sync sport teams for ${requestedLeagueCode}:`, syncError);
+      }
+
+      result = await client.query(
+        `SELECT id,
+                name,
+                abbreviation,
+                sport_code,
+                league_code,
+                espn_team_uid
+         FROM football_pool.sport_team
+         WHERE ($1::text IS NULL OR UPPER(COALESCE(league_code, '')) = $1)
+         ORDER BY name, id
+         LIMIT 1000`,
+        [requestedLeagueCode]
+      );
+    }
+
     res.json({ sportTeams: result.rows });
   } catch (error) {
     res.status(500).json({
       error: 'Failed to load sport teams',
       detail: error instanceof Error ? error.message : 'Unknown error'
     });
+  } finally {
+    client.release();
   }
 });
 
@@ -2683,6 +2740,11 @@ setupRouter.get('/pools', async (_req, res) => {
           p.q2_payout,
           p.q3_payout,
           p.q4_payout,
+          p.q5_payout,
+          p.q6_payout,
+          p.q7_payout,
+          p.q8_payout,
+          p.q9_payout,
           p.display_token,
           p.contact_notification_level,
           p.contact_notify_on_square_lead_flg,
@@ -2698,7 +2760,12 @@ setupRouter.get('/pools', async (_req, res) => {
                      'q1Payout', pr.q1_payout,
                      'q2Payout', pr.q2_payout,
                      'q3Payout', pr.q3_payout,
-                     'q4Payout', pr.q4_payout
+                     'q4Payout', pr.q4_payout,
+                     'q5Payout', pr.q5_payout,
+                     'q6Payout', pr.q6_payout,
+                     'q7Payout', pr.q7_payout,
+                     'q8Payout', pr.q8_payout,
+                     'q9Payout', pr.q9_payout
                    )
                    ORDER BY COALESCE(pr.round_sequence, 32767), LOWER(pr.round_label), pr.id
                  ) AS round_payouts
@@ -2750,7 +2817,12 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
       q1Payout: parsedBody.data.q1Payout,
       q2Payout: parsedBody.data.q2Payout,
       q3Payout: parsedBody.data.q3Payout,
-      q4Payout: parsedBody.data.q4Payout
+      q4Payout: parsedBody.data.q4Payout,
+      q5Payout: parsedBody.data.q5Payout,
+      q6Payout: parsedBody.data.q6Payout,
+      q7Payout: parsedBody.data.q7Payout,
+      q8Payout: parsedBody.data.q8Payout,
+      q9Payout: parsedBody.data.q9Payout
     });
     const primaryTeamName =
       primarySportTeam.primaryTeamName ??
@@ -2788,8 +2860,13 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
           q2_payout = $19,
           q3_payout = $20,
           q4_payout = $21,
-          contact_notification_level = COALESCE($22, contact_notification_level),
-          contact_notify_on_square_lead_flg = COALESCE($23, contact_notify_on_square_lead_flg)
+          q5_payout = $22,
+          q6_payout = $23,
+          q7_payout = $24,
+          q8_payout = $25,
+          q9_payout = $26,
+          contact_notification_level = COALESCE($27, contact_notification_level),
+          contact_notify_on_square_lead_flg = COALESCE($28, contact_notify_on_square_lead_flg)
         WHERE id = $1
         RETURNING id
       `,
@@ -2815,6 +2892,11 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
         normalizedPayouts.q2Payout,
         normalizedPayouts.q3Payout,
         normalizedPayouts.q4Payout,
+        normalizedPayouts.q5Payout,
+        normalizedPayouts.q6Payout,
+        normalizedPayouts.q7Payout,
+        normalizedPayouts.q8Payout,
+        normalizedPayouts.q9Payout,
         parsedBody.data.contactNotificationLevel ?? null,
         parsedBody.data.contactNotifyOnSquareLead ?? null
       ]

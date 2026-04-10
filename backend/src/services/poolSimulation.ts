@@ -75,6 +75,16 @@ type PoolGame = {
   q3_opponent_score: number | null;
   q4_primary_score: number | null;
   q4_opponent_score: number | null;
+  q5_primary_score: number | null;
+  q5_opponent_score: number | null;
+  q6_primary_score: number | null;
+  q6_opponent_score: number | null;
+  q7_primary_score: number | null;
+  q7_opponent_score: number | null;
+  q8_primary_score: number | null;
+  q8_opponent_score: number | null;
+  q9_primary_score: number | null;
+  q9_opponent_score: number | null;
 };
 
 type PoolSimulationState = {
@@ -84,7 +94,7 @@ type PoolSimulationState = {
   next_quarter: number | null;
 };
 
-type QuarterKey = '1' | '2' | '3' | '4';
+type QuarterKey = '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9';
 type QuarterScoreMap = Partial<Record<QuarterKey, { home?: number | null; away?: number | null }>>;
 
 const toQuarterScoreMap = (value: unknown): QuarterScoreMap => {
@@ -116,7 +126,17 @@ const buildEmptyScores = (): QuarterScoresInput => ({
   q3PrimaryScore: null,
   q3OpponentScore: null,
   q4PrimaryScore: null,
-  q4OpponentScore: null
+  q4OpponentScore: null,
+  q5PrimaryScore: null,
+  q5OpponentScore: null,
+  q6PrimaryScore: null,
+  q6OpponentScore: null,
+  q7PrimaryScore: null,
+  q7OpponentScore: null,
+  q8PrimaryScore: null,
+  q8OpponentScore: null,
+  q9PrimaryScore: null,
+  q9OpponentScore: null
 });
 
 const getQuarterScoresFromInput = (
@@ -126,7 +146,12 @@ const getQuarterScoresFromInput = (
   if (quarter === 1) return { primaryScore: scores.q1PrimaryScore, opponentScore: scores.q1OpponentScore };
   if (quarter === 2) return { primaryScore: scores.q2PrimaryScore, opponentScore: scores.q2OpponentScore };
   if (quarter === 3) return { primaryScore: scores.q3PrimaryScore, opponentScore: scores.q3OpponentScore };
-  return { primaryScore: scores.q4PrimaryScore, opponentScore: scores.q4OpponentScore };
+  if (quarter === 4) return { primaryScore: scores.q4PrimaryScore, opponentScore: scores.q4OpponentScore };
+  if (quarter === 5) return { primaryScore: scores.q5PrimaryScore, opponentScore: scores.q5OpponentScore };
+  if (quarter === 6) return { primaryScore: scores.q6PrimaryScore, opponentScore: scores.q6OpponentScore };
+  if (quarter === 7) return { primaryScore: scores.q7PrimaryScore, opponentScore: scores.q7OpponentScore };
+  if (quarter === 8) return { primaryScore: scores.q8PrimaryScore, opponentScore: scores.q8OpponentScore };
+  return { primaryScore: scores.q9PrimaryScore, opponentScore: scores.q9OpponentScore };
 };
 
 const setQuarterScoresOnSnapshot = (
@@ -152,8 +177,38 @@ const setQuarterScoresOnSnapshot = (
     return;
   }
 
-  scores.q4PrimaryScore = values.primaryScore;
-  scores.q4OpponentScore = values.opponentScore;
+  if (quarter === 4) {
+    scores.q4PrimaryScore = values.primaryScore;
+    scores.q4OpponentScore = values.opponentScore;
+    return;
+  }
+
+  if (quarter === 5) {
+    scores.q5PrimaryScore = values.primaryScore;
+    scores.q5OpponentScore = values.opponentScore;
+    return;
+  }
+
+  if (quarter === 6) {
+    scores.q6PrimaryScore = values.primaryScore;
+    scores.q6OpponentScore = values.opponentScore;
+    return;
+  }
+
+  if (quarter === 7) {
+    scores.q7PrimaryScore = values.primaryScore;
+    scores.q7OpponentScore = values.opponentScore;
+    return;
+  }
+
+  if (quarter === 8) {
+    scores.q8PrimaryScore = values.primaryScore;
+    scores.q8OpponentScore = values.opponentScore;
+    return;
+  }
+
+  scores.q9PrimaryScore = values.primaryScore;
+  scores.q9OpponentScore = values.opponentScore;
 };
 
 const getPreviousActiveQuarter = (activeQuarters: number[], quarter: number): number | null => {
@@ -170,35 +225,44 @@ const buildScoresByQuarterJson = (scores: QuarterScoresInput): QuarterScoreMap =
   '1': { home: scores.q1PrimaryScore, away: scores.q1OpponentScore },
   '2': { home: scores.q2PrimaryScore, away: scores.q2OpponentScore },
   '3': { home: scores.q3PrimaryScore, away: scores.q3OpponentScore },
-  '4': { home: scores.q4PrimaryScore, away: scores.q4OpponentScore }
+  '4': { home: scores.q4PrimaryScore, away: scores.q4OpponentScore },
+  '5': { home: scores.q5PrimaryScore, away: scores.q5OpponentScore },
+  '6': { home: scores.q6PrimaryScore, away: scores.q6OpponentScore },
+  '7': { home: scores.q7PrimaryScore, away: scores.q7OpponentScore },
+  '8': { home: scores.q8PrimaryScore, away: scores.q8OpponentScore },
+  '9': { home: scores.q9PrimaryScore, away: scores.q9OpponentScore }
 });
 
-const inferGameStateFromScores = (scores: QuarterScoresInput): 'scheduled' | 'in_progress' | 'completed' => {
-  if (scores.q4PrimaryScore != null && scores.q4OpponentScore != null) {
+const inferGameStateFromScores = (
+  scores: QuarterScoresInput,
+  activeQuarters: number[] = [1, 2, 3, 4]
+): 'scheduled' | 'in_progress' | 'completed' => {
+  const finalQuarter = activeQuarters[activeQuarters.length - 1] ?? 4;
+  const finalScores = getQuarterScoresFromInput(scores, finalQuarter);
+
+  if (finalScores.primaryScore != null && finalScores.opponentScore != null) {
     return 'completed';
   }
 
-  if (
-    scores.q1PrimaryScore != null ||
-    scores.q1OpponentScore != null ||
-    scores.q2PrimaryScore != null ||
-    scores.q2OpponentScore != null ||
-    scores.q3PrimaryScore != null ||
-    scores.q3OpponentScore != null ||
-    scores.q4PrimaryScore != null ||
-    scores.q4OpponentScore != null
-  ) {
+  if (activeQuarters.some((quarter) => {
+    const quarterScores = getQuarterScoresFromInput(scores, quarter);
+    return quarterScores.primaryScore != null || quarterScores.opponentScore != null;
+  })) {
     return 'in_progress';
   }
 
   return 'scheduled';
 };
 
-const inferCurrentQuarter = (scores: QuarterScoresInput): number | null => {
-  if (scores.q4PrimaryScore != null || scores.q4OpponentScore != null) return 4;
-  if (scores.q3PrimaryScore != null || scores.q3OpponentScore != null) return 3;
-  if (scores.q2PrimaryScore != null || scores.q2OpponentScore != null) return 2;
-  if (scores.q1PrimaryScore != null || scores.q1OpponentScore != null) return 1;
+const inferCurrentQuarter = (scores: QuarterScoresInput, activeQuarters: number[] = [1, 2, 3, 4]): number | null => {
+  for (let index = activeQuarters.length - 1; index >= 0; index -= 1) {
+    const quarter = activeQuarters[index];
+    const quarterScores = getQuarterScoresFromInput(scores, quarter);
+    if (quarterScores.primaryScore != null || quarterScores.opponentScore != null) {
+      return quarter;
+    }
+  }
+
   return null;
 };
 
@@ -295,7 +359,7 @@ const ensureSimulationStateTable = async (client: PoolClient): Promise<void> => 
       pool_id INTEGER PRIMARY KEY REFERENCES football_pool.pool(id) ON DELETE CASCADE,
       mode VARCHAR(20) NOT NULL CHECK (mode IN ('full_year', 'by_game', 'by_quarter')),
       current_game_id INTEGER NULL REFERENCES football_pool.game(id) ON DELETE SET NULL,
-      next_quarter INTEGER NULL CHECK (next_quarter BETWEEN 1 AND 4),
+      next_quarter INTEGER NULL CHECK (next_quarter BETWEEN 1 AND 9),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`
@@ -383,7 +447,17 @@ const loadPoolGames = async (client: PoolClient, poolId: number): Promise<PoolGa
       q3_primary_score: toNullableNumber(scores['3']?.home),
       q3_opponent_score: toNullableNumber(scores['3']?.away),
       q4_primary_score: toNullableNumber(scores['4']?.home),
-      q4_opponent_score: toNullableNumber(scores['4']?.away)
+      q4_opponent_score: toNullableNumber(scores['4']?.away),
+      q5_primary_score: toNullableNumber(scores['5']?.home),
+      q5_opponent_score: toNullableNumber(scores['5']?.away),
+      q6_primary_score: toNullableNumber(scores['6']?.home),
+      q6_opponent_score: toNullableNumber(scores['6']?.away),
+      q7_primary_score: toNullableNumber(scores['7']?.home),
+      q7_opponent_score: toNullableNumber(scores['7']?.away),
+      q8_primary_score: toNullableNumber(scores['8']?.home),
+      q8_opponent_score: toNullableNumber(scores['8']?.away),
+      q9_primary_score: toNullableNumber(scores['9']?.home),
+      q9_opponent_score: toNullableNumber(scores['9']?.away)
     };
   });
 };
@@ -414,7 +488,12 @@ const getQuarterScoresFromGame = (
   if (quarter === 1) return { primaryScore: game.q1_primary_score, opponentScore: game.q1_opponent_score };
   if (quarter === 2) return { primaryScore: game.q2_primary_score, opponentScore: game.q2_opponent_score };
   if (quarter === 3) return { primaryScore: game.q3_primary_score, opponentScore: game.q3_opponent_score };
-  return { primaryScore: game.q4_primary_score, opponentScore: game.q4_opponent_score };
+  if (quarter === 4) return { primaryScore: game.q4_primary_score, opponentScore: game.q4_opponent_score };
+  if (quarter === 5) return { primaryScore: game.q5_primary_score, opponentScore: game.q5_opponent_score };
+  if (quarter === 6) return { primaryScore: game.q6_primary_score, opponentScore: game.q6_opponent_score };
+  if (quarter === 7) return { primaryScore: game.q7_primary_score, opponentScore: game.q7_opponent_score };
+  if (quarter === 8) return { primaryScore: game.q8_primary_score, opponentScore: game.q8_opponent_score };
+  return { primaryScore: game.q9_primary_score, opponentScore: game.q9_opponent_score };
 };
 
 const getNextIncompleteQuarter = (game: PoolGame, activeQuarters: number[] = [1, 2, 3, 4]): number | null => {
@@ -563,10 +642,17 @@ const buildAdvancedMidQuarterSnapshot = (
   return snapshot;
 };
 
-const writeGameScoreSnapshot = async (client: PoolClient, gameId: number, scores: QuarterScoresInput): Promise<void> => {
-  const state = inferGameStateFromScores(scores);
-  const currentQuarter = inferCurrentQuarter(scores);
+const writeGameScoreSnapshot = async (
+  client: PoolClient,
+  gameId: number,
+  scores: QuarterScoresInput,
+  activeQuarters: number[] = [1, 2, 3, 4]
+): Promise<void> => {
+  const state = inferGameStateFromScores(scores, activeQuarters);
+  const currentQuarter = inferCurrentQuarter(scores, activeQuarters);
   const timeRemainingInQuarter = state === 'completed' ? '0:00' : null;
+  const finalQuarter = activeQuarters[activeQuarters.length - 1] ?? 4;
+  const finalScores = getQuarterScoresFromInput(scores, finalQuarter);
 
   await client.query(
     `UPDATE football_pool.game
@@ -581,8 +667,8 @@ const writeGameScoreSnapshot = async (client: PoolClient, gameId: number, scores
     [
       gameId,
       JSON.stringify(buildScoresByQuarterJson(scores)),
-      scores.q4PrimaryScore,
-      scores.q4OpponentScore,
+      finalScores.primaryScore,
+      finalScores.opponentScore,
       state,
       currentQuarter,
       timeRemainingInQuarter
@@ -963,7 +1049,7 @@ export const createPoolSeasonSimulation = async (
           (scores) => ensureQuarterAvailable(scores, firstSimulationQuarter, pool.league_code)
         );
         await persistGameSourceIdentifiers(client, firstGame.id, espnEventId, espnEventUid);
-        await writeGameScoreSnapshot(client, firstGame.id, buildMidQuarterSnapshot(previewScores, firstSimulationQuarter, activeScoreSegments));
+        await writeGameScoreSnapshot(client, firstGame.id, buildMidQuarterSnapshot(previewScores, firstSimulationQuarter, activeScoreSegments), activeScoreSegments);
       }
     }
 
@@ -1036,12 +1122,23 @@ export const advancePoolSeasonSimulation = async (
           q3PrimaryScore: currentGame.q3_primary_score,
           q3OpponentScore: currentGame.q3_opponent_score,
           q4PrimaryScore: currentGame.q4_primary_score,
-          q4OpponentScore: currentGame.q4_opponent_score
+          q4OpponentScore: currentGame.q4_opponent_score,
+          q5PrimaryScore: currentGame.q5_primary_score,
+          q5OpponentScore: currentGame.q5_opponent_score,
+          q6PrimaryScore: currentGame.q6_primary_score,
+          q6OpponentScore: currentGame.q6_opponent_score,
+          q7PrimaryScore: currentGame.q7_primary_score,
+          q7OpponentScore: currentGame.q7_opponent_score,
+          q8PrimaryScore: currentGame.q8_primary_score,
+          q8OpponentScore: currentGame.q8_opponent_score,
+          q9PrimaryScore: currentGame.q9_primary_score,
+          q9OpponentScore: currentGame.q9_opponent_score
         },
         fetchedScores,
         liveQuarter,
         activeScoreSegments
-      )
+      ),
+      activeScoreSegments
     );
 
     await upsertSimulationState(client, poolId, 'by_quarter', currentGame.id, liveQuarter);
@@ -1063,7 +1160,7 @@ export const advancePoolSeasonSimulation = async (
     );
 
     await persistGameSourceIdentifiers(client, currentGame.id, espnEventId, espnEventUid);
-    await writeGameScoreSnapshot(client, currentGame.id, fetchedScores);
+    await writeGameScoreSnapshot(client, currentGame.id, fetchedScores, activeScoreSegments);
     await processGameScoresWithClient(client, currentGame.id, fetchedScores);
 
     const nextGame = findNextPlayableGame(games, currentGame.id);
@@ -1095,7 +1192,7 @@ export const advancePoolSeasonSimulation = async (
   const partialScores = buildPartialQuarterSnapshot(fetchedScores, quarterToComplete, activeScoreSegments);
 
   await persistGameSourceIdentifiers(client, currentGame.id, espnEventId, espnEventUid);
-  await writeGameScoreSnapshot(client, currentGame.id, partialScores);
+  await writeGameScoreSnapshot(client, currentGame.id, partialScores, activeScoreSegments);
   await processGameScoresWithClient(client, currentGame.id, partialScores);
 
   let nextGameId: number | null = currentGame.id;

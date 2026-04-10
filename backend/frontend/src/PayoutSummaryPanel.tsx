@@ -1,19 +1,8 @@
-type PayoutSlotKey = 'q1' | 'q2' | 'q3' | 'q4'
+import { buildEmptyPayoutValues, getPayoutValueForSlot, type PayoutSlotKey, type PayoutValues } from './utils/poolLeagues'
 
-type PayoutBreakdown = {
-  q1Payout: number
-  q2Payout: number
-  q3Payout: number
-  q4Payout: number
-}
-
-export type BoardRoundPayout = {
+export type BoardRoundPayout = PayoutValues & {
   roundLabel: string
   roundSequence?: number | null
-  q1Payout: number
-  q2Payout: number
-  q3Payout: number
-  q4Payout: number
 }
 
 export type BoardPayoutSummary = {
@@ -22,8 +11,8 @@ export type BoardPayoutSummary = {
   currentRoundSequence?: number | null
   activeSlots?: PayoutSlotKey[]
   payoutLabels?: Partial<Record<PayoutSlotKey, string>>
-  defaultPayouts?: PayoutBreakdown
-  activePayouts?: PayoutBreakdown
+  defaultPayouts?: PayoutValues
+  activePayouts?: PayoutValues
   roundPayouts?: BoardRoundPayout[]
 }
 
@@ -37,15 +26,12 @@ const defaultPayoutLabels: Record<PayoutSlotKey, string> = {
   q1: 'Q1 payout',
   q2: 'Q2 payout',
   q3: 'Q3 payout',
-  q4: 'Final payout'
-}
-
-const getPayoutValue = (entry: PayoutBreakdown | BoardRoundPayout | undefined | null, slot: PayoutSlotKey): number => {
-  if (!entry) return 0
-  if (slot === 'q1') return Number(entry.q1Payout ?? 0)
-  if (slot === 'q2') return Number(entry.q2Payout ?? 0)
-  if (slot === 'q3') return Number(entry.q3Payout ?? 0)
-  return Number(entry.q4Payout ?? 0)
+  q4: 'Q4 payout',
+  q5: 'Q5 payout',
+  q6: 'Q6 payout',
+  q7: 'Q7 payout',
+  q8: 'Q8 payout',
+  q9: 'Final payout'
 }
 
 const formatPayoutMoney = (value: number): string => payoutMoneyFormatter.format(Number(value ?? 0))
@@ -63,9 +49,9 @@ export function PayoutSummaryPanel({
 
   const activeSlots = summary.activeSlots?.length ? summary.activeSlots : (['q1', 'q2', 'q3', 'q4'] as PayoutSlotKey[])
   const payoutLabels = { ...defaultPayoutLabels, ...(summary.payoutLabels ?? {}) }
-  const activePayouts = summary.activePayouts ?? summary.defaultPayouts ?? { q1Payout: 0, q2Payout: 0, q3Payout: 0, q4Payout: 0 }
+  const activePayouts = summary.activePayouts ?? summary.defaultPayouts ?? buildEmptyPayoutValues()
   const visibleRoundPayouts = (summary.roundPayouts ?? []).filter((roundPayout) =>
-    activeSlots.some((slot) => getPayoutValue(roundPayout, slot) > 0)
+    activeSlots.some((slot) => getPayoutValueForSlot(roundPayout, slot) > 0)
   )
 
   return (
@@ -90,7 +76,7 @@ export function PayoutSummaryPanel({
         {activeSlots.map((slot) => (
           <div key={slot} className="board-payout-chip">
             <span>{payoutLabels[slot]}</span>
-            <strong>{formatPayoutMoney(getPayoutValue(activePayouts, slot))}</strong>
+            <strong>{formatPayoutMoney(getPayoutValueForSlot(activePayouts, slot))}</strong>
           </div>
         ))}
       </div>
@@ -111,7 +97,7 @@ export function PayoutSummaryPanel({
                 <div className="board-payout-round-values">
                   {activeSlots.map((slot) => (
                     <span key={`${roundPayout.roundLabel}-${slot}`}>
-                      {payoutLabels[slot]}: <strong>{formatPayoutMoney(getPayoutValue(roundPayout, slot))}</strong>
+                      {payoutLabels[slot]}: <strong>{formatPayoutMoney(getPayoutValueForSlot(roundPayout, slot))}</strong>
                     </span>
                   ))}
                 </div>

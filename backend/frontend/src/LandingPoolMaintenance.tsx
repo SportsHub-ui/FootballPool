@@ -2,7 +2,16 @@ import { useEffect, useMemo, useState } from 'react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 
 import type { LandingPool } from './LandingMetrics'
-import { getPoolLeagueDefinition, getSimulationStepDescriptor, type PayoutSlotKey, type SupportedLeagueCode } from './utils/poolLeagues'
+import {
+  buildEmptyPayoutValues,
+  getPoolLeagueDefinition,
+  getPayoutValueForSlot,
+  getSimulationStepDescriptor,
+  normalizePayoutsForLeague,
+  type PayoutSlotKey,
+  type PayoutValues,
+  type SupportedLeagueCode
+} from './utils/poolLeagues'
 import {
   getPoolStructureMode,
   getPoolTemplateDefinition,
@@ -50,6 +59,16 @@ type GameRecord = {
   q3_opponent_score: number | null
   q4_primary_score: number | null
   q4_opponent_score: number | null
+  q5_primary_score: number | null
+  q5_opponent_score: number | null
+  q6_primary_score: number | null
+  q6_opponent_score: number | null
+  q7_primary_score: number | null
+  q7_opponent_score: number | null
+  q8_primary_score: number | null
+  q8_opponent_score: number | null
+  q9_primary_score: number | null
+  q9_opponent_score: number | null
 }
 
 type NotificationLevel = 'none' | 'quarter_win' | 'game_total'
@@ -78,6 +97,11 @@ type PoolRecord = {
   q2_payout: number | null
   q3_payout: number | null
   q4_payout: number | null
+  q5_payout: number | null
+  q6_payout: number | null
+  q7_payout: number | null
+  q8_payout: number | null
+  q9_payout: number | null
   display_token: string | null
   team_name: string | null
   has_members_flg?: boolean
@@ -213,10 +237,7 @@ const applyTemplateDateDefaults = (
 const createEmptyRoundPayout = (roundLabel = '', roundSequence: number | null = null): RoundPayoutConfig => ({
   roundLabel,
   roundSequence,
-  q1Payout: 0,
-  q2Payout: 0,
-  q3Payout: 0,
-  q4Payout: 0
+  ...buildEmptyPayoutValues()
 })
 
 const buildTemplateRoundPayouts = (
@@ -251,7 +272,12 @@ const hasRecordedPayoutSlot = (game: GameRecord, slot: PayoutSlotKey): boolean =
   if (slot === 'q1') return hasRecordedQuarter(game.q1_primary_score, game.q1_opponent_score)
   if (slot === 'q2') return hasRecordedQuarter(game.q2_primary_score, game.q2_opponent_score)
   if (slot === 'q3') return hasRecordedQuarter(game.q3_primary_score, game.q3_opponent_score)
-  return hasRecordedQuarter(game.q4_primary_score, game.q4_opponent_score)
+  if (slot === 'q4') return hasRecordedQuarter(game.q4_primary_score, game.q4_opponent_score)
+  if (slot === 'q5') return hasRecordedQuarter(game.q5_primary_score, game.q5_opponent_score)
+  if (slot === 'q6') return hasRecordedQuarter(game.q6_primary_score, game.q6_opponent_score)
+  if (slot === 'q7') return hasRecordedQuarter(game.q7_primary_score, game.q7_opponent_score)
+  if (slot === 'q8') return hasRecordedQuarter(game.q8_primary_score, game.q8_opponent_score)
+  return hasRecordedQuarter(game.q9_primary_score, game.q9_opponent_score)
 }
 
 const buildReadonlyPoolRecords = (pools: LandingPool[]): PoolRecord[] =>
@@ -278,6 +304,11 @@ const buildReadonlyPoolRecords = (pools: LandingPool[]): PoolRecord[] =>
     q2_payout: null,
     q3_payout: null,
     q4_payout: null,
+    q5_payout: null,
+    q6_payout: null,
+    q7_payout: null,
+    q8_payout: null,
+    q9_payout: null,
     display_token: pool.display_token ?? null,
     team_name: pool.team_name,
     contact_notification_level: 'none',
@@ -291,6 +322,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   const [notice, setNotice] = useState<string | null>(null)
   const [teamOptions, setTeamOptions] = useState<TeamRecord[]>([])
   const [sportTeamOptions, setSportTeamOptions] = useState<SportTeamRecord[]>([])
+  const [loadingSportTeams, setLoadingSportTeams] = useState(false)
   const [poolRecords, setPoolRecords] = useState<PoolRecord[]>([])
   const [poolGames, setPoolGames] = useState<GameRecord[]>([])
   const [hasOrganizerAccess, setHasOrganizerAccess] = useState(false)
@@ -324,6 +356,11 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     q2Payout: 0,
     q3Payout: 0,
     q4Payout: 0,
+    q5Payout: 0,
+    q6Payout: 0,
+    q7Payout: 0,
+    q8Payout: 0,
+    q9Payout: 0,
     contactNotificationLevel: 'none' as NotificationLevel,
     contactNotifyOnSquareLead: false
   })
@@ -391,7 +428,12 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
           q1Payout: Number(entry?.q1Payout ?? 0),
           q2Payout: Number(entry?.q2Payout ?? 0),
           q3Payout: Number(entry?.q3Payout ?? 0),
-          q4Payout: Number(entry?.q4Payout ?? 0)
+          q4Payout: Number(entry?.q4Payout ?? 0),
+          q5Payout: Number(entry?.q5Payout ?? 0),
+          q6Payout: Number(entry?.q6Payout ?? 0),
+          q7Payout: Number(entry?.q7Payout ?? 0),
+          q8Payout: Number(entry?.q8Payout ?? 0),
+          q9Payout: Number(entry?.q9Payout ?? 0)
         }))
       ),
       startDate: pool?.start_date?.slice(0, 10) ?? '',
@@ -406,6 +448,11 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
       q2Payout: pool?.q2_payout ?? 0,
       q3Payout: pool?.q3_payout ?? 0,
       q4Payout: pool?.q4_payout ?? 0,
+      q5Payout: pool?.q5_payout ?? 0,
+      q6Payout: pool?.q6_payout ?? 0,
+      q7Payout: pool?.q7_payout ?? 0,
+      q8Payout: pool?.q8_payout ?? 0,
+      q9Payout: pool?.q9_payout ?? 0,
       contactNotificationLevel: pool?.contact_notification_level ?? 'none',
       contactNotifyOnSquareLead: Boolean(pool?.contact_notify_on_square_lead_flg)
     })
@@ -479,12 +526,15 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   useEffect(() => {
     if (!canManagePools || !token) {
       setSportTeamOptions([])
+      setLoadingSportTeams(false)
       return
     }
 
     let isActive = true
 
     const loadSportTeams = async (): Promise<void> => {
+      setLoadingSportTeams(true)
+
       try {
         const result = await request<{ sportTeams: SportTeamRecord[] }>(
           `/api/setup/sport-teams?leagueCode=${encodeURIComponent(poolForm.leagueCode)}`,
@@ -518,6 +568,10 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
         if (isActive) {
           setSportTeamOptions([])
           setError((current) => current ?? (loadError instanceof Error ? loadError.message : 'Failed to load sport teams'))
+        }
+      } finally {
+        if (isActive) {
+          setLoadingSportTeams(false)
         }
       }
     }
@@ -667,12 +721,17 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
 
   const payoutSummary = useMemo(() => {
     const squareCost = Math.max(0, Number(poolForm.squareCost) || 0)
-    const payoutValues = {
+    const payoutValues = normalizePayoutsForLeague(poolForm.leagueCode, {
       q1Payout: Math.max(0, Number(poolForm.q1Payout) || 0),
       q2Payout: Math.max(0, Number(poolForm.q2Payout) || 0),
       q3Payout: Math.max(0, Number(poolForm.q3Payout) || 0),
-      q4Payout: Math.max(0, Number(poolForm.q4Payout) || 0)
-    }
+      q4Payout: Math.max(0, Number(poolForm.q4Payout) || 0),
+      q5Payout: Math.max(0, Number(poolForm.q5Payout) || 0),
+      q6Payout: Math.max(0, Number(poolForm.q6Payout) || 0),
+      q7Payout: Math.max(0, Number(poolForm.q7Payout) || 0),
+      q8Payout: Math.max(0, Number(poolForm.q8Payout) || 0),
+      q9Payout: Math.max(0, Number(poolForm.q9Payout) || 0)
+    })
     const normalizedRoundPayouts = normalizeRoundPayouts(poolForm.leagueCode, poolForm.roundPayouts)
     const totalRevenue = squareCost * TOTAL_SQUARES
     const estimatedGameCount =
@@ -684,11 +743,8 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
             ? Math.max(poolGames.length, selectedTemplateDefinition?.expectedGameCount ?? 0)
             : selectedLeagueDefinition.regularSeasonGameCount
 
-    const getPayoutTotalForEntry = (entry: { q1Payout: number; q2Payout: number; q3Payout: number; q4Payout: number }): number =>
-      selectedLeagueDefinition.activePayoutSlots.reduce((sum, slot) => {
-        const slotValue = slot === 'q1' ? entry.q1Payout : slot === 'q2' ? entry.q2Payout : slot === 'q3' ? entry.q3Payout : entry.q4Payout
-        return sum + Number(slotValue ?? 0)
-      }, 0)
+    const getPayoutTotalForEntry = (entry: PayoutValues): number =>
+      selectedLeagueDefinition.activePayoutSlots.reduce((sum, slot) => sum + getPayoutValueForSlot(entry, slot), 0)
 
     const totalPayoutPerGame = getPayoutTotalForEntry(payoutValues)
     const roundGameCountMap = new Map<string, number>()
@@ -729,14 +785,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
       return (
         sum +
         selectedLeagueDefinition.activePayoutSlots.reduce((slotSum, slot) => {
-          const slotValue =
-            slot === 'q1'
-              ? activePayoutEntry.q1Payout
-              : slot === 'q2'
-                ? activePayoutEntry.q2Payout
-                : slot === 'q3'
-                  ? activePayoutEntry.q3Payout
-                  : activePayoutEntry.q4Payout
+          const slotValue = getPayoutValueForSlot(activePayoutEntry, slot)
           return slotSum + (hasRecordedPayoutSlot(game, slot) ? Number(slotValue ?? 0) : 0)
         }, 0)
       )
@@ -759,6 +808,11 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     poolForm.q2Payout,
     poolForm.q3Payout,
     poolForm.q4Payout,
+    poolForm.q5Payout,
+    poolForm.q6Payout,
+    poolForm.q7Payout,
+    poolForm.q8Payout,
+    poolForm.q9Payout,
     poolForm.roundPayouts,
     poolForm.squareCost,
     poolGames,
@@ -780,10 +834,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   const setPayoutForSlot = (slot: PayoutSlotKey, value: number): void => {
     setPoolForm((current) => ({
       ...current,
-      q1Payout: slot === 'q1' ? value : current.q1Payout,
-      q2Payout: slot === 'q2' ? value : current.q2Payout,
-      q3Payout: slot === 'q3' ? value : current.q3Payout,
-      q4Payout: slot === 'q4' ? value : current.q4Payout
+      [`${slot}Payout`]: value
     }))
   }
 
@@ -918,6 +969,11 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
         q2Payout: Number(poolForm.q2Payout),
         q3Payout: Number(poolForm.q3Payout),
         q4Payout: Number(poolForm.q4Payout),
+        q5Payout: Number(poolForm.q5Payout),
+        q6Payout: Number(poolForm.q6Payout),
+        q7Payout: Number(poolForm.q7Payout),
+        q8Payout: Number(poolForm.q8Payout),
+        q9Payout: Number(poolForm.q9Payout),
         contactNotificationLevel: poolForm.contactNotificationLevel,
         contactNotifyOnSquareLead: poolForm.contactNotifyOnSquareLead
       }
@@ -1507,10 +1563,17 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                       primarySportTeamId: '',
                       primaryTeam: '',
                       roundPayouts: normalizeRoundPayouts(nextLeague.leagueCode, current.roundPayouts),
-                      q1Payout: nextLeague.activePayoutSlots.includes('q1') ? current.q1Payout : 0,
-                      q2Payout: nextLeague.activePayoutSlots.includes('q2') ? current.q2Payout : 0,
-                      q3Payout: nextLeague.activePayoutSlots.includes('q3') ? current.q3Payout : 0,
-                      q4Payout: nextLeague.activePayoutSlots.includes('q4') ? current.q4Payout : 0
+                      ...normalizePayoutsForLeague(nextLeague.leagueCode, {
+                        q1Payout: current.q1Payout,
+                        q2Payout: current.q2Payout,
+                        q3Payout: current.q3Payout,
+                        q4Payout: current.q4Payout,
+                        q5Payout: current.q5Payout,
+                        q6Payout: current.q6Payout,
+                        q7Payout: current.q7Payout,
+                        q8Payout: current.q8Payout,
+                        q9Payout: current.q9Payout
+                      })
                     }
                   })
                 }}
@@ -1651,12 +1714,18 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                   setPoolForm((current) => ({
                     ...current,
                     primarySportTeamId: selectedId,
-                    primaryTeam: selectedSportTeam?.name?.trim() || ''
+                    primaryTeam: selectedSportTeam?.name?.trim() || current.primaryTeam
                   }))
                 }}
-                disabled={saving || sportTeamOptions.length === 0}
+                disabled={saving || loadingSportTeams || sportTeamOptions.length === 0}
               >
-                <option value="">{sportTeamOptions.length > 0 ? 'Select preferred sport team' : `No ${poolForm.leagueCode} teams available`}</option>
+                <option value="">
+                  {loadingSportTeams
+                    ? `Loading ${poolForm.leagueCode} teams...`
+                    : sportTeamOptions.length > 0
+                      ? 'Select preferred sport team'
+                      : `No ${poolForm.leagueCode} teams available`}
+                </option>
                 {sportTeamOptions.map((team) => (
                   <option key={team.id} value={team.id}>
                     {team.name ?? `Sport Team ${team.id}`}
@@ -1664,6 +1733,22 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                   </option>
                 ))}
               </select>
+
+              {!loadingSportTeams && sportTeamOptions.length === 0 ? (
+                <input
+                  type="text"
+                  value={poolForm.primaryTeam}
+                  onChange={(event) =>
+                    setPoolForm((current) => ({
+                      ...current,
+                      primarySportTeamId: '',
+                      primaryTeam: event.target.value
+                    }))
+                  }
+                  placeholder={`Type the ${poolForm.leagueCode} team name`}
+                  disabled={saving}
+                />
+              ) : null}
             </label>
 
             <label className="checkbox-row landing-inline-checkbox landing-field-span">
@@ -1793,14 +1878,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                           </label>
 
                           {selectedLeagueDefinition.activePayoutSlots.map((slot) => {
-                            const payoutValue =
-                              slot === 'q1'
-                                ? roundPayout.q1Payout
-                                : slot === 'q2'
-                                  ? roundPayout.q2Payout
-                                  : slot === 'q3'
-                                    ? roundPayout.q3Payout
-                                    : roundPayout.q4Payout
+                            const payoutValue = getPayoutValueForSlot(roundPayout, slot)
 
                             return (
                               <label key={`${slot}-${index}`} className="field-block">
@@ -1811,11 +1889,8 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                                   value={formatCurrencyInput(payoutValue)}
                                   onChange={(event) =>
                                     setRoundPayoutField(index, {
-                                      q1Payout: slot === 'q1' ? parseCurrencyInput(event.target.value) : roundPayout.q1Payout,
-                                      q2Payout: slot === 'q2' ? parseCurrencyInput(event.target.value) : roundPayout.q2Payout,
-                                      q3Payout: slot === 'q3' ? parseCurrencyInput(event.target.value) : roundPayout.q3Payout,
-                                      q4Payout: slot === 'q4' ? parseCurrencyInput(event.target.value) : roundPayout.q4Payout
-                                    })
+                                      [`${slot}Payout`]: parseCurrencyInput(event.target.value)
+                                    } as Partial<RoundPayoutConfig>)
                                   }
                                   disabled={saving}
                                 />
@@ -1830,8 +1905,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
               </div>
             ) : (
               selectedLeagueDefinition.activePayoutSlots.map((slot) => {
-                const payoutValue =
-                  slot === 'q1' ? poolForm.q1Payout : slot === 'q2' ? poolForm.q2Payout : slot === 'q3' ? poolForm.q3Payout : poolForm.q4Payout
+                const payoutValue = getPayoutValueForSlot(poolForm, slot)
 
                 return (
                   <label key={slot} className="field-block">
@@ -1851,7 +1925,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
             <p className="small landing-readonly-note landing-field-span">
               {poolForm.payoutScheduleMode === 'by_round' && poolForm.poolType === 'tournament'
                 ? 'Use by-round payouts for escalating tournament prizes like $10 in the opening round and $500 in the championship.'
-                : 'Payout checkpoints follow the selected league. NCAA basketball uses 1st half and final, MLB uses final only, and playoff/tournament pools are estimated from the games you add.'}
+                : 'Payout checkpoints follow the selected league. NCAA basketball uses 1st half and final, MLB uses innings 1-8 plus the final inning payout, and playoff/tournament pools are estimated from the games you add.'}
             </p>
 
             <label className="field-block">
