@@ -364,6 +364,29 @@ const ensureSimulationStateTable = async (client: PoolClient): Promise<void> => 
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )`
   );
+
+  const constraintResult = await client.query<{ constraint_definition: string }>(
+    `SELECT pg_get_constraintdef(oid) AS constraint_definition
+     FROM pg_constraint
+     WHERE conrelid = 'football_pool.pool_simulation_state'::regclass
+       AND conname = 'pool_simulation_state_next_quarter_check'
+     LIMIT 1`
+  );
+
+  const constraintDefinition = String(constraintResult.rows[0]?.constraint_definition ?? '');
+
+  if (!/between\s+1\s+and\s+9/i.test(constraintDefinition)) {
+    await client.query(
+      `ALTER TABLE football_pool.pool_simulation_state
+       DROP CONSTRAINT IF EXISTS pool_simulation_state_next_quarter_check`
+    );
+
+    await client.query(
+      `ALTER TABLE football_pool.pool_simulation_state
+       ADD CONSTRAINT pool_simulation_state_next_quarter_check
+       CHECK (next_quarter IS NULL OR next_quarter BETWEEN 1 AND 9)`
+    );
+  }
 };
 
 const loadSimulationState = async (client: PoolClient, poolId: number): Promise<PoolSimulationState | null> => {

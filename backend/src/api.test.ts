@@ -2862,6 +2862,116 @@ describe('Football Pool API', () => {
       expect(boardResponse.body.board.colNumbers).toHaveLength(10)
     })
 
+    it('should advance an MLB by-inning simulation into the 5th inning', async () => {
+      await db.query(`
+        SELECT setval(
+          pg_get_serial_sequence('football_pool.sport_team', 'id'),
+          GREATEST(COALESCE((SELECT MAX(id) FROM football_pool.sport_team), 1), 1),
+          true
+        )
+      `)
+
+      const sportTeamKey = `sim-mlb-${Date.now()}`
+      const sportTeamResult = await db.query<{ id: number }>(
+        `INSERT INTO football_pool.sport_team (
+           name,
+           abbreviation,
+           sport_code,
+           league_code,
+           espn_team_id,
+           espn_team_uid
+         )
+         VALUES ($1, $2, 'BASEBALL', 'MLB', $3, $4)
+         ON CONFLICT (sport_code, league_code, name)
+         DO UPDATE SET abbreviation = EXCLUDED.abbreviation
+         RETURNING id`,
+        [`Sim MLB Team ${sportTeamKey}`, 'SMB', sportTeamKey, `sim:mlb:${sportTeamKey}`]
+      )
+      const sportTeamId = Number(sportTeamResult.rows[0]?.id)
+
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({ teamName: `MLB Sim Org ${Date.now()}` })
+
+      const teamId = Number(teamResponse.body.id)
+
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `MLB Inning Sim Pool ${Date.now()}`,
+          teamId,
+          season: 2026,
+          leagueCode: 'MLB',
+          primarySportTeamId: sportTeamId,
+          squareCost: 20,
+          q1Payout: 10,
+          q2Payout: 10,
+          q3Payout: 10,
+          q4Payout: 10,
+          q5Payout: 10,
+          q6Payout: 10,
+          q7Payout: 10,
+          q8Payout: 10,
+          q9Payout: 20
+        })
+
+      const poolId = Number(poolResponse.body.id)
+
+      await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'MLB',
+          lastName: `User${Date.now()}`,
+          email: `mlb-inning-sim-${Date.now()}@example.com`,
+          phone: '5552800000',
+          isPlayer: true,
+          playerTeams: [{ teamId, jerseyNum: 7 }]
+        })
+
+      const gameResponse = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId,
+          weekNum: 1,
+          opponent: 'St. Louis Cardinals',
+          gameDate: '2026-07-01',
+          isSimulation: true
+        })
+
+      expect(gameResponse.status).toBe(200)
+      const gameId = Number(gameResponse.body.game.id)
+
+      const startResponse = await request(app)
+        .post(`/api/setup/pools/${poolId}/simulation`)
+        .set(organizerHeaders)
+        .send({ mode: 'by_quarter' })
+
+      expect(startResponse.status).toBe(201)
+      expect(startResponse.body.result.currentGameId).toBe(gameId)
+      expect(startResponse.body.result.nextQuarter).toBe(1)
+
+      for (let inning = 1; inning <= 4; inning += 1) {
+        const advanceResponse = await request(app)
+          .post(`/api/setup/pools/${poolId}/simulation/advance`)
+          .set(organizerHeaders)
+          .send({ source: 'mock' })
+
+        expect(advanceResponse.status).toBe(200)
+      }
+
+      const statusResponse = await request(app)
+        .get(`/api/setup/pools/${poolId}/simulation`)
+        .set(organizerHeaders)
+
+      expect(statusResponse.status).toBe(200)
+      expect(statusResponse.body.status.currentGameId).toBe(gameId)
+      expect(statusResponse.body.status.nextQuarter).toBe(5)
+    })
+
     it('should advance an NCAAB tournament simulation by half instead of quarter', async () => {
       const teamResponse = await request(app)
         .post('/api/setup/teams')
