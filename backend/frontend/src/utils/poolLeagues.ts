@@ -104,14 +104,6 @@ const payoutSlotQuarterMap: Record<PayoutSlotKey, ScoreSegmentNumber> = {
   q9: 9
 }
 
-const getOrdinalLabel = (value: number): string => {
-  if (value % 100 >= 11 && value % 100 <= 13) return `${value}th`
-  if (value % 10 === 1) return `${value}st`
-  if (value % 10 === 2) return `${value}nd`
-  if (value % 10 === 3) return `${value}rd`
-  return `${value}th`
-}
-
 export const buildEmptyPayoutValues = (): PayoutValues => ({
   q1Payout: 0,
   q2Payout: 0,
@@ -158,8 +150,8 @@ const getCompactScoreSegmentLabel = (
     return slot === 'q1' ? '1st Period' : slot === 'q2' ? '2nd Period' : 'Final'
   }
 
-  if (leagueCode === 'MLB') {
-    return `${getOrdinalLabel(payoutSlotQuarterMap[slot])} Inning`
+  if (normalizedLabel.includes('inning') || leagueCode === 'MLB') {
+    return `Inning ${payoutSlotQuarterMap[slot]}`
   }
 
   return slot.toUpperCase()

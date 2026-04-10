@@ -1525,6 +1525,7 @@ export function LandingPage() {
     })
   }, [board, latestScoredQuarter, scoreSegments, selectedGame, selectedPool, simulationStatus])
 
+  const hasCompactQuarterSummaryLayout = quarterSummaries.length >= 6
   const showQuarterSummaries = quarterSummaries.length > 0
   const displayAdScale = Math.min(0.95, Math.max(0.5, displayAdSettings.shrinkPercent / 100))
   const displayAdSidebarCount = Math.min(4, Math.max(0, Number(displayAdSettings.sidebarCount ?? 1) || 0))
@@ -1949,7 +1950,7 @@ export function LandingPage() {
                       </div>
 
                       {showQuarterSummaries ? (
-                        <aside className="board-quarter-summary-panel" aria-label="Current score winners and leaders">
+                        <aside className={`board-quarter-summary-panel ${hasCompactQuarterSummaryLayout ? 'is-compact' : ''}`} aria-label="Current score winners and leaders">
                           {quarterSummaries.map((summary) => (
                             <article key={summary.id} className={`board-quarter-card is-${summary.status}`}>
                               <div className="board-quarter-card-header">
@@ -2075,7 +2076,7 @@ export function LandingPage() {
                       </div>
 
                       {showQuarterSummaries ? (
-                        <aside className="board-quarter-summary-panel" aria-label="Current score winners and leaders">
+                        <aside className={`board-quarter-summary-panel ${hasCompactQuarterSummaryLayout ? 'is-compact' : ''}`} aria-label="Current score winners and leaders">
                           {quarterSummaries.map((summary) => (
                             <article key={summary.id} className={`board-quarter-card is-${summary.status}`}>
                               <div className="board-quarter-card-header">
