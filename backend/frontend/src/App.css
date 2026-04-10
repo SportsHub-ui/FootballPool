@@ -2085,7 +2085,8 @@ button:disabled {
   min-height: 100dvh;
   height: 100vh;
   height: 100dvh;
-  padding: clamp(0.12rem, 0.35vh, 0.28rem);
+  grid-template-rows: minmax(0, 1fr);
+  padding: clamp(0.08rem, 0.22vh, 0.16rem);
   box-sizing: border-box;
   overflow: hidden;
   align-content: stretch;
@@ -2161,27 +2162,37 @@ button:disabled {
 .landing-placeholder-card.is-display-only {
   min-height: 0;
   height: 100%;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
   align-content: stretch;
 }
 
 .display-ad-layout {
   display: grid;
-  min-height: 0;
+  min-height: 100%;
   height: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   overflow: hidden;
+  align-items: stretch;
 }
 
 .display-board-stage {
   min-width: 0;
   min-height: 0;
+  height: 100%;
   position: relative;
-  display: block;
+  display: grid;
+  align-items: stretch;
   overflow: hidden;
 }
 
 .display-board-stage > .pool-board {
   width: 100%;
+  height: 100%;
+  min-height: 0;
+  align-self: stretch;
 }
 
 .display-ad-layout.is-ad-mode {
@@ -2207,6 +2218,8 @@ button:disabled {
 
 .display-ad-layout.is-ad-mode .display-board-stage {
   overflow: hidden;
+  display: grid;
+  align-items: stretch;
 }
 
 .pool-board.is-display-only {
@@ -2215,28 +2228,32 @@ button:disabled {
   --board-brand-height: clamp(100px, 9vh, 135px);
   --board-quarter-summary-width: clamp(180px, 18vw, 260px);
   --board-row-label-width: 60px;
-  min-height: 100%;
+  min-height: 0;
+  height: 100%;
   width: 100%;
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto auto minmax(0, 1fr);
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
   transition: transform 320ms ease, box-shadow 320ms ease, width 320ms ease;
   will-change: transform;
 }
 
 .pool-board.is-display-only.is-ad-mode {
-  position: absolute;
-  inset: 0 auto auto 0;
-  transform: scale(var(--display-ad-scale, 0.8));
-  transform-origin: top left;
-  width: calc(100% / var(--display-ad-scale, 0.8));
-  height: calc(100% / var(--display-ad-scale, 0.8));
+  position: relative;
+  inset: auto;
+  transform: none;
+  transform-origin: center;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   box-shadow: none;
 }
 
 .pool-board.is-display-only .pool-board-main {
+  grid-row: 3;
   min-height: 0;
   height: 100%;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .pool-board.is-display-only .pool-board-brand {
@@ -2256,6 +2273,7 @@ button:disabled {
   gap: 0.5rem;
   min-height: 0;
   height: 100%;
+  align-items: stretch;
 }
 
 .pool-board.is-display-only .board-display-shell.with-quarter-summaries {
@@ -2269,6 +2287,8 @@ button:disabled {
   grid-template-rows: auto auto minmax(0, 1fr);
   gap: 0.4rem 0.5rem;
   min-height: 0;
+  height: 100%;
+  align-self: stretch;
 }
 
 .pool-board.is-display-only .board-display-logo {
@@ -2322,10 +2342,18 @@ button:disabled {
 .pool-board.is-display-only .board-display-shell > .board-quarter-summary-panel {
   min-height: 0;
   height: 100%;
+  align-self: stretch;
 }
 
 .pool-board.is-display-only .board-grid {
+  height: 100%;
+  grid-template-rows: repeat(10, minmax(0, 1fr));
   grid-auto-rows: minmax(0, 1fr);
+  align-content: stretch;
+}
+
+.pool-board.is-display-only .board-row {
+  min-height: 0;
 }
 
 .display-scoreboard-spotlight {
@@ -2447,19 +2475,20 @@ button:disabled {
   grid-row: 2;
   display: flex;
   align-items: stretch;
-  min-height: clamp(168px, 22vh, 248px);
+  min-height: clamp(146px, 18vh, 210px);
   padding:
-    clamp(0.55rem, 1vh, 0.8rem)
-    clamp(0.6rem, 1vw, 1rem)
-    max(clamp(1.25rem, 2.2vh, 1.75rem), env(safe-area-inset-bottom, 0px));
+    clamp(0.18rem, 0.35vh, 0.35rem)
+    clamp(0.5rem, 0.9vw, 0.85rem)
+    max(clamp(0.55rem, 1vh, 0.9rem), env(safe-area-inset-bottom, 0px));
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   box-sizing: border-box;
 }
 
 .display-ad-banner-grid {
   display: grid;
-  gap: clamp(0.35rem, 0.8vh, 0.6rem);
+  gap: clamp(0.3rem, 0.65vh, 0.5rem);
   min-height: 100%;
+  height: 100%;
   width: 100%;
   align-items: stretch;
 }
@@ -2551,10 +2580,15 @@ button:disabled {
 }
 
 .pool-board.is-display-only .pool-board-header {
+  grid-row: 1;
   font-size: clamp(1.2rem, 2.1vw, 1.8rem);
   letter-spacing: 0.04em;
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.28);
   box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.2);
+}
+
+.pool-board.is-display-only .display-scoreboard-spotlight {
+  grid-row: 2;
 }
 
 .pool-board.is-display-only .pool-board-header-meta {
@@ -2581,6 +2615,7 @@ button:disabled {
 }
 
 .pool-board.is-display-only .landing-square-card {
+  min-height: 0;
   border-radius: 12px;
   padding: 0.2rem 0.16rem;
 }
