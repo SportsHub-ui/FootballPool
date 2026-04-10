@@ -101,15 +101,33 @@ type LandingBoard = {
   squares: LandingBoardSquare[]
 }
 
-type LoginResponse = {
-  token: string
-  user: {
-    id: number
-    firstName: string
-    lastName: string
-    email: string
-    role: string
+type AuthUser = {
+  id: number
+  userId?: string
+  firstName: string | null
+  lastName: string | null
+  email: string | null
+  role: string
+  isAdmin: boolean
+  managedOrganizationIds?: number[]
+  accessibleOrganizationIds?: number[]
+  permissions?: {
+    canManageOrganizations?: boolean
+    canManageMembers?: boolean
+    canManagePools?: boolean
+    canManageNotifications?: boolean
+    canManageMarketing?: boolean
+    canManageUsers?: boolean
+    canApproveOrgAccess?: boolean
+    canRunSimulation?: boolean
+    canViewMetrics?: boolean
   }
+}
+
+type LoginResponse = {
+  token?: string
+  user: AuthUser
+  message?: string
 }
 
 type DisplayBoardLaunchResponse = {
@@ -761,7 +779,8 @@ const getApiErrorMessage = (payload: unknown, fallback: string): string => {
 }
 
 export function LandingPage() {
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem('auth-token'))
+  const [token, setToken] = useState<string | null>(null)
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null)
   const [displayToken] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null
 
@@ -818,30 +837,43 @@ export function LandingPage() {
   const liveRefreshTimerRef = useRef<number | null>(null)
   const displayRefreshInFlightRef = useRef(false)
 
-  const authHeaders = useMemo(() => {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (token) {
-      headers.Authorization = `Bearer ${token}`
-    }
-    return headers
-  }, [token])
+  const authHeaders = useMemo(() => ({ 'Content-Type': 'application/json' }), [])
 
-  const simulationHeaders = useMemo(() => {
-    if (!SHOW_SIMULATION_CONTROLS || token) {
-      return authHeaders
+  const simulationHeaders = useMemo(() => authHeaders, [authHeaders])
+
+  const verifySession = async (): Promise<void> => {
+    if (displayOnlyMode) {
+      return
     }
 
-    return {
-      ...authHeaders,
-      'x-user-id': 'dev-simulation-user',
-      'x-user-role': 'organizer'
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/verify`, { credentials: 'include' })
+
+      if (!response.ok) {
+        setToken(null)
+        setAuthUser(null)
+        return
+      }
+
+      const data = await response.json().catch(() => null)
+      if (data?.authenticated && data.user) {
+        setToken('session-authenticated')
+        setAuthUser(data.user as AuthUser)
+      } else {
+        setToken(null)
+        setAuthUser(null)
+      }
+    } catch {
+      setToken(null)
+      setAuthUser(null)
     }
-  }, [authHeaders, token])
+  }
 
   const loadBoard = async (poolId: number, gameId: number | null): Promise<void> => {
     const query = gameId ? `?gameId=${gameId}` : ''
     const response = await fetch(`${API_BASE}/api/landing/pools/${poolId}/board${query}`, {
-      headers: authHeaders
+      headers: authHeaders,
+      credentials: 'include'
     })
 
     if (!response.ok) {
@@ -859,7 +891,8 @@ export function LandingPage() {
 
     try {
       const response = await fetch(`${API_BASE}/api/setup/pools/${poolId}/simulation`, {
-        headers: simulationHeaders
+        headers: simulationHeaders,
+        credentials: 'include'
       })
 
       if (!response.ok) {
@@ -882,7 +915,8 @@ export function LandingPage() {
 
     try {
       const response = await fetch(`${API_BASE}/api/landing/pools/${poolId}/games`, {
-        headers: authHeaders
+        headers: authHeaders,
+        credentials: 'include'
       })
 
       if (!response.ok) {
@@ -913,7 +947,8 @@ export function LandingPage() {
   const refreshLivePoolContext = async (poolId: number, preferredGameId?: number | null): Promise<void> => {
     try {
       const response = await fetch(`${API_BASE}/api/landing/pools/${poolId}/games`, {
-        headers: authHeaders
+        headers: authHeaders,
+        credentials: 'include'
       })
 
       if (!response.ok) {
@@ -958,7 +993,8 @@ export function LandingPage() {
 
     try {
       const response = await fetch(`${API_BASE}/api/landing/display/${encodeURIComponent(displayCode)}`, {
-        headers: authHeaders
+        headers: authHeaders,
+        credentials: 'include'
       })
       const data = await response.json().catch(() => null)
 
@@ -1016,7 +1052,7 @@ export function LandingPage() {
     setPageError(null)
 
     try {
-      const response = await fetch(`${API_BASE}/api/landing/pools`, { headers: authHeaders })
+      const response = await fetch(`${API_BASE}/api/landing/pools`, { headers: authHeaders, credentials: 'include' })
 
       if (!response.ok) {
         throw new Error('Failed to load pools')
@@ -1049,6 +1085,11 @@ export function LandingPage() {
       setBusy(null)
     }
   }
+
+  useEffect(() => {
+    void verifySession()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayOnlyMode])
 
   useEffect(() => {
     if (displayOnlyMode && displayToken) {
@@ -1226,6 +1267,152 @@ export function LandingPage() {
     displayOnlyMode
   ])
 
+  const completePasswordResetWithToken = async (resetToken: string): Promise<boolean> => {
+    if (typeof window === 'undefined') {
+      return false
+    }
+
+    const password = window.prompt('Enter a new strong password (12+ characters with upper/lowercase letters, a number, and a symbol).') ?? ''
+    if (!password) {
+      return false
+    }
+
+    const confirmPassword = window.prompt('Confirm the new password.') ?? ''
+    if (!confirmPassword) {
+      return false
+    }
+
+    setBusy('reset-password')
+    setLoginError(null)
+
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ token: resetToken, password, confirmPassword })
+      })
+
+      const data = await response.json().catch(() => ({})) as LoginResponse & { error?: string; message?: string }
+      if (!response.ok || !data.user) {
+        throw new Error(data.error ?? data.message ?? 'Failed to set the password.')
+      }
+
+      setToken('session-authenticated')
+      setAuthUser(data.user)
+      setShowLogin(false)
+      setPageNotice(data.message ?? 'Your password was updated successfully.')
+      setLoginForm({ email: '', password: '' })
+      return true
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Failed to set the password.')
+      return false
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handlePasswordResetFlow = async (): Promise<void> => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const email = window.prompt('Enter the email address for the account you want to set or reset.')?.trim() ?? ''
+    if (!email) {
+      return
+    }
+
+    setBusy('forgot-password')
+    setLoginError(null)
+
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email })
+      })
+
+      const data = await response.json().catch(() => ({})) as { error?: string; message?: string; resetToken?: string }
+      if (!response.ok) {
+        throw new Error(data.error ?? data.message ?? 'Failed to start the password reset flow.')
+      }
+
+      setPageNotice(data.message ?? 'If that account exists, password setup instructions were generated.')
+
+      if (data.resetToken) {
+        await completePasswordResetWithToken(data.resetToken)
+      }
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Failed to start the password reset flow.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handleRequestAccessFlow = async (): Promise<void> => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    setBusy('request-access')
+    setLoginError(null)
+
+    try {
+      const orgResponse = await fetch(`${API_BASE}/api/auth/organizations`, { credentials: 'include' })
+      const orgData = await orgResponse.json().catch(() => ({ organizations: [] })) as {
+        organizations?: Array<{ id: number; team_name: string | null }>
+      }
+
+      if (!orgResponse.ok) {
+        throw new Error('Failed to load organizations for the access request flow.')
+      }
+
+      const organizations = Array.isArray(orgData.organizations) ? orgData.organizations : []
+      const orgListing = organizations.map((org) => `${org.id}: ${org.team_name ?? `Organization ${org.id}`}`).join('\n')
+
+      const firstName = window.prompt('First name')?.trim() ?? ''
+      const lastName = window.prompt('Last name')?.trim() ?? ''
+      const email = window.prompt('Email address')?.trim() ?? ''
+      const phone = window.prompt('Phone number (optional)')?.trim() ?? ''
+      const organizationIdValue = window.prompt(`Enter the organization ID you want access to:\n\n${orgListing || 'No organizations are currently available.'}`)?.trim() ?? ''
+      const requestNote = window.prompt('Add a short note for the organization manager (optional).')?.trim() ?? ''
+
+      const organizationId = Number(organizationIdValue)
+      if (!firstName || !lastName || !email || !Number.isFinite(organizationId) || organizationId <= 0) {
+        throw new Error('First name, last name, email, and a valid organization ID are required.')
+      }
+
+      const response = await fetch(`${API_BASE}/api/auth/request-access`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          firstName,
+          lastName,
+          email,
+          phone: phone || undefined,
+          organizationId,
+          requestNote: requestNote || undefined
+        })
+      })
+
+      const data = await response.json().catch(() => ({})) as { error?: string; message?: string; resetToken?: string }
+      if (!response.ok) {
+        throw new Error(data.error ?? data.message ?? 'Failed to submit the access request.')
+      }
+
+      setPageNotice(data.message ?? 'Your access request has been submitted.')
+      if (data.resetToken) {
+        await completePasswordResetWithToken(data.resetToken)
+      }
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Failed to submit the access request.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setBusy('login')
@@ -1235,17 +1422,18 @@ export function LandingPage() {
       const response = await fetch(`${API_BASE}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(loginForm)
       })
 
-      const data: LoginResponse | { error?: string } = await response.json()
+      const data = await response.json().catch(() => ({})) as LoginResponse & { error?: string; message?: string }
 
-      if (!response.ok || !('token' in data)) {
-        throw new Error(('error' in data && data.error) || 'Login failed')
+      if (!response.ok || !data.user) {
+        throw new Error(data.error ?? data.message ?? 'Login failed')
       }
 
-      localStorage.setItem('auth-token', data.token)
-      setToken(data.token)
+      setToken('session-authenticated')
+      setAuthUser(data.user)
       setShowLogin(false)
       setLoginForm({ email: '', password: '' })
     } catch (error) {
@@ -1255,9 +1443,18 @@ export function LandingPage() {
     }
   }
 
-  const handleLogout = () => {
-    localStorage.removeItem('auth-token')
+  const handleLogout = async () => {
+    try {
+      await fetch(`${API_BASE}/api/auth/logout`, {
+        method: 'POST',
+        credentials: 'include'
+      })
+    } catch {
+      // ignore sign-out transport errors and clear local state anyway
+    }
+
     setToken(null)
+    setAuthUser(null)
     setShowLogin(false)
     setLoginError(null)
     setSelectedSquare(null)
@@ -1313,8 +1510,8 @@ export function LandingPage() {
 
   const loadSquareOptions = async (poolId: number): Promise<void> => {
     const [usersResponse, playersResponse] = await Promise.all([
-      fetch(`${API_BASE}/api/setup/users`, { headers: authHeaders }),
-      fetch(`${API_BASE}/api/setup/pools/${poolId}/players`, { headers: authHeaders })
+      fetch(`${API_BASE}/api/setup/users`, { headers: authHeaders, credentials: 'include' }),
+      fetch(`${API_BASE}/api/setup/pools/${poolId}/players`, { headers: authHeaders, credentials: 'include' })
     ])
 
     const usersData = await usersResponse.json().catch(() => null)
@@ -1428,6 +1625,7 @@ export function LandingPage() {
         const response = await fetch(`${API_BASE}/api/setup/pools/${selectedPoolId}/squares/${squareNum}`, {
           method: 'PATCH',
           headers: authHeaders,
+          credentials: 'include',
           body: JSON.stringify({
             participantId: assignForm.participantId ? Number(assignForm.participantId) : null,
             playerId: assignForm.playerId ? Number(assignForm.playerId) : null,
@@ -1469,6 +1667,7 @@ export function LandingPage() {
         const response = await fetch(`${API_BASE}/api/setup/pools/${selectedPoolId}/squares/${squareNum}`, {
           method: 'PATCH',
           headers: authHeaders,
+          credentials: 'include',
           body: JSON.stringify({
             participantId: null,
             playerId: null,
@@ -1514,10 +1713,7 @@ export function LandingPage() {
     try {
       const response = await fetch(`${API_BASE}/api/setup/pools/${selectedPoolId}/simulation/advance`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...simulationHeaders
-        },
+        headers: simulationHeaders,
         body: JSON.stringify({ source: simulationAdvanceSource, action })
       })
 
@@ -1803,7 +1999,13 @@ export function LandingPage() {
   const previousGameId = currentGameIndex > 0 ? games[currentGameIndex - 1]?.id ?? null : null
   const nextGameId = currentGameIndex >= 0 && currentGameIndex < games.length - 1 ? games[currentGameIndex + 1]?.id ?? null : null
 
-  const canManageSquares = Boolean(!displayOnlyMode && token && selectedPoolId && board)
+  const canManageSquares = Boolean(
+    !displayOnlyMode &&
+      token &&
+      selectedPoolId &&
+      board &&
+      (authUser?.isAdmin || authUser?.permissions?.canManagePools)
+  )
   const poolTracksMembers = Boolean(selectedPool?.has_members_flg ?? true)
   const showMemberSelector = poolTracksMembers && playerOptions.length > 0
   const showSimulationAdvance = !displayOnlyMode && SHOW_SIMULATION_CONTROLS && Boolean(simulationStatus?.progressAction)
@@ -1854,9 +2056,9 @@ export function LandingPage() {
             <button
               type="button"
               className="landing-signin-btn"
-              onClick={() => (token ? handleLogout() : setShowLogin((current) => !current))}
+              onClick={() => (token ? void handleLogout() : setShowLogin((current) => !current))}
             >
-              {token ? 'Sign Out' : 'Sign In'}
+              {token ? `Sign Out${authUser?.firstName ? ` • ${authUser.firstName}` : ''}` : 'Sign In'}
             </button>
           </nav>
 
@@ -1864,7 +2066,7 @@ export function LandingPage() {
             <section className="landing-login-card">
               <div>
                 <h2>Sign in</h2>
-                <p>Use the email for an existing user. Any non-empty password works right now.</p>
+                <p>Use your account email and secure password. New users can request organization access and set a password from here.</p>
               </div>
               <form className="landing-login-form" onSubmit={handleLogin}>
                 <input
@@ -1886,6 +2088,12 @@ export function LandingPage() {
                 <div className="landing-login-actions">
                   <button type="submit" className="primary" disabled={busy !== null}>
                     {busy === 'login' ? 'Signing in...' : 'Sign In'}
+                  </button>
+                  <button type="button" className="secondary" onClick={() => void handlePasswordResetFlow()} disabled={busy !== null}>
+                    Set / Reset Password
+                  </button>
+                  <button type="button" className="secondary" onClick={() => void handleRequestAccessFlow()} disabled={busy !== null}>
+                    Request Access
                   </button>
                 </div>
               </form>

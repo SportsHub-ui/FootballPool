@@ -387,7 +387,7 @@ const getMailTransport = async (): Promise<unknown | null> => {
   return mailTransportPromise;
 };
 
-const deliverEmail = async ({ recipientEmail, subject, messageText, messageHtml }: DeliverEmailArgs): Promise<void> => {
+export const deliverEmail = async ({ recipientEmail, subject, messageText, messageHtml }: DeliverEmailArgs): Promise<void> => {
   const transport = await getMailTransport();
 
   if (!transport || typeof transport !== 'object' || typeof (transport as { sendMail?: unknown }).sendMail !== 'function') {

@@ -109,7 +109,7 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
   const canManageTeams = Boolean(token)
 
   const request = async <T,>(path: string, init?: RequestInit): Promise<T> => {
-    const response = await fetch(`${apiBase}${path}`, init)
+    const response = await fetch(`${apiBase}${path}`, { credentials: 'include', ...init })
     const data = await response.json().catch(() => ({}))
 
     if (!response.ok) {
@@ -294,6 +294,7 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
       const response = await fetch(`${apiBase}/api/setup/images/upload`, {
         method: 'POST',
         headers: uploadHeaders,
+        credentials: 'include',
         body
       })
 

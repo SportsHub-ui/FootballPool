@@ -1,4 +1,4 @@
-﻿import { Router } from 'express';
+﻿import { Request, Response, Router } from 'express';
 import fs from 'fs';
 import multer from 'multer';
 import path from 'path';
@@ -19,7 +19,7 @@ import {
   poolPayoutScheduleModeValues
 } from '../config/poolPayoutSchedules';
 import { getPoolTypeDefinition, poolTypeValues } from '../config/poolTypes';
-import { requireRole } from '../middleware/auth';
+import { buildMockAuthContext, requireRole } from '../middleware/auth';
 import {
   advancePoolSeasonSimulation,
   cleanupPoolSeasonSimulation,
@@ -44,6 +44,7 @@ import {
   resetNotificationTemplateToGlobal,
   saveNotificationTemplate
 } from '../services/notificationTemplates';
+import { canManageOrganization, canManagePool } from '../services/authSecurity';
 import {
   createDisplayAd,
   deleteDisplayAd,
@@ -58,6 +59,140 @@ export const setupRouter = Router();
 const canBootstrapFirstOrganizer = async (client: PoolClient): Promise<boolean> => {
   const result = await client.query<{ user_count: string }>(`SELECT COUNT(*)::text AS user_count FROM football_pool.users`);
   return Number(result.rows[0]?.user_count ?? 0) === 0;
+};
+
+const isBootstrapOrganizer = (req: Request): boolean => req.auth?.userId === 'bootstrap-organizer';
+
+const ensureAdminAccess = (req: Request, res: Response, message = 'Only an admin user can perform this action.'): boolean => {
+  if (req.auth?.isAdmin || isBootstrapOrganizer(req)) {
+    return true;
+  }
+
+  res.status(403).json({ error: message });
+  return false;
+};
+
+const ensureOrganizationScope = (
+  req: Request,
+  res: Response,
+  organizationId: number,
+  message = 'You can only manage organizations that you are assigned to.'
+): boolean => {
+  if (req.auth?.isAdmin || isBootstrapOrganizer(req) || canManageOrganization(req.auth, organizationId)) {
+    return true;
+  }
+
+  res.status(403).json({ error: message });
+  return false;
+};
+
+const ensurePoolScope = async (
+  client: Pick<PoolClient, 'query'>,
+  req: Request,
+  res: Response,
+  poolId: number,
+  message = 'You can only manage pools for organizations that you manage.'
+): Promise<boolean> => {
+  if (req.auth?.isAdmin || isBootstrapOrganizer(req)) {
+    return true;
+  }
+
+  const allowed = await canManagePool(client, req.auth, poolId);
+  if (allowed) {
+    return true;
+  }
+
+  res.status(403).json({ error: message });
+  return false;
+};
+
+const ensureUserScope = async (
+  client: Pick<PoolClient, 'query'>,
+  req: Request,
+  res: Response,
+  userId: number,
+  message = 'You can only review or update users tied to organizations that you manage.'
+): Promise<boolean> => {
+  if (req.auth?.isAdmin || isBootstrapOrganizer(req)) {
+    return true;
+  }
+
+  const managedOrganizationIds = req.auth?.managedOrganizationIds ?? [];
+  if (managedOrganizationIds.length === 0) {
+    res.status(403).json({ error: message });
+    return false;
+  }
+
+  const scopedUser = await client.query(
+    `SELECT 1
+     FROM football_pool.users u
+     WHERE u.id = $1
+       AND (
+         EXISTS (
+           SELECT 1
+           FROM football_pool.organization o
+           WHERE o.id = ANY($2::int[])
+             AND (o.primary_contact_id = u.id OR o.secondary_contact_id = u.id)
+         )
+         OR EXISTS (
+           SELECT 1
+           FROM football_pool.member_organization mo
+           WHERE mo.user_id = u.id
+             AND mo.team_id = ANY($2::int[])
+         )
+         OR EXISTS (
+           SELECT 1
+           FROM football_pool.user_pool up
+           JOIN football_pool.pool p ON p.id = up.pool_id
+           WHERE up.user_id = u.id
+             AND p.team_id = ANY($2::int[])
+         )
+       )
+     LIMIT 1`,
+    [userId, managedOrganizationIds]
+  );
+
+  if ((scopedUser.rowCount ?? 0) > 0) {
+    return true;
+  }
+
+  res.status(403).json({ error: message });
+  return false;
+};
+
+const ensureAssignmentsWithinManagedScope = async (
+  client: Pick<PoolClient, 'query'>,
+  req: Request,
+  res: Response,
+  teamIds: number[],
+  poolIds: number[]
+): Promise<boolean> => {
+  if (req.auth?.isAdmin || isBootstrapOrganizer(req)) {
+    return true;
+  }
+
+  const managedOrganizationIds = req.auth?.managedOrganizationIds ?? [];
+  if (teamIds.some((teamId) => !managedOrganizationIds.includes(teamId))) {
+    res.status(403).json({ error: 'You can only assign members to organizations that you manage.' });
+    return false;
+  }
+
+  if (poolIds.length > 0) {
+    const poolResult = await client.query<{ allowed_count: number }>(
+      `SELECT COUNT(*)::int AS allowed_count
+       FROM football_pool.pool
+       WHERE id = ANY($1::int[])
+         AND team_id = ANY($2::int[])`,
+      [poolIds, managedOrganizationIds]
+    );
+
+    if (Number(poolResult.rows[0]?.allowed_count ?? 0) !== poolIds.length) {
+      res.status(403).json({ error: 'You can only assign users to pools that belong to organizations you manage.' });
+      return false;
+    }
+  }
+
+  return true;
 };
 
 const imageDir = path.resolve(__dirname, '../../images');
@@ -481,10 +616,7 @@ setupRouter.use(async (req, res, next) => {
 
   try {
     if (await canBootstrapFirstOrganizer(client)) {
-      req.auth = {
-        userId: 'bootstrap-organizer',
-        role: 'organizer'
-      };
+      req.auth = buildMockAuthContext('bootstrap-organizer', 'organizer');
     }
 
     next();
@@ -1103,6 +1235,14 @@ setupRouter.get('/notifications/templates', async (req, res) => {
   const client = await db.connect();
 
   try {
+    if (selectedPoolId != null) {
+      if (!(await ensurePoolScope(client, req, res, selectedPoolId, 'You can only review templates for pools you manage.'))) {
+        return;
+      }
+    } else if (!ensureAdminAccess(req, res, 'Only an admin user can review the global notification templates.')) {
+      return;
+    }
+
     await ensureNotificationSupport(client);
     const templates = await listNotificationTemplates(client, selectedPoolId);
     res.status(200).json({
@@ -1137,6 +1277,14 @@ setupRouter.put('/notifications/templates/:recipientScope/:notificationKind', as
   const client = await db.connect();
 
   try {
+    if (parsedBody.data.poolId != null) {
+      if (!(await ensurePoolScope(client, req, res, parsedBody.data.poolId, 'You can only update templates for pools you manage.'))) {
+        return;
+      }
+    } else if (!ensureAdminAccess(req, res, 'Only an admin user can update the global notification templates.')) {
+      return;
+    }
+
     await ensureNotificationSupport(client);
     const template = await saveNotificationTemplate(
       client,
@@ -1178,6 +1326,10 @@ setupRouter.delete('/notifications/templates/:recipientScope/:notificationKind',
   const client = await db.connect();
 
   try {
+    if (!(await ensurePoolScope(client, req, res, parsedQuery.data.poolId, 'You can only reset templates for pools you manage.'))) {
+      return;
+    }
+
     await ensureNotificationSupport(client);
     const reset = await resetNotificationTemplateToGlobal(
       client,
@@ -1211,6 +1363,10 @@ setupRouter.get('/marketing/display', async (req, res) => {
   const client = await db.connect();
 
   try {
+    if (!ensureAdminAccess(req, res, 'Only an admin user can manage display marketing settings.')) {
+      return;
+    }
+
     await ensureDisplayAdvertisingSupport(client);
     const result = await loadDisplayAdvertising(client, {
       includeInactive: true,
@@ -1244,6 +1400,10 @@ setupRouter.put('/marketing/display/settings', async (req, res) => {
   const client = await db.connect();
 
   try {
+    if (!ensureAdminAccess(req, res, 'Only an admin user can manage display marketing settings.')) {
+      return;
+    }
+
     await ensureDisplayAdvertisingSupport(client);
     const settings = await saveDisplayAdSettings(client, parsedBody.data, {
       organizationId: parsedQuery.data.organizationId ?? null
@@ -1270,6 +1430,10 @@ setupRouter.post('/marketing/display/ads', async (req, res) => {
   const client = await db.connect();
 
   try {
+    if (!ensureAdminAccess(req, res, 'Only an admin user can manage display marketing settings.')) {
+      return;
+    }
+
     await ensureDisplayAdvertisingSupport(client);
     const ad = await createDisplayAd(client, parsedBody.data);
     res.status(201).json({ ad });
@@ -1300,6 +1464,10 @@ setupRouter.patch('/marketing/display/ads/:adId', async (req, res) => {
   const client = await db.connect();
 
   try {
+    if (!ensureAdminAccess(req, res, 'Only an admin user can manage display marketing settings.')) {
+      return;
+    }
+
     await ensureDisplayAdvertisingSupport(client);
     const ad = await updateDisplayAd(client, parsedParams.data.adId, parsedBody.data);
 
@@ -1330,6 +1498,10 @@ setupRouter.delete('/marketing/display/ads/:adId', async (req, res) => {
   const client = await db.connect();
 
   try {
+    if (!ensureAdminAccess(req, res, 'Only an admin user can manage display marketing settings.')) {
+      return;
+    }
+
     await ensureDisplayAdvertisingSupport(client);
     const deleted = await deleteDisplayAd(client, parsedParams.data.adId);
 
@@ -1460,6 +1632,16 @@ setupRouter.post('/users', async (req, res) => {
   const client = await db.connect();
 
   try {
+    if (!(await ensureAssignmentsWithinManagedScope(
+      client,
+      req,
+      res,
+      requestedAssignments.map((assignment) => assignment.teamId),
+      parsed.data.poolIds ?? []
+    ))) {
+      return;
+    }
+
     await ensureNotificationSupport(client);
 
     const dupCheck = await client.query<{ id: number }>(
@@ -1470,7 +1652,6 @@ setupRouter.post('/users', async (req, res) => {
       [parsed.data.firstName, parsed.data.lastName, parsed.data.email ?? null]
     );
     if (dupCheck.rows.length > 0) {
-      client.release();
       res.status(409).json({ error: 'A user with the same first name, last name, and email already exists.' });
       return;
     }
@@ -1541,6 +1722,10 @@ setupRouter.post('/teams', async (req, res) => {
   const client = await db.connect();
 
   try {
+    if (!ensureAdminAccess(req, res, 'Only an admin user can create new organizations.')) {
+      return;
+    }
+
     await client.query('BEGIN');
     const id = await nextId(client, 'organization');
     const resolvedSportTeamId = await resolveSportTeamId(client, parsed.data);
@@ -1604,6 +1789,10 @@ setupRouter.post('/players', async (req, res) => {
   const client = await db.connect();
 
   try {
+    if (!ensureOrganizationScope(req, res, parsed.data.teamId, 'You can only add members to organizations that you manage.')) {
+      return;
+    }
+
     await client.query('BEGIN');
 
     const duplicateCheck = await client.query<{ id: number }>(
@@ -1673,6 +1862,11 @@ setupRouter.patch('/players/:playerId', async (req, res) => {
       return;
     }
 
+    if (!ensureOrganizationScope(req, res, Number(targetPlayer.rows[0].team_id), 'You can only update members for organizations that you manage.')) {
+      await client.query('ROLLBACK');
+      return;
+    }
+
     const duplicateCheck = await client.query<{ id: number }>(
       `
         SELECT id
@@ -1738,9 +1932,9 @@ setupRouter.delete('/players/:playerId', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const assignmentResult = await client.query<{ user_id: number }>(
+    const assignmentResult = await client.query<{ user_id: number; team_id: number }>(
       `
-        SELECT user_id
+        SELECT user_id, team_id
         FROM football_pool.member_organization
         WHERE id = $1
         FOR UPDATE
@@ -1751,6 +1945,11 @@ setupRouter.delete('/players/:playerId', async (req, res) => {
     if (assignmentResult.rowCount === 0) {
       await client.query('ROLLBACK');
       res.status(404).json({ error: 'Player not found' });
+      return;
+    }
+
+    if (!ensureOrganizationScope(req, res, Number(assignmentResult.rows[0].team_id), 'You can only delete members for organizations that you manage.')) {
+      await client.query('ROLLBACK');
       return;
     }
 
@@ -1803,6 +2002,10 @@ setupRouter.post('/pools', async (req, res) => {
   const client = await db.connect();
 
   try {
+    if (!ensureOrganizationScope(req, res, parsed.data.teamId, 'You can only create pools for organizations that you manage.')) {
+      return;
+    }
+
     await ensurePoolDisplayTokenSupport(client);
     await ensureNotificationSupport(client);
     await ensurePoolStructureSupport(client);
@@ -1958,6 +2161,10 @@ setupRouter.post('/pools/:poolId/squares/init', async (req, res) => {
   const client = await db.connect();
 
   try {
+    if (!(await ensurePoolScope(client, req, res, parsedParams.data.poolId))) {
+      return;
+    }
+
     await client.query('BEGIN');
 
     const initResult = await ensurePoolSquaresInitialized(client, parsedParams.data.poolId);
@@ -1991,6 +2198,10 @@ setupRouter.get('/pools/:poolId/simulation', async (req, res) => {
 
   if (!parsedParams.success) {
     res.status(400).json({ error: parsedParams.error.issues });
+    return;
+  }
+
+  if (!ensureAdminAccess(req, res, 'Pool simulation is restricted to admin users.')) {
     return;
   }
 
@@ -2028,6 +2239,10 @@ setupRouter.post('/pools/:poolId/simulation', async (req, res) => {
 
   if (!parsedBody.success) {
     res.status(400).json({ error: parsedBody.error.issues });
+    return;
+  }
+
+  if (!ensureAdminAccess(req, res, 'Pool simulation is restricted to admin users.')) {
     return;
   }
 
@@ -2094,6 +2309,10 @@ setupRouter.post('/pools/:poolId/simulation/advance', async (req, res) => {
 
   if (!parsedBody.success) {
     res.status(400).json({ error: parsedBody.error.issues });
+    return;
+  }
+
+  if (!ensureAdminAccess(req, res, 'Pool simulation is restricted to admin users.')) {
     return;
   }
 
@@ -2164,6 +2383,10 @@ setupRouter.delete('/pools/:poolId/simulation', async (req, res) => {
     return;
   }
 
+  if (!ensureAdminAccess(req, res, 'Pool simulation is restricted to admin users.')) {
+    return;
+  }
+
   const client = await db.connect();
 
   try {
@@ -2192,11 +2415,14 @@ setupRouter.delete('/pools/:poolId/simulation', async (req, res) => {
   }
 });
 
-setupRouter.get('/users', async (_req, res) => {
+setupRouter.get('/users', async (req, res) => {
   const client = await db.connect();
 
   try {
     await ensureNotificationSupport(client);
+
+    const isAdmin = Boolean(req.auth?.isAdmin || isBootstrapOrganizer(req));
+    const managedOrganizationIds = req.auth?.managedOrganizationIds ?? [];
 
     const result = await client.query(
       `
@@ -2210,15 +2436,41 @@ setupRouter.get('/users', async (_req, res) => {
           u.is_player_flg,
           u.notification_level,
           u.notify_on_square_lead_flg,
+          COALESCE(u.admin_flg, FALSE) AS admin_flg,
+          COALESCE(u.active_flg, TRUE) AS active_flg,
+          u.password_set_at,
           pt.team_id,
           pt.jersey_num,
           t.team_name
         FROM football_pool.users u
         LEFT JOIN football_pool.member_organization pt ON pt.user_id = u.id
         LEFT JOIN football_pool.organization t ON t.id = pt.team_id
+        WHERE (
+          $1::boolean = TRUE
+          OR EXISTS (
+            SELECT 1
+            FROM football_pool.organization o
+            WHERE o.id = ANY($2::int[])
+              AND (o.primary_contact_id = u.id OR o.secondary_contact_id = u.id)
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM football_pool.member_organization mo
+            WHERE mo.user_id = u.id
+              AND mo.team_id = ANY($2::int[])
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM football_pool.user_pool up
+            JOIN football_pool.pool p ON p.id = up.pool_id
+            WHERE up.user_id = u.id
+              AND p.team_id = ANY($2::int[])
+          )
+        )
         ORDER BY u.last_name, u.first_name, u.id, pt.team_id
         LIMIT 500
-      `
+      `,
+      [isAdmin, managedOrganizationIds]
     );
 
     type UserWithTeams = {
@@ -2231,6 +2483,9 @@ setupRouter.get('/users', async (_req, res) => {
       is_player_flg: boolean;
       notification_level: string;
       notify_on_square_lead_flg: boolean;
+      admin_flg: boolean;
+      active_flg: boolean;
+      password_set_at: string | null;
       player_teams: Array<{ team_id: number; team_name: string | null; jersey_num: number }>;
     };
 
@@ -2248,6 +2503,9 @@ setupRouter.get('/users', async (_req, res) => {
         is_player_flg: Boolean(row.is_player_flg),
         notification_level: row.notification_level ?? 'none',
         notify_on_square_lead_flg: Boolean(row.notify_on_square_lead_flg),
+        admin_flg: Boolean(row.admin_flg),
+        active_flg: Boolean(row.active_flg),
+        password_set_at: row.password_set_at ?? null,
         player_teams: []
       };
 
@@ -2306,6 +2564,22 @@ setupRouter.patch('/users/:userId', async (req, res) => {
   try {
     await ensureNotificationSupport(client);
     await client.query('BEGIN');
+
+    if (!(await ensureUserScope(client, req, res, parsedParams.data.userId))) {
+      await client.query('ROLLBACK');
+      return;
+    }
+
+    if (!(await ensureAssignmentsWithinManagedScope(
+      client,
+      req,
+      res,
+      requestedAssignments.map((assignment) => assignment.teamId),
+      parsedBody.data.poolIds ?? []
+    ))) {
+      await client.query('ROLLBACK');
+      return;
+    }
 
     const result = await client.query(
       `
@@ -2413,9 +2687,15 @@ setupRouter.delete('/users/:userId', async (req, res) => {
     return;
   }
 
+  const client = await db.connect();
+
   try {
+    if (!(await ensureUserScope(client, req, res, parsedParams.data.userId))) {
+      return;
+    }
+
     const [teamAssignmentResult, playerAssignmentResult, userPoolAssignmentResult, squareAssignmentResult] = await Promise.all([
-      db.query<{ assignment_count: number }>(
+      client.query<{ assignment_count: number }>(
         `
           SELECT COUNT(*)::int AS assignment_count
           FROM football_pool.organization
@@ -2424,7 +2704,7 @@ setupRouter.delete('/users/:userId', async (req, res) => {
         `,
         [parsedParams.data.userId]
       ),
-      db.query<{ assignment_count: number }>(
+      client.query<{ assignment_count: number }>(
         `
           SELECT COUNT(*)::int AS assignment_count
           FROM football_pool.member_organization
@@ -2432,7 +2712,7 @@ setupRouter.delete('/users/:userId', async (req, res) => {
         `,
         [parsedParams.data.userId]
       ),
-      db.query<{ assignment_count: number }>(
+      client.query<{ assignment_count: number }>(
         `
           SELECT COUNT(*)::int AS assignment_count
           FROM football_pool.user_pool
@@ -2440,7 +2720,7 @@ setupRouter.delete('/users/:userId', async (req, res) => {
         `,
         [parsedParams.data.userId]
       ),
-      db.query<{ assignment_count: number }>(
+      client.query<{ assignment_count: number }>(
         `
           SELECT COUNT(*)::int AS assignment_count
           FROM football_pool.square
@@ -2468,7 +2748,7 @@ setupRouter.delete('/users/:userId', async (req, res) => {
       return;
     }
 
-    const deleteResult = await db.query(
+    const deleteResult = await client.query(
       `
         DELETE FROM football_pool.users
         WHERE id = $1
@@ -2488,10 +2768,12 @@ setupRouter.delete('/users/:userId', async (req, res) => {
       error: 'Failed to delete user',
       detail: error instanceof Error ? error.message : 'Unknown error'
     });
+  } finally {
+    client.release();
   }
 });
 
-setupRouter.get('/teams', async (_req, res) => {
+setupRouter.get('/teams', async (req, res) => {
   try {
     const result = await db.query(
       `
@@ -2506,9 +2788,11 @@ setupRouter.get('/teams', async (_req, res) => {
           COALESCE(has_members_flg, TRUE) AS has_members_flg,
           sport_team_id
         FROM football_pool.organization
+        WHERE ($1::boolean = TRUE OR id = ANY($2::int[]))
         ORDER BY team_name, id
         LIMIT 500
-      `
+      `,
+      [Boolean(req.auth?.isAdmin || isBootstrapOrganizer(req)), req.auth?.managedOrganizationIds ?? []]
     );
 
     res.json({ teams: result.rows });
@@ -2603,6 +2887,10 @@ setupRouter.patch('/teams/:teamId', async (req, res) => {
   }
 
   try {
+    if (!ensureOrganizationScope(req, res, parsedParams.data.teamId)) {
+      return;
+    }
+
     const resolvedSportTeamId = await resolveSportTeamId(db, parsedBody.data);
 
     const result = await db.query(
@@ -2658,6 +2946,10 @@ setupRouter.delete('/teams/:teamId', async (req, res) => {
   const client = await db.connect();
 
   try {
+    if (!ensureAdminAccess(req, res, 'Only an admin user can delete organizations.')) {
+      return;
+    }
+
     await client.query('BEGIN');
 
     const refResult = await client.query<{
@@ -2710,7 +3002,7 @@ setupRouter.delete('/teams/:teamId', async (req, res) => {
   }
 });
 
-setupRouter.get('/pools', async (_req, res) => {
+setupRouter.get('/pools', async (req, res) => {
   const client = await db.connect();
 
   try {
@@ -2776,9 +3068,11 @@ setupRouter.get('/pools', async (_req, res) => {
           FROM football_pool.pool_payout_rule pr
           WHERE pr.pool_id = p.id
         ) payout_rules ON TRUE
+        WHERE ($1::boolean = TRUE OR p.team_id = ANY($2::int[]))
         ORDER BY p.id DESC
         LIMIT 500
-      `
+      `,
+      [Boolean(req.auth?.isAdmin || isBootstrapOrganizer(req)), req.auth?.managedOrganizationIds ?? []]
     );
 
     res.json({ pools: result.rows });
@@ -2813,6 +3107,16 @@ setupRouter.patch('/pools/:poolId', async (req, res) => {
     await ensurePoolStructureSupport(client);
     await ensurePoolPayoutStructureSupport(client);
     await client.query('BEGIN');
+
+    if (!(await ensurePoolScope(client, req, res, parsedParams.data.poolId))) {
+      await client.query('ROLLBACK');
+      return;
+    }
+
+    if (!ensureOrganizationScope(req, res, parsedBody.data.teamId, 'You can only move pools into organizations that you manage.')) {
+      await client.query('ROLLBACK');
+      return;
+    }
 
     const poolType = getPoolTypeDefinition(parsedBody.data.poolType);
     const structureSettings = resolvePoolStructureSettings(parsedBody.data);
@@ -2962,6 +3266,11 @@ setupRouter.delete('/pools/:poolId', async (req, res) => {
 
   try {
     await client.query('BEGIN');
+
+    if (!(await ensurePoolScope(client, req, res, parsedParams.data.poolId))) {
+      await client.query('ROLLBACK');
+      return;
+    }
 
     const poolResult = await client.query<{ id: number }>(
       `
@@ -3120,6 +3429,10 @@ setupRouter.get('/teams/:teamId/players', async (req, res) => {
   }
 
   try {
+    if (!ensureOrganizationScope(req, res, parsedParams.data.teamId, 'You can only review members for organizations that you manage.')) {
+      return;
+    }
+
     const result = await db.query(
       `
         SELECT
@@ -3154,6 +3467,10 @@ setupRouter.get('/pools/:poolId/players', async (req, res) => {
   }
 
   try {
+    if (!(await ensurePoolScope(db, req, res, parsedParams.data.poolId, 'You can only review members for pools you manage.'))) {
+      return;
+    }
+
     const result = await db.query(
       `
         SELECT
@@ -3194,6 +3511,10 @@ setupRouter.get('/pools/:poolId/squares', async (req, res) => {
   const client = await db.connect();
 
   try {
+    if (!(await ensurePoolScope(client, req, res, parsedParams.data.poolId))) {
+      return;
+    }
+
     await client.query('BEGIN');
     await ensurePoolSquaresInitialized(client, parsedParams.data.poolId);
 
@@ -3248,6 +3569,10 @@ setupRouter.patch('/pools/:poolId/squares/:squareNum', async (req, res) => {
   const client = await db.connect();
 
   try {
+    if (!(await ensurePoolScope(client, req, res, parsedParams.data.poolId, 'Only an organization manager or admin can clear or reassign squares for this pool.'))) {
+      return;
+    }
+
     console.log(
       `[square-assignment] request pool=${parsedParams.data.poolId} square=${parsedParams.data.squareNum} participant=${parsedBody.data.participantId} player=${parsedBody.data.playerId} paid=${parsedBody.data.paidFlg} reassign=${parsedBody.data.reassign}`
     );

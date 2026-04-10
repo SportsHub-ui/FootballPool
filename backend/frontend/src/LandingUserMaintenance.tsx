@@ -29,8 +29,25 @@ type LandingUserRecord = {
   is_player_flg: boolean
   notification_level: NotificationLevel
   notify_on_square_lead_flg: boolean
+  admin_flg?: boolean
+  active_flg?: boolean
+  password_set_at?: string | null
   user_pools: LandingUserPool[]
   player_teams: LandingPlayerTeam[]
+}
+
+type AccessRequestRecord = {
+  id: number
+  organization_id: number
+  organization_name: string | null
+  user_id: number
+  first_name: string | null
+  last_name: string | null
+  email: string | null
+  status: string
+  request_note?: string | null
+  review_note?: string | null
+  requested_at?: string | null
 }
 
 type LandingUsersResponse = {
@@ -140,9 +157,10 @@ export function LandingUserMaintenance({
   const [isCreatingNew, setIsCreatingNew] = useState(false)
   const [canManageUsers, setCanManageUsers] = useState(Boolean(token))
   const [bootstrapMode, setBootstrapMode] = useState(false)
+  const [accessRequests, setAccessRequests] = useState<AccessRequestRecord[]>([])
 
   const request = async <T,>(path: string, init?: RequestInit): Promise<T> => {
-    const response = await fetch(`${apiBase}${path}`, init)
+    const response = await fetch(`${apiBase}${path}`, { credentials: 'include', ...init })
     const data = await response.json().catch(() => ({}))
 
     if (!response.ok) {
@@ -184,6 +202,16 @@ export function LandingUserMaintenance({
       setCanManageUsers(Boolean(result.canManage))
       setUsers(result.users)
 
+      if (result.canManage) {
+        void request<{ requests: AccessRequestRecord[] }>('/api/auth/access-requests', {
+          headers: authHeaders
+        })
+          .then((payload) => setAccessRequests(Array.isArray(payload.requests) ? payload.requests : []))
+          .catch(() => setAccessRequests([]))
+      } else {
+        setAccessRequests([])
+      }
+
       const visibleResults = showPlayersOnly ? result.users.filter((user) => user.is_player_flg) : result.users
 
       const nextSelectedUserId =
@@ -198,6 +226,7 @@ export function LandingUserMaintenance({
       setCanManageUsers(false)
       setError(fetchError instanceof Error ? fetchError.message : 'Failed to load user maintenance data')
       setUsers([])
+      setAccessRequests([])
       loadUserIntoForm(null, pools)
     } finally {
       setLoading(false)
@@ -238,7 +267,7 @@ export function LandingUserMaintenance({
 
   const heroSubtitle = useMemo(() => {
     if (bootstrapMode) {
-      return 'No users exist yet. Create the first organizer account here, then sign in with that email and any non-empty password.'
+      return 'No users exist yet. Create the first organizer account here, then use the secure password setup flow to activate that account.'
     }
 
     if (pools.length === 0) {
@@ -419,6 +448,33 @@ export function LandingUserMaintenance({
     }
   }
 
+  const onReviewAccessRequest = async (requestId: number, status: 'approved' | 'rejected'): Promise<void> => {
+    if (!canManageUsers) {
+      return
+    }
+
+    const reviewNote = window.prompt(
+      status === 'approved' ? 'Optional approval note:' : 'Optional reason for rejecting this request:'
+    )?.trim() ?? ''
+
+    setSaving(true)
+    setError(null)
+
+    try {
+      await request(`/api/auth/access-requests/${requestId}`, {
+        method: 'PATCH',
+        headers: authHeaders,
+        body: JSON.stringify({ status, reviewNote: reviewNote || undefined })
+      })
+
+      await loadUserData(selectedUserId)
+    } catch (reviewError) {
+      setError(reviewError instanceof Error ? reviewError.message : 'Failed to review the access request')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <section className="player-maintenance-shell user-maintenance-shell">
       <div className="landing-hero-bar landing-player-hero" style={heroStyle}>
@@ -429,6 +485,59 @@ export function LandingUserMaintenance({
       </div>
 
       {error ? <div className="error-banner landing-error-banner">{error}</div> : null}
+
+      {canManageUsers ? (
+        <article className="landing-maintenance-card" style={{ marginBottom: '1rem' }}>
+          <div className="landing-maintenance-header">
+            <div>
+              <h2>Organization Access Requests</h2>
+              <p className="small">Approve or reject pending requests for the organizations you manage.</p>
+            </div>
+          </div>
+
+          {accessRequests.length === 0 ? (
+            <p className="small">No pending or recent access requests are waiting for review.</p>
+          ) : (
+            <table className="landing-player-table">
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Organization</th>
+                  <th>Status</th>
+                  <th>Requested</th>
+                  <th>Note</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {accessRequests.map((request) => (
+                  <tr key={request.id}>
+                    <td>{formatUserName(request)}</td>
+                    <td>{request.organization_name ?? `Organization ${request.organization_id}`}</td>
+                    <td>{request.status}</td>
+                    <td>{request.requested_at ? new Date(request.requested_at).toLocaleString() : '—'}</td>
+                    <td>{request.request_note ?? '—'}</td>
+                    <td>
+                      {request.status === 'pending' ? (
+                        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                          <button type="button" className="primary compact" onClick={() => void onReviewAccessRequest(request.id, 'approved')}>
+                            Approve
+                          </button>
+                          <button type="button" className="secondary compact" onClick={() => void onReviewAccessRequest(request.id, 'rejected')}>
+                            Reject
+                          </button>
+                        </div>
+                      ) : (
+                        request.review_note ?? 'Reviewed'
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </article>
+      ) : null}
 
       <details className="landing-collapsible" open={isUserListExpanded}>
         <summary
@@ -575,6 +684,12 @@ export function LandingUserMaintenance({
                   : 'This user is not currently marked as a member.'}
               </p>
             )}
+            <p className="small landing-selected-team-empty">
+              Account status:{' '}
+              {selectedUser?.active_flg === false ? 'Inactive' : 'Active'} •{' '}
+              {selectedUser?.password_set_at ? 'Password set' : 'Password setup pending'}
+              {selectedUser?.admin_flg ? ' • Admin user' : ''}
+            </p>
           </div>
 
           <div className="landing-player-fields">

@@ -42,6 +42,8 @@ const resetTestDatabase = async (): Promise<void> => {
         football_pool.ingestion_run_log,
         football_pool.notification_log,
         football_pool.notification_template,
+        football_pool.organization_access_request,
+        football_pool.user_session,
         football_pool.pool_game,
         football_pool.pool_payout_rule,
         football_pool.pool_simulation_state,
@@ -4138,14 +4140,105 @@ describe('Football Pool API', () => {
   })
 
   describe('Authentication', () => {
-    it('should accept JWT token in Authorization header', async () => {
-      // For now, just verify the endpoint exists and handles auth
+    it('should accept organizer auth for verify checks', async () => {
       const response = await request(app)
         .get('/api/auth/verify')
         .set(organizerHeaders)
 
       expect(response.status).toBe(200)
-      expect(response.body).toHaveProperty('authenticated')
+      expect(response.body).toHaveProperty('authenticated', true)
+    })
+
+    it('should refuse password login until a secure password has been set', async () => {
+      const email = `auth-no-password-${Date.now()}@example.com`
+
+      const createResponse = await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Password',
+          lastName: 'Pending',
+          email,
+          phone: '5551002000'
+        })
+
+      expect(createResponse.status).toBe(201)
+
+      const loginResponse = await request(app)
+        .post('/api/auth/login')
+        .send({
+          email,
+          password: 'AnyPassword123!'
+        })
+
+      expect(loginResponse.status).toBe(403)
+      expect(String(loginResponse.body.error ?? '')).toMatch(/password/i)
+    })
+
+    it('should support request-access approval and secure password setup', async () => {
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({ teamName: `Access Team ${Date.now()}` })
+
+      expect(teamResponse.status).toBe(201)
+      const organizationId = Number(teamResponse.body.id)
+      const email = `access-request-${Date.now()}@example.com`
+
+      const requestAccessResponse = await request(app)
+        .post('/api/auth/request-access')
+        .send({
+          firstName: 'Access',
+          lastName: 'Requester',
+          email,
+          phone: '5553334444',
+          organizationId,
+          requestNote: 'Please grant pool access.'
+        })
+
+      expect(requestAccessResponse.status).toBe(201)
+      expect(typeof requestAccessResponse.body.resetToken).toBe('string')
+
+      const accessListResponse = await request(app)
+        .get('/api/auth/access-requests')
+        .set(organizerHeaders)
+
+      expect(accessListResponse.status).toBe(200)
+      const createdRequest = accessListResponse.body.requests.find(
+        (entry: { email?: string; organization_id?: number; status?: string }) =>
+          entry.email === email && Number(entry.organization_id) === organizationId && entry.status === 'pending'
+      )
+      expect(createdRequest).toBeTruthy()
+
+      const reviewResponse = await request(app)
+        .patch(`/api/auth/access-requests/${createdRequest.id}`)
+        .set(organizerHeaders)
+        .send({ status: 'approved', reviewNote: 'Approved in test.' })
+
+      expect(reviewResponse.status).toBe(200)
+
+      const resetResponse = await request(app)
+        .post('/api/auth/reset-password')
+        .send({
+          token: requestAccessResponse.body.resetToken,
+          password: 'SecurePass123!',
+          confirmPassword: 'SecurePass123!'
+        })
+
+      expect(resetResponse.status).toBe(200)
+      expect(resetResponse.headers['set-cookie']).toBeTruthy()
+
+      const sessionCookie = Array.isArray(resetResponse.headers['set-cookie'])
+        ? resetResponse.headers['set-cookie'][0]
+        : ''
+
+      const verifyResponse = await request(app)
+        .get('/api/auth/verify')
+        .set('Cookie', sessionCookie)
+
+      expect(verifyResponse.status).toBe(200)
+      expect(Array.isArray(verifyResponse.body.user?.accessibleOrganizationIds)).toBe(true)
+      expect(verifyResponse.body.user.accessibleOrganizationIds).toContain(organizationId)
     })
   })
 

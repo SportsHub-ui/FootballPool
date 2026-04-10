@@ -362,7 +362,7 @@ const getGameScoreForQuarter = (game: Game, quarter: number): string => {
 
 export function ParticipantView() {
   const [view, setView] = useState<'login' | 'dashboard'>('login')
-  const [token, setToken] = useState<string | null>(localStorage.getItem('auth-token'))
+  const [, setToken] = useState<string | null>(null)
   const [user, setUser] = useState<{ id: number; email: string; firstName: string; lastName: string } | null>(null)
   
   const [loginForm, setLoginForm] = useState({ email: '', password: '' })
@@ -378,18 +378,191 @@ export function ParticipantView() {
   const [winnings, setWinnings] = useState<WinningsResponse | null>(null)
   const liveRefreshTimerRef = useRef<number | null>(null)
 
-  const headers = useMemo(() => {
-    const h: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (token) {
-      h['Authorization'] = `Bearer ${token}`
-    }
-    return h
-  }, [token])
+  const headers = useMemo(() => ({ 'Content-Type': 'application/json' }), [])
 
   const scoreSegments = useMemo(
     () => getScoreSegmentDefinitions({ activeSlots: poolBoard?.payoutSummary?.activeSlots, payoutLabels: poolBoard?.payoutSummary?.payoutLabels }),
     [poolBoard?.payoutSummary]
   )
+
+  const completePasswordResetWithToken = async (resetToken: string): Promise<boolean> => {
+    if (typeof window === 'undefined') {
+      return false
+    }
+
+    const password = window.prompt('Enter a new strong password (12+ characters with upper/lowercase letters, a number, and a symbol).') ?? ''
+    if (!password) {
+      return false
+    }
+
+    const confirmPassword = window.prompt('Confirm the new password.') ?? ''
+    if (!confirmPassword) {
+      return false
+    }
+
+    setBusy(true)
+    setLoginError(null)
+
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ token: resetToken, password, confirmPassword })
+      })
+
+      const data = await response.json().catch(() => ({})) as { error?: string; message?: string; user?: { id: number; email: string; firstName: string; lastName: string } }
+      if (!response.ok || !data.user) {
+        throw new Error(data.error ?? data.message ?? 'Failed to set the password.')
+      }
+
+      setToken('session-authenticated')
+      setUser(data.user)
+      setView('dashboard')
+      await loadParticipantData()
+      return true
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Failed to set the password.')
+      return false
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handlePasswordResetFlow = async (): Promise<void> => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const email = window.prompt('Enter the email address for the account you want to set or reset.')?.trim() ?? ''
+    if (!email) {
+      return
+    }
+
+    setBusy(true)
+    setLoginError(null)
+
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email })
+      })
+
+      const data = await response.json().catch(() => ({})) as { error?: string; message?: string; resetToken?: string }
+      if (!response.ok) {
+        throw new Error(data.error ?? data.message ?? 'Failed to start the password reset flow.')
+      }
+
+      if (data.resetToken) {
+        await completePasswordResetWithToken(data.resetToken)
+      } else if (data.message) {
+        window.alert(data.message)
+      }
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Failed to start the password reset flow.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleRequestAccessFlow = async (): Promise<void> => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    setBusy(true)
+    setLoginError(null)
+
+    try {
+      const orgResponse = await fetch(`${API_BASE}/api/auth/organizations`, { credentials: 'include' })
+      const orgData = await orgResponse.json().catch(() => ({ organizations: [] })) as {
+        organizations?: Array<{ id: number; team_name: string | null }>
+      }
+
+      if (!orgResponse.ok) {
+        throw new Error('Failed to load organizations for the access request flow.')
+      }
+
+      const organizations = Array.isArray(orgData.organizations) ? orgData.organizations : []
+      const orgListing = organizations.map((org) => `${org.id}: ${org.team_name ?? `Organization ${org.id}`}`).join('\n')
+
+      const firstName = window.prompt('First name')?.trim() ?? ''
+      const lastName = window.prompt('Last name')?.trim() ?? ''
+      const email = window.prompt('Email address')?.trim() ?? ''
+      const phone = window.prompt('Phone number (optional)')?.trim() ?? ''
+      const organizationIdValue = window.prompt(`Enter the organization ID you want access to:\n\n${orgListing || 'No organizations are currently available.'}`)?.trim() ?? ''
+      const requestNote = window.prompt('Add a short note for the organization manager (optional).')?.trim() ?? ''
+
+      const organizationId = Number(organizationIdValue)
+      if (!firstName || !lastName || !email || !Number.isFinite(organizationId) || organizationId <= 0) {
+        throw new Error('First name, last name, email, and a valid organization ID are required.')
+      }
+
+      const response = await fetch(`${API_BASE}/api/auth/request-access`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          firstName,
+          lastName,
+          email,
+          phone: phone || undefined,
+          organizationId,
+          requestNote: requestNote || undefined
+        })
+      })
+
+      const data = await response.json().catch(() => ({})) as { error?: string; message?: string; resetToken?: string }
+      if (!response.ok) {
+        throw new Error(data.error ?? data.message ?? 'Failed to submit the access request.')
+      }
+
+      if (data.resetToken) {
+        await completePasswordResetWithToken(data.resetToken)
+      } else if (data.message) {
+        window.alert(data.message)
+      }
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Failed to submit the access request.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const loadParticipantData = async () => {
+    try {
+      const [poolsRes, winningsRes] = await Promise.all([
+        fetch(`${API_BASE}/api/participant/pools`, { headers, credentials: 'include' }),
+        fetch(`${API_BASE}/api/participant/winnings`, { headers, credentials: 'include' })
+      ])
+
+      if (poolsRes.ok) setPools(await poolsRes.json())
+      if (winningsRes.ok) setWinnings(await winningsRes.json())
+    } catch (err) {
+      console.error('Failed to load participant data:', err)
+    }
+  }
+
+  const verifySession = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/verify`, { credentials: 'include' })
+      if (!response.ok) {
+        return
+      }
+
+      const data = await response.json().catch(() => null)
+      if (data?.authenticated && data.user) {
+        setToken('session-authenticated')
+        setUser(data.user)
+        setView('dashboard')
+        await loadParticipantData()
+      }
+    } catch {
+      // ignore silent session restore failures
+    }
+  }
 
   const handleLogin = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -400,19 +573,18 @@ export function ParticipantView() {
       const res = await fetch(`${API_BASE}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(loginForm)
       })
 
-      if (!res.ok) throw new Error('Login failed')
-      const data = await res.json()
-      
-      localStorage.setItem('auth-token', data.token)
-      setToken(data.token)
+      const data = await res.json().catch(() => ({})) as { error?: string; message?: string; user?: { id: number; email: string; firstName: string; lastName: string } }
+      if (!res.ok || !data.user) throw new Error(data.error ?? data.message ?? 'Login failed')
+
+      setToken('session-authenticated')
       setUser(data.user)
       setView('dashboard')
-      
-      // Load data
-      await loadParticipantData(data.token)
+
+      await loadParticipantData()
     } catch (err) {
       setLoginError(err instanceof Error ? err.message : 'Login failed')
     } finally {
@@ -420,28 +592,9 @@ export function ParticipantView() {
     }
   }
 
-  const loadParticipantData = async (authToken: string) => {
-    try {
-      const authHeaders = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`
-      }
-
-      const [poolsRes, winningsRes] = await Promise.all([
-        fetch(`${API_BASE}/api/participant/pools`, { headers: authHeaders }),
-        fetch(`${API_BASE}/api/participant/winnings`, { headers: authHeaders })
-      ])
-
-      if (poolsRes.ok) setPools(await poolsRes.json())
-      if (winningsRes.ok) setWinnings(await winningsRes.json())
-    } catch (err) {
-      console.error('Failed to load participant data:', err)
-    }
-  }
-
   const refreshSelectedPoolBoard = async (poolId: number, preferredGameId?: number | null) => {
     try {
-      const gamesRes = await fetch(`${API_BASE}/api/participant/pools/${poolId}/games`, { headers })
+      const gamesRes = await fetch(`${API_BASE}/api/participant/pools/${poolId}/games`, { headers, credentials: 'include' })
 
       if (!gamesRes.ok) {
         throw new Error('Failed to load pool games')
@@ -457,7 +610,7 @@ export function ParticipantView() {
       setSelectedGameId(nextGameId)
 
       const query = nextGameId != null ? `?gameId=${nextGameId}` : ''
-      const boardRes = await fetch(`${API_BASE}/api/participant/pools/${poolId}/board${query}`, { headers })
+      const boardRes = await fetch(`${API_BASE}/api/participant/pools/${poolId}/board${query}`, { headers, credentials: 'include' })
 
       if (boardRes.ok) {
         const boardData = await boardRes.json()
@@ -473,8 +626,8 @@ export function ParticipantView() {
     
     try {
       const [squaresRes, gamesRes] = await Promise.all([
-        fetch(`${API_BASE}/api/participant/pools/${poolId}/squares`, { headers }),
-        fetch(`${API_BASE}/api/participant/pools/${poolId}/games`, { headers })
+        fetch(`${API_BASE}/api/participant/pools/${poolId}/squares`, { headers, credentials: 'include' }),
+        fetch(`${API_BASE}/api/participant/pools/${poolId}/games`, { headers, credentials: 'include' })
       ])
 
       if (squaresRes.ok) setPoolSquares(await squaresRes.json())
@@ -487,7 +640,7 @@ export function ParticipantView() {
 
         const boardPath = `${API_BASE}/api/participant/pools/${poolId}/board`
 
-        const boardRes = await fetch(boardPath, { headers })
+        const boardRes = await fetch(boardPath, { headers, credentials: 'include' })
         if (boardRes.ok) {
           const boardData = await boardRes.json()
           setPoolBoard(boardData.board)
@@ -505,7 +658,7 @@ export function ParticipantView() {
     try {
       const boardRes = await fetch(
         `${API_BASE}/api/participant/pools/${selectedPool}/board?gameId=${gameId}`,
-        { headers }
+        { headers, credentials: 'include' }
       )
 
       if (boardRes.ok) {
@@ -516,6 +669,11 @@ export function ParticipantView() {
       console.error('Failed to load board data:', err)
     }
   }
+
+  useEffect(() => {
+    void verifySession()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     if (typeof window === 'undefined' || view !== 'dashboard' || !selectedPool) {
@@ -569,8 +727,16 @@ export function ParticipantView() {
     }
   }, [poolBoard?.gameId, poolGames, selectedGameId, selectedPool, view])
 
-  const handleLogout = () => {
-    localStorage.removeItem('auth-token')
+  const handleLogout = async () => {
+    try {
+      await fetch(`${API_BASE}/api/auth/logout`, {
+        method: 'POST',
+        credentials: 'include'
+      })
+    } catch {
+      // ignore transport errors while clearing local auth state
+    }
+
     setToken(null)
     setUser(null)
     setView('login')
@@ -690,12 +856,18 @@ export function ParticipantView() {
             <button type="submit" disabled={busy}>
               {busy ? 'Logging in...' : 'Login'}
             </button>
+            <button type="button" className="secondary" onClick={() => void handlePasswordResetFlow()} disabled={busy}>
+              Set / Reset Password
+            </button>
+            <button type="button" className="secondary" onClick={() => void handleRequestAccessFlow()} disabled={busy}>
+              Request Access
+            </button>
           </form>
 
           {loginError && <div className="error-message">{loginError}</div>}
           
           <p style={{ marginTop: '1rem', fontSize: '0.9rem', color: '#666' }}>
-            Use the email for an existing user and any non-empty password.
+            Use the email for an existing user and your secure password.
           </p>
         </div>
       </div>
