@@ -1379,6 +1379,29 @@ export function LandingPage() {
     }
   }
 
+  const continuePasswordResetFlow = async (
+    email: string,
+    data: { message?: string; resetToken?: string }
+  ): Promise<void> => {
+    const providedToken = data.resetToken?.trim() ?? ''
+
+    if (providedToken) {
+      await completePasswordResetWithToken(providedToken)
+      return
+    }
+
+    const manualToken = window.prompt(
+      `${data.message ?? 'Password setup instructions have been generated.'}\n\nPaste the reset token from your email to continue, or press Cancel and come back after it arrives.`
+    )?.trim() ?? ''
+
+    if (!manualToken) {
+      setPageNotice(`A password setup token was sent for ${email}. Use Set / Reset Password again once you have it.`)
+      return
+    }
+
+    await completePasswordResetWithToken(manualToken)
+  }
+
   const handlePasswordResetFlow = async (): Promise<void> => {
     if (typeof window === 'undefined') {
       return
@@ -1406,10 +1429,7 @@ export function LandingPage() {
       }
 
       setPageNotice(data.message ?? 'If that account exists, password setup instructions were generated.')
-
-      if (data.resetToken) {
-        await completePasswordResetWithToken(data.resetToken)
-      }
+      await continuePasswordResetFlow(email, data)
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Failed to start the password reset flow.')
     } finally {
@@ -1470,9 +1490,7 @@ export function LandingPage() {
       }
 
       setPageNotice(data.message ?? 'Your access request has been submitted.')
-      if (data.resetToken) {
-        await completePasswordResetWithToken(data.resetToken)
-      }
+      await continuePasswordResetFlow(email, data)
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Failed to submit the access request.')
     } finally {
@@ -1496,7 +1514,11 @@ export function LandingPage() {
       const data = await response.json().catch(() => ({})) as LoginResponse & { error?: string; message?: string }
 
       if (!response.ok || !data.user) {
-        throw new Error(data.error ?? data.message ?? 'Login failed')
+        const errorMessage = data.error ?? data.message ?? 'Login failed'
+        if (response.status === 403 && /password/i.test(errorMessage)) {
+          setPageNotice('Use Set / Reset Password to finish setup. After entering your email, paste the token from your email and choose a new password.')
+        }
+        throw new Error(errorMessage)
       }
 
       setToken('session-authenticated')
@@ -2155,7 +2177,7 @@ export function LandingPage() {
             <section className="landing-login-card">
               <div>
                 <h2>Sign in</h2>
-                <p>Use your account email and secure password. New users can request organization access and set a password from here.</p>
+                <p>Use your account email and secure password. If you need to set or reset one, use the emailed token in the Set / Reset Password flow.</p>
               </div>
               <form className="landing-login-form" onSubmit={handleLogin}>
                 <input
