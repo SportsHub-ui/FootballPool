@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { db } from '../config/db';
+import { env } from '../config/env';
 import { requireAuth, requirePermission } from '../middleware/auth';
 import { deliverEmail } from '../services/notifications';
 import {
@@ -14,6 +15,7 @@ import {
   issuePasswordResetToken,
   loadAuthenticatedUser,
   parseCookieHeader,
+  setUserPassword,
   revokeUserSession,
   setSessionCookie,
   SESSION_COOKIE_NAME,
@@ -33,13 +35,18 @@ const forgotPasswordSchema = z.object({
 
 const resetPasswordSchema = z
   .object({
-    token: z.string().trim().min(20),
+    token: z.string().trim().min(20).optional(),
+    email: z.string().trim().email().optional(),
     password: z.string().min(12),
     confirmPassword: z.string().min(12)
   })
   .refine((value) => value.password === value.confirmPassword, {
     message: 'Passwords do not match.',
     path: ['confirmPassword']
+  })
+  .refine((value) => Boolean(value.token || value.email), {
+    message: 'A reset token or email address is required.',
+    path: ['token']
   });
 
 const requestAccessSchema = z.object({
@@ -78,6 +85,18 @@ const buildUserResponse = (auth: ReturnType<typeof toAuthContext>) => ({
   accessibleOrganizationIds: auth.accessibleOrganizationIds,
   permissions: auth.permissions
 });
+
+const canBypassResetTokenForEmail = (email: string | undefined, user: { password_hash: string | null; active_flg: boolean | null } | null): boolean => {
+  const normalizedEmail = String(email ?? '').trim().toLowerCase();
+
+  return Boolean(
+    normalizedEmail &&
+    env.PASSWORD_SETUP_BYPASS_EMAILS.includes(normalizedEmail) &&
+    user &&
+    user.active_flg &&
+    !user.password_hash
+  );
+};
 
 const logPasswordReset = async (email: string, token: string, reason: 'forgot-password' | 'request-access'): Promise<void> => {
   const subject = reason === 'request-access' ? 'FootballPool access request received' : 'FootballPool password reset';
@@ -254,12 +273,29 @@ authRouter.post('/reset-password', async (req, res) => {
     const client = await db.connect();
     try {
       await client.query('BEGIN');
-      const userId = await consumePasswordResetToken(client, parsed.data.token, parsed.data.password);
 
-      if (userId == null) {
-        await client.query('ROLLBACK');
-        res.status(400).json({ error: 'The password reset token is invalid or has expired.' });
-        return;
+      let userId: number | null = null;
+
+      if (parsed.data.token) {
+        userId = await consumePasswordResetToken(client, parsed.data.token, parsed.data.password);
+
+        if (userId == null) {
+          await client.query('ROLLBACK');
+          res.status(400).json({ error: 'The password reset token is invalid or has expired.' });
+          return;
+        }
+      } else {
+        const user = await findUserByEmail(client, parsed.data.email ?? '');
+        const canBypassToken = canBypassResetTokenForEmail(parsed.data.email, user);
+
+        if (!canBypassToken || !user) {
+          await client.query('ROLLBACK');
+          res.status(400).json({ error: 'A password reset token is required to set or change this password.' });
+          return;
+        }
+
+        userId = Number(user.id);
+        await setUserPassword(client, userId, parsed.data.password);
       }
 
       const { rawToken, expiresAt } = await createUserSession(client, userId, {

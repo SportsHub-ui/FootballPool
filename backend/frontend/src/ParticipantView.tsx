@@ -429,6 +429,50 @@ export function ParticipantView() {
     }
   }
 
+  const completePasswordResetWithEmail = async (email: string): Promise<boolean> => {
+    if (typeof window === 'undefined') {
+      return false
+    }
+
+    const password = window.prompt('Enter a new strong password (12+ characters with upper/lowercase letters, a number, and a symbol).') ?? ''
+    if (!password) {
+      return false
+    }
+
+    const confirmPassword = window.prompt('Confirm the new password.') ?? ''
+    if (!confirmPassword) {
+      return false
+    }
+
+    setBusy(true)
+    setLoginError(null)
+
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email, password, confirmPassword })
+      })
+
+      const data = await response.json().catch(() => ({})) as { error?: string; message?: string; user?: { id: number; email: string; firstName: string; lastName: string } }
+      if (!response.ok || !data.user) {
+        throw new Error(data.error ?? data.message ?? 'Failed to set the password.')
+      }
+
+      setToken('session-authenticated')
+      setUser(data.user)
+      setView('dashboard')
+      await loadParticipantData()
+      return true
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Failed to set the password.')
+      return false
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const continuePasswordResetFlow = async (
     email: string,
     data: { message?: string; resetToken?: string }
@@ -441,11 +485,14 @@ export function ParticipantView() {
     }
 
     const manualToken = window.prompt(
-      `${data.message ?? 'Password setup instructions have been generated.'}\n\nPaste the reset token from your email to continue, or press Cancel and come back after it arrives.`
+      `${data.message ?? 'Password setup instructions have been generated.'}\n\nPaste the reset token from your email to continue. If token email is unavailable for this approved account, leave this blank and press OK to create the password directly.`
     )?.trim() ?? ''
 
     if (!manualToken) {
-      window.alert(`A password setup token was sent for ${email}. Use Set / Reset Password again once you have it.`)
+      const completedWithoutToken = await completePasswordResetWithEmail(email)
+      if (!completedWithoutToken) {
+        window.alert(`If token email is unavailable, ask an organizer to allow direct setup for ${email} or retry with the reset token.`)
+      }
       return
     }
 
