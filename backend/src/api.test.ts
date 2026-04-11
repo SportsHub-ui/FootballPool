@@ -4683,6 +4683,49 @@ describe('Football Pool API', () => {
       expect(String(loginResponse.body.error ?? '')).toMatch(/password/i)
     })
 
+    it('should allow an allowlisted email to create its initial password without a reset token', async () => {
+      const email = 'jeff.pflanzer@gmail.com'
+      const originalBypassEmails = [...env.PASSWORD_SETUP_BYPASS_EMAILS]
+      env.PASSWORD_SETUP_BYPASS_EMAILS = [email]
+
+      try {
+        const createResponse = await request(app)
+          .post('/api/setup/users')
+          .set(organizerHeaders)
+          .send({
+            firstName: 'Jeff',
+            lastName: 'Pflanzer',
+            email,
+            phone: '5551003000'
+          })
+
+        expect(createResponse.status).toBe(201)
+
+        const resetResponse = await request(app)
+          .post('/api/auth/reset-password')
+          .send({
+            email,
+            password: 'SecurePass123!',
+            confirmPassword: 'SecurePass123!'
+          })
+
+        expect(resetResponse.status).toBe(200)
+        expect(resetResponse.headers['set-cookie']).toBeTruthy()
+
+        const loginResponse = await request(app)
+          .post('/api/auth/login')
+          .send({
+            email,
+            password: 'SecurePass123!'
+          })
+
+        expect(loginResponse.status).toBe(200)
+        expect(loginResponse.body.user?.email).toBe(email)
+      } finally {
+        env.PASSWORD_SETUP_BYPASS_EMAILS = originalBypassEmails
+      }
+    })
+
     it('should support request-access approval and secure password setup', async () => {
       const teamResponse = await request(app)
         .post('/api/setup/teams')
