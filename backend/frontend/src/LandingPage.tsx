@@ -598,15 +598,15 @@ const isLiveGame = (game: LandingGame | null): boolean => {
 
 const getLatestScoredQuarter = (game: LandingGame | null): number | null => {
   if (!game) return null
-  if (game.q9_primary_score !== null && game.q9_opponent_score !== null) return 9
-  if (game.q8_primary_score !== null && game.q8_opponent_score !== null) return 8
-  if (game.q7_primary_score !== null && game.q7_opponent_score !== null) return 7
-  if (game.q6_primary_score !== null && game.q6_opponent_score !== null) return 6
-  if (game.q5_primary_score !== null && game.q5_opponent_score !== null) return 5
-  if (game.q4_primary_score !== null && game.q4_opponent_score !== null) return 4
-  if (game.q3_primary_score !== null && game.q3_opponent_score !== null) return 3
-  if (game.q2_primary_score !== null && game.q2_opponent_score !== null) return 2
-  if (game.q1_primary_score !== null && game.q1_opponent_score !== null) return 1
+  if (game.q9_primary_score !== null || game.q9_opponent_score !== null) return 9
+  if (game.q8_primary_score !== null || game.q8_opponent_score !== null) return 8
+  if (game.q7_primary_score !== null || game.q7_opponent_score !== null) return 7
+  if (game.q6_primary_score !== null || game.q6_opponent_score !== null) return 6
+  if (game.q5_primary_score !== null || game.q5_opponent_score !== null) return 5
+  if (game.q4_primary_score !== null || game.q4_opponent_score !== null) return 4
+  if (game.q3_primary_score !== null || game.q3_opponent_score !== null) return 3
+  if (game.q2_primary_score !== null || game.q2_opponent_score !== null) return 2
+  if (game.q1_primary_score !== null || game.q1_opponent_score !== null) return 1
   return null
 }
 
@@ -623,6 +623,30 @@ const getQuarterScores = (
   if (quarter === 7) return { primaryScore: game.q7_primary_score, opponentScore: game.q7_opponent_score }
   if (quarter === 8) return { primaryScore: game.q8_primary_score, opponentScore: game.q8_opponent_score }
   return { primaryScore: game.q9_primary_score, opponentScore: game.q9_opponent_score }
+}
+
+const getDisplayQuarterScores = (
+  game: LandingGame,
+  quarter: number,
+  currentQuarter?: number | null
+): { primaryScore: number | null; opponentScore: number | null } => {
+  const normalizedCurrentQuarter = Number(currentQuarter ?? 0) || null
+
+  if (!isCompletedGame(game) && normalizedCurrentQuarter != null && quarter > normalizedCurrentQuarter) {
+    return { primaryScore: null, opponentScore: null }
+  }
+
+  let primaryScore: number | null = null
+  let opponentScore: number | null = null
+  const cappedQuarter = Math.min(Math.max(quarter, 1), 9)
+
+  for (let index = 1; index <= cappedQuarter; index += 1) {
+    const scoreEntry = getQuarterScores(game, index)
+    if (scoreEntry.primaryScore != null) primaryScore = scoreEntry.primaryScore
+    if (scoreEntry.opponentScore != null) opponentScore = scoreEntry.opponentScore
+  }
+
+  return { primaryScore, opponentScore }
 }
 
 const getDisplayScores = (
@@ -1944,7 +1968,7 @@ export function LandingPage() {
 
     return scoreSegments.map((segment) => {
       const quarter = segment.quarter
-      const { primaryScore, opponentScore } = getQuarterScores(selectedGame, quarter)
+      const { primaryScore, opponentScore } = getDisplayQuarterScores(selectedGame, quarter, activeDisplayQuarter)
       const displayScores = getDisplayScores(primaryScore, opponentScore, winnerLoserMode)
       const hasScore = primaryScore !== null && opponentScore !== null
       const squareNum = hasScore

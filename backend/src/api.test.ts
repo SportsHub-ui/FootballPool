@@ -1539,6 +1539,51 @@ describe('Football Pool API', () => {
       expect(displayResponse.body.games.find((game: { id: number; current_quarter: number | null }) => game.id === todayGameId)?.current_quarter).toBe(6)
       expect(displayResponse.body.board?.poolId).toBe(displayPoolId)
       expect(displayResponse.body.board?.gameId).toBe(todayGameId)
+
+      const previousLeaderSquare = displayResponse.body.board?.squares.find((square: { is_current_score_leader?: boolean }) => square.is_current_score_leader)?.square_num ?? null
+
+      const topOfInningResponse = await request(app)
+        .patch(`/api/games/${todayGameId}/scores`)
+        .set(organizerHeaders)
+        .send({
+          q1PrimaryScore: 1,
+          q1OpponentScore: 0,
+          q2PrimaryScore: 1,
+          q2OpponentScore: 0,
+          q3PrimaryScore: 2,
+          q3OpponentScore: 0,
+          q4PrimaryScore: 3,
+          q4OpponentScore: 2,
+          q5PrimaryScore: null,
+          q5OpponentScore: null,
+          q6PrimaryScore: null,
+          q6OpponentScore: null,
+          q7PrimaryScore: null,
+          q7OpponentScore: 3,
+          q8PrimaryScore: null,
+          q8OpponentScore: null,
+          q9PrimaryScore: null,
+          q9OpponentScore: null
+        })
+
+      expect(topOfInningResponse.status).toBe(200)
+
+      await db.query(
+        `UPDATE football_pool.game
+         SET state = 'in_progress',
+             current_quarter = 7
+         WHERE id = $1`,
+        [todayGameId]
+      )
+
+      const topOfInningDisplayResponse = await request(app).get(`/api/landing/display/${displayPoolToken}`)
+      const liveGame = topOfInningDisplayResponse.body.games.find((game: { id: number; current_quarter: number | null }) => game.id === todayGameId)
+      const liveLeaderSquare = topOfInningDisplayResponse.body.board?.squares.find((square: { is_current_score_leader?: boolean }) => square.is_current_score_leader)?.square_num ?? null
+
+      expect(topOfInningDisplayResponse.status).toBe(200)
+      expect(liveGame?.current_quarter).toBe(7)
+      expect(liveLeaderSquare).not.toBeNull()
+      expect(liveLeaderSquare).not.toBe(previousLeaderSquare)
     })
   })
 
