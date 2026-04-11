@@ -1122,7 +1122,8 @@ button:disabled {
   color: #1f2937;
   padding: 0.6rem;
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto auto auto;
+  align-content: start;
   gap: 0.45rem;
   box-sizing: border-box;
 }
@@ -1164,13 +1165,15 @@ button:disabled {
 
 .board-quarter-scoreline {
   display: grid;
-  gap: 0.28rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem;
+  align-items: center;
 }
 
-
-.board-quarter-scoreline div {
+.board-quarter-score-item {
+  min-width: 0;
   display: grid;
-  grid-template-columns: 24px 1fr;
+  grid-template-columns: 24px minmax(0, 1fr);
   align-items: center;
   gap: 0.35rem;
 }
@@ -1197,9 +1200,9 @@ button:disabled {
 }
 
 .board-quarter-winner {
-  display: grid;
-  gap: 0.12rem;
-  align-self: end;
+  display: block;
+  min-width: 0;
+  align-self: start;
 }
 
 .board-quarter-winner-label {
@@ -1211,8 +1214,9 @@ button:disabled {
 }
 
 .board-quarter-winner strong {
-  font-size: 0.82rem;
-  line-height: 1.2;
+  display: block;
+  font-size: 0.8rem;
+  line-height: 1.15;
   overflow-wrap: anywhere;
 }
 
@@ -1235,12 +1239,13 @@ button:disabled {
 }
 
 .board-quarter-summary-panel.is-compact .board-quarter-scoreline {
-  gap: 0.16rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.2rem;
 }
 
-.board-quarter-summary-panel.is-compact .board-quarter-scoreline div {
-  grid-template-columns: 18px 1fr;
-  gap: 0.25rem;
+.board-quarter-summary-panel.is-compact .board-quarter-score-item {
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 0.22rem;
 }
 
 .board-quarter-summary-panel.is-compact .quarter-team-logo {

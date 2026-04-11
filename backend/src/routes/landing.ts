@@ -416,26 +416,76 @@ const pickDisplayGameId = (
     state?: string | null;
     q9_primary_score?: number | null;
     q9_opponent_score?: number | null;
-    q4_primary_score: number | null;
-    q4_opponent_score: number | null;
   }): boolean => {
     const normalizedState = String(game.state ?? '').trim().toLowerCase();
-    return ['completed', 'complete', 'closed', 'finished', 'final', 'post'].includes(normalizedState)
-      || ((game.q9_primary_score ?? game.q4_primary_score) != null && (game.q9_opponent_score ?? game.q4_opponent_score) != null);
+
+    if (['completed', 'complete', 'closed', 'finished', 'final', 'post'].includes(normalizedState)) {
+      return true;
+    }
+
+    if (normalizedState) {
+      return false;
+    }
+
+    return game.q9_primary_score != null && game.q9_opponent_score != null;
+  };
+
+  const isLiveGame = (game: {
+    state?: string | null;
+    q1_primary_score: number | null;
+    q1_opponent_score: number | null;
+    q2_primary_score: number | null;
+    q2_opponent_score: number | null;
+    q3_primary_score: number | null;
+    q3_opponent_score: number | null;
+    q4_primary_score: number | null;
+    q4_opponent_score: number | null;
+    q5_primary_score?: number | null;
+    q5_opponent_score?: number | null;
+    q6_primary_score?: number | null;
+    q6_opponent_score?: number | null;
+    q7_primary_score?: number | null;
+    q7_opponent_score?: number | null;
+    q8_primary_score?: number | null;
+    q8_opponent_score?: number | null;
+    q9_primary_score?: number | null;
+    q9_opponent_score?: number | null;
+  }): boolean => {
+    const normalizedState = String(game.state ?? '').trim().toLowerCase();
+
+    if ([
+      'in_progress',
+      'in progress',
+      'live',
+      'active',
+      'ongoing',
+      'underway',
+      'midgame',
+      'halftime',
+      'delayed',
+      'delay',
+      'rain_delay',
+      'rain delay',
+      'suspended'
+    ].includes(normalizedState)) {
+      return true;
+    }
+
+    return !isCompletedGame(game) && getLatestScoredQuarter(game) != null;
   };
 
   const selectableGames = games.filter((game) => !isByeGame(game));
 
-  if (currentGameId != null) {
-    const currentGame = selectableGames.find((game) => Number(game.id) === Number(currentGameId));
-    if (currentGame) {
-      return Number(currentGame.id);
-    }
-  }
-
-  const liveGame = selectableGames.find((game) => !isCompletedGame(game) && getLatestScoredQuarter(game) != null);
+  const liveGame = selectableGames.find((game) => isLiveGame(game));
   if (liveGame) {
     return Number(liveGame.id);
+  }
+
+  if (currentGameId != null) {
+    const currentGame = selectableGames.find((game) => Number(game.id) === Number(currentGameId));
+    if (currentGame && !isCompletedGame(currentGame)) {
+      return Number(currentGame.id);
+    }
   }
 
   const today = new Date();

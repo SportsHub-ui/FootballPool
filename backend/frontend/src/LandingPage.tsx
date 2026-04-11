@@ -564,8 +564,34 @@ const isCompletedGame = (game: LandingGame | null): boolean => {
     return false
   }
 
-  return (game.q9_primary_score !== null && game.q9_opponent_score !== null)
-    || (game.q4_primary_score !== null && game.q4_opponent_score !== null)
+  return game.q9_primary_score !== null && game.q9_opponent_score !== null
+}
+
+const isLiveGame = (game: LandingGame | null): boolean => {
+  if (!game) return false
+
+  const normalizedState = String(game.state ?? '').trim().toLowerCase()
+  if (
+    [
+      'in_progress',
+      'in progress',
+      'live',
+      'active',
+      'ongoing',
+      'underway',
+      'midgame',
+      'halftime',
+      'delayed',
+      'delay',
+      'rain_delay',
+      'rain delay',
+      'suspended'
+    ].includes(normalizedState)
+  ) {
+    return true
+  }
+
+  return !isCompletedGame(game) && getLatestScoredQuarter(game) !== null
 }
 
 const getLatestScoredQuarter = (game: LandingGame | null): number | null => {
@@ -715,16 +741,19 @@ const pickInitialGameId = (
     return preferredGameId
   }
 
+  const liveGame = games.find((game) => isLiveGame(game))
+  if (liveGame) {
+    return liveGame.id
+  }
+
   if (simulationCurrentGameId && games.some((game) => game.id === simulationCurrentGameId)) {
     return simulationCurrentGameId
   }
 
-  const liveOrScoredGame =
-    games.find((game) => !isCompletedGame(game) && getLatestScoredQuarter(game) != null) ??
-    [...games].reverse().find((game) => getLatestScoredQuarter(game) != null)
+  const recentScoredGame = [...games].reverse().find((game) => getLatestScoredQuarter(game) != null)
 
-  if (liveOrScoredGame) {
-    return liveOrScoredGame.id
+  if (recentScoredGame) {
+    return recentScoredGame.id
   }
 
   const today = new Date()
@@ -2401,13 +2430,13 @@ export function LandingPage() {
                               </div>
 
                               <div className="board-quarter-scoreline">
-                                <div>
+                                <div className="board-quarter-score-item">
                                   {primaryTeamLogo ? (
                                     <img src={primaryTeamLogo} alt={primaryTeamLabel} className="quarter-team-logo" />
                                   ) : null}
                                   <span>{summary.primaryScore ?? '—'}</span>
                                 </div>
-                                <div>
+                                <div className="board-quarter-score-item">
                                   {opponentTeamLogo ? (
                                     <img src={opponentTeamLogo} alt={opponentTeamLabel} className="quarter-team-logo" />
                                   ) : null}
@@ -2416,9 +2445,6 @@ export function LandingPage() {
                               </div>
 
                               <div className="board-quarter-winner">
-                                <span className="board-quarter-winner-label">
-                                  {summary.status === 'completed' ? 'Winner' : summary.status === 'active' ? 'Leader' : 'Pending'}
-                                </span>
                                 <strong>{summary.ownerName}</strong>
                               </div>
                             </article>
@@ -2527,13 +2553,13 @@ export function LandingPage() {
                               </div>
 
                               <div className="board-quarter-scoreline">
-                                <div>
+                                <div className="board-quarter-score-item">
                                   {primaryTeamLogo ? (
                                     <img src={primaryTeamLogo} alt={primaryTeamLabel} className="quarter-team-logo" />
                                   ) : null}
                                   <span>{summary.primaryScore ?? '—'}</span>
                                 </div>
-                                <div>
+                                <div className="board-quarter-score-item">
                                   {opponentTeamLogo ? (
                                     <img src={opponentTeamLogo} alt={opponentTeamLabel} className="quarter-team-logo" />
                                   ) : null}
@@ -2542,9 +2568,6 @@ export function LandingPage() {
                               </div>
 
                               <div className="board-quarter-winner">
-                                <span className="board-quarter-winner-label">
-                                  {summary.status === 'completed' ? 'Winner' : summary.status === 'active' ? 'Leader' : 'Pending'}
-                                </span>
                                 <strong>{summary.ownerName}</strong>
                               </div>
                             </article>
