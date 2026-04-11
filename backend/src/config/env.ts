@@ -72,6 +72,7 @@ const envSchema = z.object({
     .optional()
     .default('')
     .transform((value) => value.split(',').map((entry) => entry.trim().toLowerCase()).filter(Boolean)),
+  SESSION_COOKIE_SAME_SITE: z.enum(['lax', 'strict', 'none']).default(isProductionLike ? 'none' : 'lax'),
   EMAIL_FROM: z.string().optional().default('noreply@footballpool.local'),
   SMTP_HOST: z.string().optional().default(''),
   SMTP_PORT: z.coerce.number().int().positive().optional().default(587),
