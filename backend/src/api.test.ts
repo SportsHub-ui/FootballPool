@@ -2010,11 +2010,20 @@ describe('Football Pool API', () => {
 
         expect(importResponse.status).toBe(200)
 
-        const importedGamesResult = await db.query<{ row_numbers: unknown; column_numbers: unknown }>(
-          `SELECT row_numbers, column_numbers
-           FROM football_pool.pool_game
-           WHERE pool_id = $1
-           ORDER BY game_id`,
+        const importedGamesResult = await db.query<{
+          row_numbers: unknown;
+          column_numbers: unknown;
+          game_date: string;
+          kickoff_at: string | null;
+        }>(
+          `SELECT pg.row_numbers,
+                  pg.column_numbers,
+                  g.game_date::text AS game_date,
+                  g.kickoff_at::text AS kickoff_at
+           FROM football_pool.pool_game pg
+           JOIN football_pool.game g ON g.id = pg.game_id
+           WHERE pg.pool_id = $1
+           ORDER BY pg.game_id`,
           [importedPoolId]
         )
 
@@ -2024,6 +2033,11 @@ describe('Football Pool API', () => {
             (row) => Array.isArray(row.row_numbers) && row.row_numbers.length === 10 && Array.isArray(row.column_numbers) && row.column_numbers.length === 10
           )
         ).toBe(true)
+        expect(importedGamesResult.rows.map((row) => row.game_date)).toEqual(['2026-04-01', '2026-04-03'])
+        expect(importedGamesResult.rows.map((row) => row.kickoff_at?.slice(0, 16) ?? null)).toEqual([
+          '2026-04-01 18:20',
+          '2026-04-03 18:20'
+        ])
       } finally {
         fetchSpy.mockRestore()
       }

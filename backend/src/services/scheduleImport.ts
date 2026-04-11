@@ -42,6 +42,7 @@ type ImportedScheduleEntry = {
   opponentEspnTeamUid: string | null;
   opponentSlug: string | null;
   gameDate: string;
+  kickoffAt: string | null;
   isBye: boolean;
 };
 
@@ -65,6 +66,15 @@ const toDateOnly = (value: string): string => {
   }
 
   return parsed.toISOString().slice(0, 10);
+};
+
+const toKickoffAt = (value: string): string | null => {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed.toISOString();
 };
 
 const addDays = (value: string, days: number): string => {
@@ -313,6 +323,8 @@ const fetchSeasonSchedule = async (team: EspnTeam, season: number): Promise<Impo
       return displayName !== teamHint && shortName !== teamHint && abbreviation !== normalize(team.abbreviation);
     });
 
+    const espnGameDate = competition.date ?? event.date ?? '';
+
     byWeek.set(weekNum, {
       weekNum,
       espnEventId: event.id ?? competition.id ?? null,
@@ -322,7 +334,8 @@ const fetchSeasonSchedule = async (team: EspnTeam, season: number): Promise<Impo
       opponentEspnTeamId: opponent?.team?.id ?? null,
       opponentEspnTeamUid: opponent?.team?.uid ?? null,
       opponentSlug: opponent?.team?.slug ?? null,
-      gameDate: toDateOnly(competition.date ?? event.date ?? ''),
+      gameDate: toDateOnly(espnGameDate),
+      kickoffAt: toKickoffAt(espnGameDate),
       isBye: false
     });
 
@@ -364,6 +377,7 @@ const fetchSeasonSchedule = async (team: EspnTeam, season: number): Promise<Impo
         opponentEspnTeamUid: null,
         opponentSlug: null,
         gameDate: estimatedDate,
+        kickoffAt: null,
         isBye: true
       });
     }
@@ -490,12 +504,12 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
         `UPDATE football_pool.game
          SET away_team_id = COALESCE($2, away_team_id),
              game_date = COALESCE($3::date, game_date),
-             kickoff_at = COALESCE($3::timestamp, kickoff_at, game_date::timestamp),
-             espn_event_id = COALESCE($4, espn_event_id),
-             espn_event_uid = COALESCE($5, espn_event_uid),
+             kickoff_at = COALESCE($4::timestamptz, kickoff_at, game_date::timestamp),
+             espn_event_id = COALESCE($5, espn_event_id),
+             espn_event_uid = COALESCE($6, espn_event_uid),
              updated_at = NOW()
          WHERE id = $1`,
-        [gameId, opponentTeamId, entry.gameDate, entry.espnEventId, entry.espnEventUid]
+        [gameId, opponentTeamId, entry.gameDate, entry.kickoffAt, entry.espnEventId, entry.espnEventUid]
       );
     } else {
       const insertResult = await client.query<{ id: number }>(
@@ -514,9 +528,23 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
            created_at,
            updated_at
          )
-         VALUES ($1, $2, $3, $4, $5::date, $5::timestamp, 'scheduled', FALSE, $6, $7, '{}'::jsonb, NOW(), NOW())
+         VALUES (
+           $1,
+           $2,
+           $3,
+           $4,
+           $5::date,
+           COALESCE($6::timestamptz, $5::date::timestamp),
+           'scheduled',
+           FALSE,
+           $7,
+           $8,
+           '{}'::jsonb,
+           NOW(),
+           NOW()
+         )
          RETURNING id`,
-        [pool.season, entry.weekNum, primarySportTeamId, opponentTeamId, entry.gameDate, entry.espnEventId, entry.espnEventUid]
+        [pool.season, entry.weekNum, primarySportTeamId, opponentTeamId, entry.gameDate, entry.kickoffAt, entry.espnEventId, entry.espnEventUid]
       );
       gameId = insertResult.rows[0].id;
     }
