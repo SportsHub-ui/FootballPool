@@ -84,13 +84,17 @@ export const verifyPassword = async (password: string, passwordHash: string): Pr
 export const hashOpaqueToken = (token: string): string => crypto.createHash('sha256').update(token).digest('hex');
 export const generateOpaqueToken = (size = 32): string => crypto.randomBytes(size).toString('hex');
 
-export const getSessionCookieOptions = (): CookieOptions => ({
-  httpOnly: true,
-  sameSite: 'lax',
-  secure: env.APP_ENV === 'production',
-  path: '/',
-  maxAge: SESSION_TTL_MS
-});
+export const getSessionCookieOptions = (): CookieOptions => {
+  const sameSite = env.SESSION_COOKIE_SAME_SITE;
+
+  return {
+    httpOnly: true,
+    sameSite,
+    secure: env.APP_ENV === 'production' || sameSite === 'none',
+    path: '/',
+    maxAge: SESSION_TTL_MS
+  };
+};
 
 export const setSessionCookie = (res: Response, rawToken: string): void => {
   res.cookie(SESSION_COOKIE_NAME, rawToken, getSessionCookieOptions());
