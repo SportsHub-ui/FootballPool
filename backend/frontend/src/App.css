@@ -1789,6 +1789,88 @@ button:disabled {
   justify-content: flex-end;
 }
 
+.landing-auth-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 2rem 1rem;
+}
+
+.landing-auth-screen {
+  width: min(1040px, 100%);
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1.1fr) minmax(360px, 460px);
+  align-items: start;
+}
+
+.landing-auth-hero {
+  padding: 1.5rem;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(245, 248, 252, 0.94));
+  border: 1px solid #d9e1ea;
+  border-radius: 20px;
+  box-shadow: 0 14px 30px rgba(25, 40, 58, 0.12);
+}
+
+.landing-auth-hero h1 {
+  margin: 0.35rem 0 0.75rem;
+}
+
+.landing-auth-card {
+  align-self: stretch;
+}
+
+.landing-auth-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.landing-auth-tab {
+  flex: 1 1 140px;
+  background: #edf2f7;
+  color: #22374d;
+  border: 1px solid #d1d9e2;
+}
+
+.landing-auth-tab.is-active {
+  background: #22374d;
+  color: #fff;
+}
+
+.landing-auth-form-actions {
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.landing-auth-grid {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.landing-auth-grid-two-up {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.landing-auth-help-text {
+  margin: 0;
+}
+
+.landing-auth-panel-note {
+  padding: 0.75rem 1rem;
+}
+
+@media (max-width: 960px) {
+  .landing-auth-screen {
+    grid-template-columns: 1fr;
+  }
+
+  .landing-auth-grid-two-up {
+    grid-template-columns: 1fr;
+  }
+}
+
 .landing-error-banner {
   margin-top: -0.25rem;
 }
