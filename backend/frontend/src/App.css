@@ -1271,6 +1271,20 @@ button:disabled {
   overflow: hidden;
 }
 
+.pool-board.is-display-only.is-ad-mode .board-quarter-card {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.pool-board.is-display-only.is-ad-mode .board-quarter-scoreline {
+  display: none;
+}
+
+.pool-board.is-display-only.is-ad-mode .board-quarter-winner {
+  display: flex;
+  align-items: center;
+  min-height: 0;
+}
+
 .board-row {
   display: grid;
   grid-template-columns: var(--board-row-label-width) repeat(10, minmax(0, 1fr));
@@ -2802,6 +2816,15 @@ button:disabled {
 
 .pool-board.is-display-only .board-quarter-winner strong {
   font-size: clamp(1rem, 1.15vw, 1.2rem);
+}
+
+.pool-board.is-display-only.is-ad-mode .board-quarter-winner strong {
+  font-size: clamp(1.02rem, 1.25vw, 1.28rem);
+  line-height: 1.1;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .pool-board.is-display-only .landing-square-card.win-3,

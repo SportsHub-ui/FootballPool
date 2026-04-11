@@ -1540,6 +1540,113 @@ describe('Football Pool API', () => {
       }
     })
 
+    it('should keep rotating until a scheduled MLB game with a placeholder noon kickoff actually goes live', async () => {
+      vi.useFakeTimers()
+
+      try {
+        const poolResponse = await request(app)
+          .post('/api/setup/pools')
+          .set(organizerHeaders)
+          .send({
+            poolName: `Placeholder Kickoff Rotation ${Date.now()}`,
+            teamId,
+            season: 2026,
+            poolType: 'single_game',
+            leagueCode: 'MLB',
+            primaryTeam: 'Milwaukee Brewers',
+            squareCost: 25,
+            q1Payout: 10,
+            q2Payout: 10,
+            q3Payout: 10,
+            q4Payout: 10,
+            q5Payout: 10,
+            q6Payout: 10,
+            q7Payout: 10,
+            q8Payout: 10,
+            q9Payout: 20
+          })
+
+        expect(poolResponse.status).toBe(201)
+        const displayPoolToken = String(poolResponse.body.displayToken)
+        const poolId = Number(poolResponse.body.id)
+
+        const completedResponse = await request(app)
+          .post('/api/games')
+          .set(organizerHeaders)
+          .send({
+            poolId,
+            weekNum: 1,
+            opponent: 'Washington Nationals',
+            gameDate: '2026-04-10T18:00:00.000Z'
+          })
+
+        const placeholderUpcomingResponse = await request(app)
+          .post('/api/games')
+          .set(organizerHeaders)
+          .send({
+            poolId,
+            weekNum: 2,
+            opponent: 'Washington Nationals',
+            gameDate: '2026-04-11T18:00:00.000Z'
+          })
+
+        expect(completedResponse.status).toBe(200)
+        expect(placeholderUpcomingResponse.status).toBe(200)
+
+        const completedGameId = Number(completedResponse.body.game.id)
+        const upcomingGameId = Number(placeholderUpcomingResponse.body.game.id)
+
+        const completedScoreResponse = await request(app)
+          .patch(`/api/games/${completedGameId}/scores`)
+          .set(organizerHeaders)
+          .send({
+            q1PrimaryScore: 1,
+            q1OpponentScore: 0,
+            q2PrimaryScore: 1,
+            q2OpponentScore: 0,
+            q3PrimaryScore: 2,
+            q3OpponentScore: 1,
+            q4PrimaryScore: 3,
+            q4OpponentScore: 2,
+            q5PrimaryScore: 3,
+            q5OpponentScore: 2,
+            q6PrimaryScore: 3,
+            q6OpponentScore: 2,
+            q7PrimaryScore: 3,
+            q7OpponentScore: 2,
+            q8PrimaryScore: 3,
+            q8OpponentScore: 2,
+            q9PrimaryScore: 3,
+            q9OpponentScore: 2
+          })
+
+        expect(completedScoreResponse.status).toBe(200)
+
+        await db.query(
+          `UPDATE football_pool.game
+           SET kickoff_at = '2026-04-11T05:00:00.000Z'::timestamptz
+           WHERE id = $1`,
+          [upcomingGameId]
+        )
+
+        vi.setSystemTime(new Date('2026-04-11T17:00:00.000Z'))
+        const firstDisplayResponse = await request(app).get(`/api/landing/display/${displayPoolToken}`)
+
+        vi.setSystemTime(new Date('2026-04-11T17:00:16.000Z'))
+        const secondDisplayResponse = await request(app).get(`/api/landing/display/${displayPoolToken}`)
+
+        expect(firstDisplayResponse.status).toBe(200)
+        expect(secondDisplayResponse.status).toBe(200)
+        expect([completedGameId, upcomingGameId]).toContain(firstDisplayResponse.body.selectedGameId)
+        expect([completedGameId, upcomingGameId]).toContain(secondDisplayResponse.body.selectedGameId)
+        expect(new Set([firstDisplayResponse.body.selectedGameId, secondDisplayResponse.body.selectedGameId])).toEqual(
+          new Set([completedGameId, upcomingGameId])
+        )
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
     it('should ignore an older past scheduled game and rotate from the latest completed game to the next upcoming game', async () => {
       vi.useFakeTimers()
 
