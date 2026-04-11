@@ -526,8 +526,66 @@ const pickDisplayGameId = (
     return !isCompletedGame(game) && getLatestScoredQuarter(game) != null;
   };
 
-  const getGameTimestamp = (game: { game_dt?: string | null; gameDate?: string | null }): number | null => {
+  const getRawGameDate = (game: { game_dt?: string | null; gameDate?: string | null }): string | null => {
     const rawGameDate = game.game_dt ?? game.gameDate;
+    return typeof rawGameDate === 'string' ? rawGameDate : null;
+  };
+
+  const isLikelyPlaceholderStartTime = (game: {
+    game_dt?: string | null;
+    gameDate?: string | null;
+    state?: string | null;
+    q1_primary_score: number | null;
+    q1_opponent_score: number | null;
+    q2_primary_score: number | null;
+    q2_opponent_score: number | null;
+    q3_primary_score: number | null;
+    q3_opponent_score: number | null;
+    q4_primary_score: number | null;
+    q4_opponent_score: number | null;
+    q5_primary_score: number | null;
+    q5_opponent_score: number | null;
+    q6_primary_score: number | null;
+    q6_opponent_score: number | null;
+    q7_primary_score: number | null;
+    q7_opponent_score: number | null;
+    q8_primary_score: number | null;
+    q8_opponent_score: number | null;
+    q9_primary_score: number | null;
+    q9_opponent_score: number | null;
+  }): boolean => {
+    const rawGameDate = getRawGameDate(game)?.trim();
+    const normalizedState = String(game.state ?? '').trim().toLowerCase();
+
+    if (!rawGameDate || (normalizedState && normalizedState !== 'scheduled') || getLatestScoredQuarter(game) != null) {
+      return false;
+    }
+
+    if (
+      /^\d{4}-\d{2}-\d{2}$/.test(rawGameDate) ||
+      /T00:00:00(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$/.test(rawGameDate) ||
+      /T12:00:00(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$/.test(rawGameDate)
+    ) {
+      return true;
+    }
+
+    const parsed = new Date(rawGameDate);
+    if (Number.isNaN(parsed.getTime())) {
+      return false;
+    }
+
+    const centralTime = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Chicago',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    }).format(parsed);
+
+    return centralTime === '00:00';
+  };
+
+  const getGameTimestamp = (game: { game_dt?: string | null; gameDate?: string | null }): number | null => {
+    const rawGameDate = getRawGameDate(game);
 
     if (!rawGameDate) {
       return null;
@@ -555,7 +613,7 @@ const pickDisplayGameId = (
   }
 
   const startedGame = [...selectableGames].reverse().find((game) => {
-    if (isCompletedGame(game)) {
+    if (isCompletedGame(game) || isLikelyPlaceholderStartTime(game)) {
       return false;
     }
 
@@ -578,6 +636,10 @@ const pickDisplayGameId = (
   const nextUpcomingGame = selectableGames.find((game) => {
     if (isCompletedGame(game)) {
       return false;
+    }
+
+    if (isLikelyPlaceholderStartTime(game)) {
+      return true;
     }
 
     const timestamp = getGameTimestamp(game);
