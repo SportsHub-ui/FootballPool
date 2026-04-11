@@ -134,6 +134,11 @@ type LoginResponse = {
 
 type DisplayBoardLaunchResponse = {
   displayOnly: boolean
+  organization?: {
+    id: number
+    team_name: string | null
+  } | null
+  organizationRotationSeconds?: number | null
   pool: LandingPool | null
   games: LandingGame[]
   selectedGameId: number | null
@@ -888,6 +893,7 @@ export function LandingPage() {
   const [displayAdItems, setDisplayAdItems] = useState<DisplayAdItem[]>([])
   const [displayAdSettings, setDisplayAdSettings] = useState<DisplayAdSettings>(DEFAULT_DISPLAY_AD_SETTINGS)
   const [postgameRotationSeconds, setPostgameRotationSeconds] = useState<number | null>(null)
+  const [organizationRotationSeconds, setOrganizationRotationSeconds] = useState<number | null>(null)
   const [authMode, setAuthMode] = useState<'login' | 'reset' | 'request-access'>('login')
   const [loginForm, setLoginForm] = useState({ email: '', password: '' })
   const [resetForm, setResetForm] = useState({ email: '', token: '', password: '', confirmPassword: '' })
@@ -1106,6 +1112,11 @@ export function LandingPage() {
           ? Math.max(5, Math.floor(launch.postgameRotationSeconds))
           : null
       )
+      setOrganizationRotationSeconds(
+        typeof launch.organizationRotationSeconds === 'number' && Number.isFinite(launch.organizationRotationSeconds)
+          ? Math.max(5, Math.floor(launch.organizationRotationSeconds))
+          : null
+      )
       setActiveDisplayAdIndex((current) => (nextDisplayAdInventoryCount > 0 ? current % nextDisplayAdInventoryCount : 0))
       if (!nextDisplayAdSettings.adsEnabled || nextDisplayAdSettings.hideAdsForOrganization || nextDisplayAdInventoryCount === 0) {
         setDisplayAdVisible(false)
@@ -1128,6 +1139,7 @@ export function LandingPage() {
         setDisplayAdSettings(DEFAULT_DISPLAY_AD_SETTINGS)
         setDisplayAdVisible(false)
         setPostgameRotationSeconds(null)
+        setOrganizationRotationSeconds(null)
       }
     } finally {
       if (quiet) {
@@ -1200,9 +1212,17 @@ export function LandingPage() {
     let intervalId: number | null = null
 
     if (displayOnlyMode && displayToken) {
-      const effectiveDisplayRefreshSeconds = postgameRotationSeconds != null
-        ? Math.max(5, Math.min(displayRefreshSeconds, postgameRotationSeconds))
-        : displayRefreshSeconds
+      const cadenceCandidates = [displayRefreshSeconds]
+
+      if (postgameRotationSeconds != null) {
+        cadenceCandidates.push(postgameRotationSeconds)
+      }
+
+      if (organizationRotationSeconds != null) {
+        cadenceCandidates.push(organizationRotationSeconds)
+      }
+
+      const effectiveDisplayRefreshSeconds = Math.max(5, Math.min(...cadenceCandidates))
 
       intervalId = window.setInterval(() => {
         void loadDisplayBoard(displayToken, { quiet: true })
@@ -1274,7 +1294,7 @@ export function LandingPage() {
       eventSource.removeEventListener('game-updated', handleGameUpdated as EventListener)
       eventSource.close()
     }
-  }, [activePage, board?.gameId, displayOnlyMode, displayRefreshSeconds, displayToken, games, postgameRotationSeconds, selectedGameId, selectedPoolId, token])
+  }, [activePage, board?.gameId, displayOnlyMode, displayRefreshSeconds, displayToken, games, organizationRotationSeconds, postgameRotationSeconds, selectedGameId, selectedPoolId, token])
 
   useEffect(() => {
     if (typeof document === 'undefined') {

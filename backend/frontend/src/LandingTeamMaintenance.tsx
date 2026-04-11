@@ -14,6 +14,8 @@ type TeamRecord = {
   secondary_contact_id: number | null
   has_members_flg?: boolean | null
   sport_team_id?: number | null
+  display_token?: string | null
+  display_rotation_seconds?: number | null
 }
 
 type DirectoryUser = {
@@ -103,7 +105,8 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
     logoFile: '',
     primaryContactId: '',
     secondaryContactId: '',
-    hasMembers: true
+    hasMembers: true,
+    displayRotationSeconds: '30'
   })
 
   const canManageTeams = Boolean(token)
@@ -133,7 +136,8 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
       logoFile: storedLogo,
       primaryContactId: team?.primary_contact_id != null ? String(team.primary_contact_id) : '',
       secondaryContactId: team?.secondary_contact_id != null ? String(team.secondary_contact_id) : '',
-      hasMembers: team?.has_members_flg ?? true
+      hasMembers: team?.has_members_flg ?? true,
+      displayRotationSeconds: String(team?.display_rotation_seconds ?? 30)
     })
   }
 
@@ -230,6 +234,20 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
     () => teams.find((team) => team.id === selectedTeamId) ?? null,
     [selectedTeamId, teams]
   )
+
+  const displayUrl = useMemo(() => {
+    if (!selectedTeam?.display_token) {
+      return ''
+    }
+
+    if (typeof window === 'undefined') {
+      return `?display=${selectedTeam.display_token}`
+    }
+
+    const url = new URL(window.location.pathname, window.location.origin)
+    url.searchParams.set('display', selectedTeam.display_token)
+    return url.toString()
+  }, [selectedTeam])
 
   const onSelectTeam = (teamId: number): void => {
     const team = teams.find((entry) => entry.id === teamId) ?? null
@@ -329,9 +347,15 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
 
   const onSaveTeam = async (): Promise<void> => {
     const trimmedName = teamForm.teamName.trim()
+    const parsedDisplayRotationSeconds = Number.parseInt(teamForm.displayRotationSeconds, 10)
 
     if (!trimmedName) {
       setError('Organization name is required.')
+      return
+    }
+
+    if (!Number.isFinite(parsedDisplayRotationSeconds) || parsedDisplayRotationSeconds < 5 || parsedDisplayRotationSeconds > 3600) {
+      setError('Organization kiosk rotation seconds must be between 5 and 3600.')
       return
     }
 
@@ -352,7 +376,8 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
         logoFile: teamForm.logoFile ? normalizeLogoFile(teamForm.logoFile.trim()) : undefined,
         primaryContactId: teamForm.primaryContactId ? Number(teamForm.primaryContactId) : undefined,
         secondaryContactId: teamForm.secondaryContactId ? Number(teamForm.secondaryContactId) : undefined,
-        hasMembers: teamForm.hasMembers
+        hasMembers: teamForm.hasMembers,
+        displayRotationSeconds: parsedDisplayRotationSeconds
       }
 
       if (isCreatingNew) {
@@ -529,6 +554,20 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
             <div className="landing-selected-summary-header">
               <div>
                 <strong>{selectedTeam ? formatTeamName(selectedTeam) : 'New organization'}</strong>
+                {selectedTeam ? (
+                  displayUrl ? (
+                    <div>
+                      <p className="small landing-readonly-note">Organization display link opens the Squares board in read-only mode and rotates through this organization&apos;s pools using the interval below.</p>
+                      <label className="field-block">
+                        <span>Organization display URL</span>
+                        <input value={displayUrl} readOnly onFocus={(event) => event.currentTarget.select()} />
+                      </label>
+                      <a href={displayUrl} target="_blank" rel="noreferrer">Open organization display view</a>
+                    </div>
+                  ) : (
+                    <p className="small">Save the organization to generate its rotating display URL.</p>
+                  )
+                ) : null}
               </div>
             </div>
           </div>
@@ -578,6 +617,19 @@ export function LandingTeamMaintenance({ pools, token, authHeaders, apiBase, onR
                 disabled={saving}
               />
               <span>Track members in this organization</span>
+            </label>
+
+            <label className="field-block">
+              <span>Pool rotation seconds</span>
+              <input
+                type="number"
+                min={5}
+                max={3600}
+                value={teamForm.displayRotationSeconds}
+                onChange={(event) => setTeamForm((current) => ({ ...current, displayRotationSeconds: event.target.value }))}
+                disabled={saving}
+              />
+              <small className="small">How long the organization kiosk should show each pool before cycling to the next one.</small>
             </label>
 
             <label className="field-block landing-field-span">

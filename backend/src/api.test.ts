@@ -1540,6 +1540,84 @@ describe('Football Pool API', () => {
       }
     })
 
+    it('should rotate an organization display link across the organization\'s pools on its configured cadence', async () => {
+      vi.useFakeTimers()
+
+      try {
+        const teamResponse = await request(app)
+          .post('/api/setup/teams')
+          .set(organizerHeaders)
+          .send({
+            teamName: `Organization Display ${Date.now()}`,
+            displayRotationSeconds: 12
+          })
+
+        expect(teamResponse.status).toBe(201)
+        const organizationId = Number(teamResponse.body.id)
+
+        const firstPoolResponse = await request(app)
+          .post('/api/setup/pools')
+          .set(organizerHeaders)
+          .send({
+            poolName: `Org Display Pool A ${Date.now()}`,
+            teamId: organizationId,
+            season: 2026,
+            primaryTeam: 'Packers',
+            squareCost: 25,
+            q1Payout: 250,
+            q2Payout: 250,
+            q3Payout: 250,
+            q4Payout: 500
+          })
+
+        const secondPoolResponse = await request(app)
+          .post('/api/setup/pools')
+          .set(organizerHeaders)
+          .send({
+            poolName: `Org Display Pool B ${Date.now()}`,
+            teamId: organizationId,
+            season: 2026,
+            primaryTeam: 'Packers',
+            squareCost: 25,
+            q1Payout: 250,
+            q2Payout: 250,
+            q3Payout: 250,
+            q4Payout: 500
+          })
+
+        expect(firstPoolResponse.status).toBe(201)
+        expect(secondPoolResponse.status).toBe(201)
+
+        const firstPoolId = Number(firstPoolResponse.body.id)
+        const secondPoolId = Number(secondPoolResponse.body.id)
+        const organizationTokenResult = await db.query<{ display_token: string }>(
+          `SELECT display_token
+           FROM football_pool.organization
+           WHERE id = $1`,
+          [organizationId]
+        )
+        const organizationDisplayToken = String(organizationTokenResult.rows[0]?.display_token ?? '')
+
+        vi.setSystemTime(new Date('2026-09-11T12:00:00.000Z'))
+        const firstDisplayResponse = await request(app).get(`/api/landing/display/${organizationDisplayToken}`)
+
+        vi.setSystemTime(new Date('2026-09-11T12:00:13.000Z'))
+        const secondDisplayResponse = await request(app).get(`/api/landing/display/${organizationDisplayToken}`)
+
+        expect(firstDisplayResponse.status).toBe(200)
+        expect(secondDisplayResponse.status).toBe(200)
+        expect(firstDisplayResponse.body.organization?.id).toBe(organizationId)
+        expect(firstDisplayResponse.body.organizationRotationSeconds).toBe(12)
+        expect([firstPoolId, secondPoolId]).toContain(firstDisplayResponse.body.pool?.id)
+        expect([firstPoolId, secondPoolId]).toContain(secondDisplayResponse.body.pool?.id)
+        expect(new Set([firstDisplayResponse.body.pool?.id, secondDisplayResponse.body.pool?.id])).toEqual(
+          new Set([firstPoolId, secondPoolId])
+        )
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
     it('should keep rotating until a scheduled MLB game with a placeholder noon kickoff actually goes live', async () => {
       vi.useFakeTimers()
 
