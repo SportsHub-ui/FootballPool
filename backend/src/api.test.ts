@@ -42,6 +42,8 @@ const resetTestDatabase = async (): Promise<void> => {
         football_pool.ingestion_run_log,
         football_pool.notification_log,
         football_pool.notification_template,
+        football_pool.organization_access_request,
+        football_pool.user_session,
         football_pool.pool_game,
         football_pool.pool_payout_rule,
         football_pool.pool_simulation_state,
@@ -1439,6 +1441,104 @@ describe('Football Pool API', () => {
       expect(displayResponse.body.selectedGameId).toBe(weekTwoGameId)
       expect(displayResponse.body.board?.poolId).toBe(displayPoolId)
       expect(displayResponse.body.board?.gameId).toBe(weekTwoGameId)
+    })
+
+    it('should keep the display link on the live MLB game instead of jumping to tomorrow', async () => {
+      const poolResponse = await request(app)
+        .post('/api/setup/pools')
+        .set(organizerHeaders)
+        .send({
+          poolName: `Live MLB Display ${Date.now()}`,
+          teamId,
+          season: 2026,
+          poolType: 'single_game',
+          leagueCode: 'MLB',
+          primaryTeam: 'Milwaukee Brewers',
+          squareCost: 25,
+          q1Payout: 10,
+          q2Payout: 10,
+          q3Payout: 10,
+          q4Payout: 10,
+          q5Payout: 10,
+          q6Payout: 10,
+          q7Payout: 10,
+          q8Payout: 10,
+          q9Payout: 20
+        })
+
+      expect(poolResponse.status).toBe(201)
+      const displayPoolId = Number(poolResponse.body.id)
+      const displayPoolToken = String(poolResponse.body.displayToken)
+
+      const todayResponse = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId: displayPoolId,
+          weekNum: 1,
+          opponent: 'Washington Nationals',
+          gameDate: '2026-04-10T18:00:00.000Z'
+        })
+
+      const tomorrowResponse = await request(app)
+        .post('/api/games')
+        .set(organizerHeaders)
+        .send({
+          poolId: displayPoolId,
+          weekNum: 2,
+          opponent: 'Washington Nationals',
+          gameDate: '2026-04-11T18:00:00.000Z'
+        })
+
+      expect(todayResponse.status).toBe(200)
+      expect(tomorrowResponse.status).toBe(200)
+
+      const todayGameId = Number(todayResponse.body.game.id)
+      const tomorrowGameId = Number(tomorrowResponse.body.game.id)
+
+      const inProgressScoreResponse = await request(app)
+        .patch(`/api/games/${todayGameId}/scores`)
+        .set(organizerHeaders)
+        .send({
+          q1PrimaryScore: 1,
+          q1OpponentScore: 0,
+          q2PrimaryScore: 1,
+          q2OpponentScore: 0,
+          q3PrimaryScore: 2,
+          q3OpponentScore: 0,
+          q4PrimaryScore: 3,
+          q4OpponentScore: 2,
+          q5PrimaryScore: null,
+          q5OpponentScore: null,
+          q6PrimaryScore: null,
+          q6OpponentScore: null,
+          q7PrimaryScore: null,
+          q7OpponentScore: null,
+          q8PrimaryScore: null,
+          q8OpponentScore: null,
+          q9PrimaryScore: null,
+          q9OpponentScore: null
+        })
+
+      expect(inProgressScoreResponse.status).toBe(200)
+
+      await db.query(
+        `UPDATE football_pool.game
+         SET state = 'in_progress',
+             current_quarter = 6
+         WHERE id = $1`,
+        [todayGameId]
+      )
+
+      const displayResponse = await request(app).get(`/api/landing/display/${displayPoolToken}`)
+
+      expect(displayResponse.status).toBe(200)
+      expect(displayResponse.body.pool?.id).toBe(displayPoolId)
+      expect(displayResponse.body.selectedGameId).toBe(todayGameId)
+      expect(displayResponse.body.selectedGameId).not.toBe(tomorrowGameId)
+      expect(displayResponse.body.games.find((game: { id: number; current_quarter: number | null }) => game.id === todayGameId)?.current_quarter).toBe(6)
+      expect(displayResponse.body.board?.poolId).toBe(displayPoolId)
+      expect(displayResponse.body.board?.gameId).toBe(todayGameId)
     })
   })
 
@@ -4138,14 +4238,105 @@ describe('Football Pool API', () => {
   })
 
   describe('Authentication', () => {
-    it('should accept JWT token in Authorization header', async () => {
-      // For now, just verify the endpoint exists and handles auth
+    it('should accept organizer auth for verify checks', async () => {
       const response = await request(app)
         .get('/api/auth/verify')
         .set(organizerHeaders)
 
       expect(response.status).toBe(200)
-      expect(response.body).toHaveProperty('authenticated')
+      expect(response.body).toHaveProperty('authenticated', true)
+    })
+
+    it('should refuse password login until a secure password has been set', async () => {
+      const email = `auth-no-password-${Date.now()}@example.com`
+
+      const createResponse = await request(app)
+        .post('/api/setup/users')
+        .set(organizerHeaders)
+        .send({
+          firstName: 'Password',
+          lastName: 'Pending',
+          email,
+          phone: '5551002000'
+        })
+
+      expect(createResponse.status).toBe(201)
+
+      const loginResponse = await request(app)
+        .post('/api/auth/login')
+        .send({
+          email,
+          password: 'AnyPassword123!'
+        })
+
+      expect(loginResponse.status).toBe(403)
+      expect(String(loginResponse.body.error ?? '')).toMatch(/password/i)
+    })
+
+    it('should support request-access approval and secure password setup', async () => {
+      const teamResponse = await request(app)
+        .post('/api/setup/teams')
+        .set(organizerHeaders)
+        .send({ teamName: `Access Team ${Date.now()}` })
+
+      expect(teamResponse.status).toBe(201)
+      const organizationId = Number(teamResponse.body.id)
+      const email = `access-request-${Date.now()}@example.com`
+
+      const requestAccessResponse = await request(app)
+        .post('/api/auth/request-access')
+        .send({
+          firstName: 'Access',
+          lastName: 'Requester',
+          email,
+          phone: '5553334444',
+          organizationId,
+          requestNote: 'Please grant pool access.'
+        })
+
+      expect(requestAccessResponse.status).toBe(201)
+      expect(typeof requestAccessResponse.body.resetToken).toBe('string')
+
+      const accessListResponse = await request(app)
+        .get('/api/auth/access-requests')
+        .set(organizerHeaders)
+
+      expect(accessListResponse.status).toBe(200)
+      const createdRequest = accessListResponse.body.requests.find(
+        (entry: { email?: string; organization_id?: number; status?: string }) =>
+          entry.email === email && Number(entry.organization_id) === organizationId && entry.status === 'pending'
+      )
+      expect(createdRequest).toBeTruthy()
+
+      const reviewResponse = await request(app)
+        .patch(`/api/auth/access-requests/${createdRequest.id}`)
+        .set(organizerHeaders)
+        .send({ status: 'approved', reviewNote: 'Approved in test.' })
+
+      expect(reviewResponse.status).toBe(200)
+
+      const resetResponse = await request(app)
+        .post('/api/auth/reset-password')
+        .send({
+          token: requestAccessResponse.body.resetToken,
+          password: 'SecurePass123!',
+          confirmPassword: 'SecurePass123!'
+        })
+
+      expect(resetResponse.status).toBe(200)
+      expect(resetResponse.headers['set-cookie']).toBeTruthy()
+
+      const sessionCookie = Array.isArray(resetResponse.headers['set-cookie'])
+        ? resetResponse.headers['set-cookie'][0]
+        : ''
+
+      const verifyResponse = await request(app)
+        .get('/api/auth/verify')
+        .set('Cookie', sessionCookie)
+
+      expect(verifyResponse.status).toBe(200)
+      expect(Array.isArray(verifyResponse.body.user?.accessibleOrganizationIds)).toBe(true)
+      expect(verifyResponse.body.user.accessibleOrganizationIds).toContain(organizationId)
     })
   })
 

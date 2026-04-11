@@ -15,7 +15,7 @@ A complete system for managing season-long football pools with real-time square 
 - Ingestion run history logging and review endpoint
 - Server-sent event (SSE) stream for live board refreshes
 - Unique pool display links for read-only Squares board viewing
-- JWT authentication with fallback mock auth for development
+- Secure session-cookie authentication with bcrypt password hashing and fallback mock auth for development
 - Request/response logging with assignment-specific debug logs
 
 ### ✅ Frontend Dashboard (React + TypeScript + Vite)
@@ -25,16 +25,18 @@ A complete system for managing season-long football pools with real-time square 
   - Post game scores (Q1-Q4) with automatic winner calculation
   - View pool diagnostics and winnings ledger
 
-- **Participant View**: Read-only interface with authentication
-  - Login with email
-  - View assigned squares across pools
+- **Participant View**: Read-only interface with secure authentication
+  - Sign in with email + secure password
+  - Self-service password setup/reset and organization access request flow
+  - View assigned squares across approved pools
   - Track winnings and payout status
   - View game scores and results
 
 ### ✅ Testing
 - Comprehensive API test suite with supertest + vitest
 - Tests for all major endpoints (users, teams, pools, squares, games, winnings)
-- Authorization and validation testing
+- Authorization, RBAC, and validation testing
+- Secure password setup / access-request approval regression tests
 - Square assignment conflict detection tests
 
 ### ✅ Database Integration
@@ -138,10 +140,17 @@ These cleanup commands preserve `football_pool.schema_migrations` and the seeded
 - `GET /api/db/api-usage?hours=24&limit=15` - Organizer dashboard for recent API usage, top routes, hourly traffic, and external API counts
 
 ### Authentication
-- `POST /api/auth/login` - JWT token generation (email-based)
-- `GET /api/auth/verify` - Verify current token validity
+- `GET /api/auth/organizations` - List organizations that users can request access to
+- `POST /api/auth/login` - Start a secure session cookie
+- `POST /api/auth/logout` - Revoke the current session cookie
+- `GET /api/auth/verify` - Verify the current signed-in session and permissions
+- `POST /api/auth/forgot-password` - Generate a first-time / reset-password token
+- `POST /api/auth/reset-password` - Set or reset a secure password with the issued token
+- `POST /api/auth/request-access` - Request access to an organization/team
+- `GET /api/auth/access-requests` - Review pending organization access requests (admin / org manager)
+- `PATCH /api/auth/access-requests/:requestId` - Approve or reject an org-access request (admin / org manager)
 
-### Organizer Setup (requires x-user-role: organizer)
+### Organizer Setup (admin or scoped organization manager)
 - `POST /api/setup/users` - Create user
 - `POST /api/setup/teams` - Create team
 - `POST /api/setup/players` - Create player
@@ -152,7 +161,7 @@ These cleanup commands preserve `football_pool.schema_migrations` and the seeded
 - `GET /api/setup/pools/:poolId/squares` - List squares
 - `PATCH /api/setup/pools/:poolId/squares/:squareNum` - Assign/reassign square
 
-### Simulation Controls
+### Simulation Controls (admin only)
 - `GET /api/setup/pools/:poolId/simulation` - Get simulation readiness and active mode
 - `POST /api/setup/pools/:poolId/simulation` - Start a simulation (`full_year`, `by_game`, or `by_quarter`)
 - `POST /api/setup/pools/:poolId/simulation/advance` - Complete the next game or quarter for step-by-step simulations
@@ -206,15 +215,23 @@ These cleanup commands preserve `football_pool.schema_migrations` and the seeded
 ## Authentication
 
 ### Development Mode
-Use request headers for testing:
+For local testing and automated tests, the app still supports mock request headers:
 - `x-user-id`: User ID
 - `x-user-role`: `organizer`, `participant`, or `player`
 
-### Production Mode
-Use JWT tokens:
-1. Call `POST /api/auth/login` with email/password
-2. Receive JWT token in response
-3. Include in requests: `Authorization: Bearer <token>`
+### Production / Secure Mode
+The application now uses **server-side sessions with `HttpOnly` cookies** instead of storing JWTs in browser storage.
+
+1. Create a user record or submit an organization access request.
+2. Use `POST /api/auth/forgot-password` to issue the first-time password / reset token.
+3. Finish setup with `POST /api/auth/reset-password` and a strong password.
+4. Sign in with `POST /api/auth/login`; the backend sets the secure session cookie.
+5. Organization access remains blocked until an admin or the organization's primary/secondary contact approves the request.
+
+### RBAC Summary
+- **Admin**: full system access, can manage all users/organizations, and is the only role that can run simulations or manage global marketing.
+- **Organization manager**: automatically derived from `organization.primary_contact_id` / `secondary_contact_id`; can manage users, members, pools, notifications, and square clearing only for those organizations.
+- **Participant / player**: can sign in, view their own pools/winnings, and wait for organization approval before any org-scoped access appears.
 
 ## Architecture
 

@@ -22,7 +22,7 @@ app.use(
     crossOriginResourcePolicy: { policy: 'cross-origin' }
   })
 );
-app.use(cors());
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.use('/images', express.static(path.resolve(__dirname, '../images')));
 app.use((req, res, next) => {

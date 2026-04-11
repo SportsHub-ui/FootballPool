@@ -251,7 +251,8 @@ export function LandingMetrics({
 
       try {
         const response = await fetch(`${apiBase}/api/landing/pools/${selectedPoolId}/metrics`, {
-          headers: authHeaders
+          headers: authHeaders,
+          credentials: 'include'
         })
 
         // The backend now returns normalized fields (primary_team_id, etc.)
@@ -347,7 +348,8 @@ export function LandingMetrics({
 
       try {
         const response = await fetch(`${apiBase}/api/db/api-usage?hours=24&limit=10`, {
-          headers: authHeaders
+          headers: authHeaders,
+          credentials: 'include'
         })
 
         const data = await response.json().catch(() => null)
@@ -401,6 +403,7 @@ export function LandingMetrics({
           ...authHeaders,
           'Content-Type': 'application/json'
         },
+        credentials: 'include',
         body: JSON.stringify({ source: 'espn' })
       })
 

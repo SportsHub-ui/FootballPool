@@ -170,7 +170,7 @@ export function LandingNotificationTemplates({ pools, token, authHeaders, apiBas
   })
 
   const request = async <T,>(path: string, init?: RequestInit): Promise<T> => {
-    const response = await fetch(`${apiBase}${path}`, init)
+    const response = await fetch(`${apiBase}${path}`, { credentials: 'include', ...init })
     const data = await response.json().catch(() => ({}))
 
     if (!response.ok) {

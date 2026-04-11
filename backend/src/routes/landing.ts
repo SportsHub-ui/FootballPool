@@ -157,6 +157,8 @@ const mapLandingGameRow = (row: Record<string, any>) => {
         ? row.column_numbers
         : null,
     state: typeof row.state === 'string' ? row.state : null,
+    current_quarter: toNullableNumber(row.current_quarter),
+    time_remaining_in_quarter: typeof row.time_remaining_in_quarter === 'string' ? row.time_remaining_in_quarter : null,
     q1_primary_score: toNullableNumber(row.q1_primary_score) ?? toNullableNumber(scores['1']?.home),
     q1_opponent_score: toNullableNumber(row.q1_opponent_score) ?? toNullableNumber(scores['1']?.away),
     q2_primary_score: toNullableNumber(row.q2_primary_score) ?? toNullableNumber(scores['2']?.home),
@@ -186,7 +188,11 @@ const loadPoolGames = async (client: PoolClient, poolId: number) => {
             pg.pool_id,
             g.week_number AS week_num,
             home_team.name AS home_team_name,
+            home_team.primary_color AS home_team_primary_color,
+            home_team.logo_url AS home_team_logo_url,
             away_team.name AS away_team_name,
+            away_team.primary_color AS away_team_primary_color,
+            away_team.logo_url AS away_team_logo_url,
             away_team.name AS opponent,
             COALESCE(g.kickoff_at, g.game_date::timestamp) AS game_dt,
             COALESCE(g.is_simulation, FALSE) AS is_simulation,
@@ -195,6 +201,8 @@ const loadPoolGames = async (client: PoolClient, poolId: number) => {
             pg.row_numbers,
             pg.column_numbers,
             COALESCE(g.state, 'scheduled') AS state,
+            g.current_quarter,
+            g.time_remaining_in_quarter,
             g.scores_by_quarter
      FROM football_pool.pool_game pg
      JOIN football_pool.game g ON g.id = pg.game_id
@@ -227,12 +235,13 @@ const loadAccessiblePools = async (client: PoolClient, userId: number | null, ca
             COALESCE(p.sign_in_req_flg, FALSE) AS sign_in_req_flg,
             COALESCE(p.display_token, '') AS display_token,
             t.team_name,
-            t.primary_color,
+            COALESCE(NULLIF(t.primary_color, ''), st.primary_color) AS primary_color,
             t.secondary_color,
-            t.logo_file,
+            COALESCE(NULLIF(t.logo_file, ''), st.logo_url) AS logo_file,
             COALESCE(t.has_members_flg, TRUE) AS has_members_flg
      FROM football_pool.pool p
      LEFT JOIN football_pool.organization t ON t.id = p.team_id
+     LEFT JOIN football_pool.sport_team st ON st.id = COALESCE(p.primary_sport_team_id, t.sport_team_id)
      LEFT JOIN football_pool.user_pool up
        ON up.pool_id = p.id
       AND up.user_id = $1
@@ -268,12 +277,13 @@ const loadAccessiblePool = async (client: PoolClient, poolId: number, userId: nu
             COALESCE(p.sign_in_req_flg, FALSE) AS sign_in_req_flg,
             COALESCE(p.display_token, '') AS display_token,
             t.team_name,
-            t.primary_color,
+            COALESCE(NULLIF(t.primary_color, ''), st.primary_color) AS primary_color,
             t.secondary_color,
-            t.logo_file,
+            COALESCE(NULLIF(t.logo_file, ''), st.logo_url) AS logo_file,
             COALESCE(t.has_members_flg, TRUE) AS has_members_flg
      FROM football_pool.pool p
      LEFT JOIN football_pool.organization t ON t.id = p.team_id
+     LEFT JOIN football_pool.sport_team st ON st.id = COALESCE(p.primary_sport_team_id, t.sport_team_id)
      LEFT JOIN football_pool.user_pool up
        ON up.pool_id = p.id
       AND up.user_id = $2
@@ -358,12 +368,13 @@ const loadPoolByDisplayToken = async (client: PoolClient, displayToken: string) 
             COALESCE(p.sign_in_req_flg, FALSE) AS sign_in_req_flg,
             COALESCE(p.display_token, '') AS display_token,
             t.team_name,
-            t.primary_color,
+            COALESCE(NULLIF(t.primary_color, ''), st.primary_color) AS primary_color,
             t.secondary_color,
-            t.logo_file,
+            COALESCE(NULLIF(t.logo_file, ''), st.logo_url) AS logo_file,
             COALESCE(t.has_members_flg, TRUE) AS has_members_flg
      FROM football_pool.pool p
      LEFT JOIN football_pool.organization t ON t.id = p.team_id
+     LEFT JOIN football_pool.sport_team st ON st.id = COALESCE(p.primary_sport_team_id, t.sport_team_id)
      WHERE p.display_token = $1
      LIMIT 1`,
     [displayToken]
@@ -375,15 +386,28 @@ const loadPoolByDisplayToken = async (client: PoolClient, displayToken: string) 
 const pickDisplayGameId = (
   games: Array<{
     id: number;
+    game_dt?: string | null;
+    gameDate?: string | null;
+    state?: string | null;
     opponent?: string | null;
-    q1_primary_score?: number | null;
-    q1_opponent_score?: number | null;
-    q2_primary_score?: number | null;
-    q2_opponent_score?: number | null;
-    q3_primary_score?: number | null;
-    q3_opponent_score?: number | null;
+    q1_primary_score: number | null;
+    q1_opponent_score: number | null;
+    q2_primary_score: number | null;
+    q2_opponent_score: number | null;
+    q3_primary_score: number | null;
+    q3_opponent_score: number | null;
     q4_primary_score: number | null;
     q4_opponent_score: number | null;
+    q5_primary_score: number | null;
+    q5_opponent_score: number | null;
+    q6_primary_score: number | null;
+    q6_opponent_score: number | null;
+    q7_primary_score: number | null;
+    q7_opponent_score: number | null;
+    q8_primary_score: number | null;
+    q8_opponent_score: number | null;
+    q9_primary_score: number | null;
+    q9_opponent_score: number | null;
   }>,
   currentGameId?: number | null
 ): number | null => {
@@ -392,26 +416,107 @@ const pickDisplayGameId = (
   }
 
   const isByeGame = (game: { opponent?: string | null }): boolean => (game.opponent ?? '').trim().toUpperCase() === 'BYE';
-  const isCompletedGame = (game: { state?: string | null; q9_primary_score?: number | null; q9_opponent_score?: number | null; q4_primary_score: number | null; q4_opponent_score: number | null }): boolean => {
+  const isCompletedGame = (game: {
+    state?: string | null;
+    q9_primary_score?: number | null;
+    q9_opponent_score?: number | null;
+  }): boolean => {
     const normalizedState = String(game.state ?? '').trim().toLowerCase();
-    return ['completed', 'complete', 'closed', 'finished', 'final', 'post'].includes(normalizedState)
-      || ((game.q9_primary_score ?? game.q4_primary_score) != null && (game.q9_opponent_score ?? game.q4_opponent_score) != null);
+
+    if (['completed', 'complete', 'closed', 'finished', 'final', 'post'].includes(normalizedState)) {
+      return true;
+    }
+
+    if (normalizedState) {
+      return false;
+    }
+
+    return game.q9_primary_score != null && game.q9_opponent_score != null;
   };
 
+  const isLiveGame = (game: {
+    state?: string | null;
+    q1_primary_score: number | null;
+    q1_opponent_score: number | null;
+    q2_primary_score: number | null;
+    q2_opponent_score: number | null;
+    q3_primary_score: number | null;
+    q3_opponent_score: number | null;
+    q4_primary_score: number | null;
+    q4_opponent_score: number | null;
+    q5_primary_score?: number | null;
+    q5_opponent_score?: number | null;
+    q6_primary_score?: number | null;
+    q6_opponent_score?: number | null;
+    q7_primary_score?: number | null;
+    q7_opponent_score?: number | null;
+    q8_primary_score?: number | null;
+    q8_opponent_score?: number | null;
+    q9_primary_score?: number | null;
+    q9_opponent_score?: number | null;
+  }): boolean => {
+    const normalizedState = String(game.state ?? '').trim().toLowerCase();
+
+    if ([
+      'in_progress',
+      'in progress',
+      'live',
+      'active',
+      'ongoing',
+      'underway',
+      'midgame',
+      'halftime',
+      'delayed',
+      'delay',
+      'rain_delay',
+      'rain delay',
+      'suspended'
+    ].includes(normalizedState)) {
+      return true;
+    }
+
+    return !isCompletedGame(game) && getLatestScoredQuarter(game) != null;
+  };
+
+  const selectableGames = games.filter((game) => !isByeGame(game));
+
+  const liveGame = selectableGames.find((game) => isLiveGame(game));
+  if (liveGame) {
+    return Number(liveGame.id);
+  }
+
   if (currentGameId != null) {
-    const currentGame = games.find((game) => Number(game.id) === Number(currentGameId));
-    if (currentGame && !isByeGame(currentGame)) {
+    const currentGame = selectableGames.find((game) => Number(game.id) === Number(currentGameId));
+    if (currentGame && !isCompletedGame(currentGame)) {
       return Number(currentGame.id);
     }
   }
 
-  const activeGame = games.find((game) => !isByeGame(game) && !isCompletedGame(game));
-  if (activeGame) {
-    return Number(activeGame.id);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const nextUpcomingGame = selectableGames.find((game) => {
+    const rawGameDate = game.game_dt ?? game.gameDate;
+
+    if (isCompletedGame(game) || !rawGameDate) {
+      return false;
+    }
+
+    const gameDate = new Date(rawGameDate);
+    if (Number.isNaN(gameDate.getTime())) {
+      return false;
+    }
+
+    gameDate.setHours(0, 0, 0, 0);
+    return gameDate >= today;
+  });
+
+  if (nextUpcomingGame) {
+    return Number(nextUpcomingGame.id);
   }
 
-  const lastCompletedGame = [...games].reverse().find((game) => !isByeGame(game) && isCompletedGame(game));
-  const selectedId = lastCompletedGame?.id ?? games.find((game) => !isByeGame(game))?.id ?? games[0]?.id ?? null;
+  const lastCompletedGame = [...selectableGames].reverse().find((game) => isCompletedGame(game));
+  const selectedId = lastCompletedGame?.id ?? selectableGames[0]?.id ?? games[0]?.id ?? null;
 
   return selectedId != null ? Number(selectedId) : null;
 };
@@ -453,26 +558,28 @@ const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, g
   const preferredGameId =
     gameId ?? pickDisplayGameId(games as Array<{
       id: number;
+      game_dt?: string | null;
+      gameDate?: string | null;
+      state?: string | null;
       opponent?: string | null;
-      q1_primary_score?: number | null;
-      q1_opponent_score?: number | null;
-      q2_primary_score?: number | null;
-      q2_opponent_score?: number | null;
-      q3_primary_score?: number | null;
-      q3_opponent_score?: number | null;
+      q1_primary_score: number | null;
+      q1_opponent_score: number | null;
+      q2_primary_score: number | null;
+      q2_opponent_score: number | null;
+      q3_primary_score: number | null;
+      q3_opponent_score: number | null;
       q4_primary_score: number | null;
       q4_opponent_score: number | null;
-      q5_primary_score?: number | null;
-      q5_opponent_score?: number | null;
-      q6_primary_score?: number | null;
-      q6_opponent_score?: number | null;
-      q7_primary_score?: number | null;
-      q7_opponent_score?: number | null;
-      q8_primary_score?: number | null;
-      q8_opponent_score?: number | null;
-      q9_primary_score?: number | null;
-      q9_opponent_score?: number | null;
-      state?: string | null;
+      q5_primary_score: number | null;
+      q5_opponent_score: number | null;
+      q6_primary_score: number | null;
+      q6_opponent_score: number | null;
+      q7_primary_score: number | null;
+      q7_opponent_score: number | null;
+      q8_primary_score: number | null;
+      q8_opponent_score: number | null;
+      q9_primary_score: number | null;
+      q9_opponent_score: number | null;
     }>);
 
   const selectedGame =
@@ -1211,15 +1318,28 @@ landingRouter.get('/display/:displayToken', async (req, res) => {
       const selectedGameId = pickDisplayGameId(
         games as Array<{
           id: number;
+          game_dt?: string | null;
+          gameDate?: string | null;
+          state?: string | null;
           opponent?: string | null;
-          q1_primary_score?: number | null;
-          q1_opponent_score?: number | null;
-          q2_primary_score?: number | null;
-          q2_opponent_score?: number | null;
-          q3_primary_score?: number | null;
-          q3_opponent_score?: number | null;
+          q1_primary_score: number | null;
+          q1_opponent_score: number | null;
+          q2_primary_score: number | null;
+          q2_opponent_score: number | null;
+          q3_primary_score: number | null;
+          q3_opponent_score: number | null;
           q4_primary_score: number | null;
           q4_opponent_score: number | null;
+          q5_primary_score: number | null;
+          q5_opponent_score: number | null;
+          q6_primary_score: number | null;
+          q6_opponent_score: number | null;
+          q7_primary_score: number | null;
+          q7_opponent_score: number | null;
+          q8_primary_score: number | null;
+          q8_opponent_score: number | null;
+          q9_primary_score: number | null;
+          q9_opponent_score: number | null;
         }>,
         simulationStatus?.currentGameId ?? null
       );

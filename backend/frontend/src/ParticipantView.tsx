@@ -55,6 +55,12 @@ type Game = {
   game_id: number // normalized shared game PK
   pool_id: number
   week_num: number | null
+  home_team_name?: string | null
+  home_team_primary_color?: string | null
+  home_team_logo_url?: string | null
+  away_team_name?: string | null
+  away_team_primary_color?: string | null
+  away_team_logo_url?: string | null
   opponent: string
   game_dt: string
   state?: string | null
@@ -137,7 +143,7 @@ const normalizeDigits = (value: Array<number | string> | null | undefined): Arra
 }
 
 const formatBoardGameOption = (game: Game): string => {
-  const weekLabel = game.week_num != null ? `Week ${game.week_num} • ` : ''
+  const weekLabel = game.week_num != null ? `Game ${game.week_num} • ` : ''
   return `${weekLabel}${new Date(game.game_dt).toLocaleDateString()} vs ${game.opponent}`
 }
 
@@ -146,6 +152,72 @@ const resolveImageUrl = (value: string): string => {
   if (value.startsWith('http://') || value.startsWith('https://')) return value
   if (value.startsWith('/')) return `${API_BASE}${value}`
   return `${API_BASE}/images/${value}`
+}
+
+const parseHexColor = (value: string | null | undefined): { r: number; g: number; b: number } | null => {
+  const cleaned = String(value ?? '').trim().replace(/^#/, '')
+
+  if (/^[0-9a-fA-F]{3}$/.test(cleaned)) {
+    return {
+      r: Number.parseInt(`${cleaned[0]}${cleaned[0]}`, 16),
+      g: Number.parseInt(`${cleaned[1]}${cleaned[1]}`, 16),
+      b: Number.parseInt(`${cleaned[2]}${cleaned[2]}`, 16)
+    }
+  }
+
+  if (!/^[0-9a-fA-F]{6}$/.test(cleaned)) {
+    return null
+  }
+
+  return {
+    r: Number.parseInt(cleaned.slice(0, 2), 16),
+    g: Number.parseInt(cleaned.slice(2, 4), 16),
+    b: Number.parseInt(cleaned.slice(4, 6), 16)
+  }
+}
+
+const getRelativeLuminance = (channel: number): number => {
+  const normalized = channel / 255
+  return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4
+}
+
+const getContrastRatio = (backgroundColor: string | null | undefined, foregroundColor: string | null | undefined): number | null => {
+  const background = parseHexColor(backgroundColor)
+  const foreground = parseHexColor(foregroundColor)
+
+  if (!background || !foreground) {
+    return null
+  }
+
+  const backgroundLuminance =
+    0.2126 * getRelativeLuminance(background.r) +
+    0.7152 * getRelativeLuminance(background.g) +
+    0.0722 * getRelativeLuminance(background.b)
+  const foregroundLuminance =
+    0.2126 * getRelativeLuminance(foreground.r) +
+    0.7152 * getRelativeLuminance(foreground.g) +
+    0.0722 * getRelativeLuminance(foreground.b)
+
+  const lighter = Math.max(backgroundLuminance, foregroundLuminance)
+  const darker = Math.min(backgroundLuminance, foregroundLuminance)
+
+  return (lighter + 0.05) / (darker + 0.05)
+}
+
+const getReadableTextColor = (backgroundColor: string | null | undefined, preferredColor: string | null | undefined): string => {
+  const preferred = String(preferredColor ?? '').trim()
+  const preferredContrast = getContrastRatio(backgroundColor, preferred)
+
+  if (preferred && preferredContrast != null && preferredContrast >= 4.5) {
+    return preferred
+  }
+
+  const darkCandidate = '#111827'
+  const lightCandidate = '#FFFFFF'
+  const darkContrast = getContrastRatio(backgroundColor, darkCandidate) ?? 0
+  const lightContrast = getContrastRatio(backgroundColor, lightCandidate) ?? 0
+
+  return lightContrast >= darkContrast ? lightCandidate : darkCandidate
 }
 
 type TeamBrand = {
@@ -200,14 +272,50 @@ const resolveTeamBrand = (
   const match = NFL_TEAM_BRANDS.find((team) => lowered.includes(team.key))
 
   if (match) {
-    return match
+    return {
+      ...match,
+      accent: getReadableTextColor(match.color, match.accent)
+    }
   }
 
   return {
     key: teamName,
     color: fallbackColor,
-    accent: fallbackAccent,
+    accent: getReadableTextColor(fallbackColor, fallbackAccent),
     logo: fallbackLogo ?? ''
+  }
+}
+
+const normalizeTeamKey = (value: string | null | undefined): string =>
+  String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+
+const resolveMatchupBranding = (
+  game: Game | null | undefined,
+  primaryTeamName: string | null | undefined
+): {
+  primaryColor: string | null
+  primaryLogo: string | null
+  opponentColor: string | null
+  opponentLogo: string | null
+} => {
+  const normalizedPrimary = normalizeTeamKey(primaryTeamName)
+  const normalizedHome = normalizeTeamKey(game?.home_team_name)
+  const normalizedAway = normalizeTeamKey(game?.away_team_name)
+
+  if (normalizedPrimary && normalizedAway === normalizedPrimary && normalizedHome !== normalizedPrimary) {
+    return {
+      primaryColor: game?.away_team_primary_color ?? null,
+      primaryLogo: game?.away_team_logo_url ?? null,
+      opponentColor: game?.home_team_primary_color ?? null,
+      opponentLogo: game?.home_team_logo_url ?? null
+    }
+  }
+
+  return {
+    primaryColor: game?.home_team_primary_color ?? null,
+    primaryLogo: game?.home_team_logo_url ?? null,
+    opponentColor: game?.away_team_primary_color ?? null,
+    opponentLogo: game?.away_team_logo_url ?? null
   }
 }
 
@@ -254,7 +362,7 @@ const getGameScoreForQuarter = (game: Game, quarter: number): string => {
 
 export function ParticipantView() {
   const [view, setView] = useState<'login' | 'dashboard'>('login')
-  const [token, setToken] = useState<string | null>(localStorage.getItem('auth-token'))
+  const [, setToken] = useState<string | null>(null)
   const [user, setUser] = useState<{ id: number; email: string; firstName: string; lastName: string } | null>(null)
   
   const [loginForm, setLoginForm] = useState({ email: '', password: '' })
@@ -270,18 +378,191 @@ export function ParticipantView() {
   const [winnings, setWinnings] = useState<WinningsResponse | null>(null)
   const liveRefreshTimerRef = useRef<number | null>(null)
 
-  const headers = useMemo(() => {
-    const h: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (token) {
-      h['Authorization'] = `Bearer ${token}`
-    }
-    return h
-  }, [token])
+  const headers = useMemo(() => ({ 'Content-Type': 'application/json' }), [])
 
   const scoreSegments = useMemo(
     () => getScoreSegmentDefinitions({ activeSlots: poolBoard?.payoutSummary?.activeSlots, payoutLabels: poolBoard?.payoutSummary?.payoutLabels }),
     [poolBoard?.payoutSummary]
   )
+
+  const completePasswordResetWithToken = async (resetToken: string): Promise<boolean> => {
+    if (typeof window === 'undefined') {
+      return false
+    }
+
+    const password = window.prompt('Enter a new strong password (12+ characters with upper/lowercase letters, a number, and a symbol).') ?? ''
+    if (!password) {
+      return false
+    }
+
+    const confirmPassword = window.prompt('Confirm the new password.') ?? ''
+    if (!confirmPassword) {
+      return false
+    }
+
+    setBusy(true)
+    setLoginError(null)
+
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ token: resetToken, password, confirmPassword })
+      })
+
+      const data = await response.json().catch(() => ({})) as { error?: string; message?: string; user?: { id: number; email: string; firstName: string; lastName: string } }
+      if (!response.ok || !data.user) {
+        throw new Error(data.error ?? data.message ?? 'Failed to set the password.')
+      }
+
+      setToken('session-authenticated')
+      setUser(data.user)
+      setView('dashboard')
+      await loadParticipantData()
+      return true
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Failed to set the password.')
+      return false
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handlePasswordResetFlow = async (): Promise<void> => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const email = window.prompt('Enter the email address for the account you want to set or reset.')?.trim() ?? ''
+    if (!email) {
+      return
+    }
+
+    setBusy(true)
+    setLoginError(null)
+
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email })
+      })
+
+      const data = await response.json().catch(() => ({})) as { error?: string; message?: string; resetToken?: string }
+      if (!response.ok) {
+        throw new Error(data.error ?? data.message ?? 'Failed to start the password reset flow.')
+      }
+
+      if (data.resetToken) {
+        await completePasswordResetWithToken(data.resetToken)
+      } else if (data.message) {
+        window.alert(data.message)
+      }
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Failed to start the password reset flow.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleRequestAccessFlow = async (): Promise<void> => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    setBusy(true)
+    setLoginError(null)
+
+    try {
+      const orgResponse = await fetch(`${API_BASE}/api/auth/organizations`, { credentials: 'include' })
+      const orgData = await orgResponse.json().catch(() => ({ organizations: [] })) as {
+        organizations?: Array<{ id: number; team_name: string | null }>
+      }
+
+      if (!orgResponse.ok) {
+        throw new Error('Failed to load organizations for the access request flow.')
+      }
+
+      const organizations = Array.isArray(orgData.organizations) ? orgData.organizations : []
+      const orgListing = organizations.map((org) => `${org.id}: ${org.team_name ?? `Organization ${org.id}`}`).join('\n')
+
+      const firstName = window.prompt('First name')?.trim() ?? ''
+      const lastName = window.prompt('Last name')?.trim() ?? ''
+      const email = window.prompt('Email address')?.trim() ?? ''
+      const phone = window.prompt('Phone number (optional)')?.trim() ?? ''
+      const organizationIdValue = window.prompt(`Enter the organization ID you want access to:\n\n${orgListing || 'No organizations are currently available.'}`)?.trim() ?? ''
+      const requestNote = window.prompt('Add a short note for the organization manager (optional).')?.trim() ?? ''
+
+      const organizationId = Number(organizationIdValue)
+      if (!firstName || !lastName || !email || !Number.isFinite(organizationId) || organizationId <= 0) {
+        throw new Error('First name, last name, email, and a valid organization ID are required.')
+      }
+
+      const response = await fetch(`${API_BASE}/api/auth/request-access`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          firstName,
+          lastName,
+          email,
+          phone: phone || undefined,
+          organizationId,
+          requestNote: requestNote || undefined
+        })
+      })
+
+      const data = await response.json().catch(() => ({})) as { error?: string; message?: string; resetToken?: string }
+      if (!response.ok) {
+        throw new Error(data.error ?? data.message ?? 'Failed to submit the access request.')
+      }
+
+      if (data.resetToken) {
+        await completePasswordResetWithToken(data.resetToken)
+      } else if (data.message) {
+        window.alert(data.message)
+      }
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Failed to submit the access request.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const loadParticipantData = async () => {
+    try {
+      const [poolsRes, winningsRes] = await Promise.all([
+        fetch(`${API_BASE}/api/participant/pools`, { headers, credentials: 'include' }),
+        fetch(`${API_BASE}/api/participant/winnings`, { headers, credentials: 'include' })
+      ])
+
+      if (poolsRes.ok) setPools(await poolsRes.json())
+      if (winningsRes.ok) setWinnings(await winningsRes.json())
+    } catch (err) {
+      console.error('Failed to load participant data:', err)
+    }
+  }
+
+  const verifySession = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/verify`, { credentials: 'include' })
+      if (!response.ok) {
+        return
+      }
+
+      const data = await response.json().catch(() => null)
+      if (data?.authenticated && data.user) {
+        setToken('session-authenticated')
+        setUser(data.user)
+        setView('dashboard')
+        await loadParticipantData()
+      }
+    } catch {
+      // ignore silent session restore failures
+    }
+  }
 
   const handleLogin = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -292,19 +573,18 @@ export function ParticipantView() {
       const res = await fetch(`${API_BASE}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(loginForm)
       })
 
-      if (!res.ok) throw new Error('Login failed')
-      const data = await res.json()
-      
-      localStorage.setItem('auth-token', data.token)
-      setToken(data.token)
+      const data = await res.json().catch(() => ({})) as { error?: string; message?: string; user?: { id: number; email: string; firstName: string; lastName: string } }
+      if (!res.ok || !data.user) throw new Error(data.error ?? data.message ?? 'Login failed')
+
+      setToken('session-authenticated')
       setUser(data.user)
       setView('dashboard')
-      
-      // Load data
-      await loadParticipantData(data.token)
+
+      await loadParticipantData()
     } catch (err) {
       setLoginError(err instanceof Error ? err.message : 'Login failed')
     } finally {
@@ -312,28 +592,9 @@ export function ParticipantView() {
     }
   }
 
-  const loadParticipantData = async (authToken: string) => {
-    try {
-      const authHeaders = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authToken}`
-      }
-
-      const [poolsRes, winningsRes] = await Promise.all([
-        fetch(`${API_BASE}/api/participant/pools`, { headers: authHeaders }),
-        fetch(`${API_BASE}/api/participant/winnings`, { headers: authHeaders })
-      ])
-
-      if (poolsRes.ok) setPools(await poolsRes.json())
-      if (winningsRes.ok) setWinnings(await winningsRes.json())
-    } catch (err) {
-      console.error('Failed to load participant data:', err)
-    }
-  }
-
   const refreshSelectedPoolBoard = async (poolId: number, preferredGameId?: number | null) => {
     try {
-      const gamesRes = await fetch(`${API_BASE}/api/participant/pools/${poolId}/games`, { headers })
+      const gamesRes = await fetch(`${API_BASE}/api/participant/pools/${poolId}/games`, { headers, credentials: 'include' })
 
       if (!gamesRes.ok) {
         throw new Error('Failed to load pool games')
@@ -349,7 +610,7 @@ export function ParticipantView() {
       setSelectedGameId(nextGameId)
 
       const query = nextGameId != null ? `?gameId=${nextGameId}` : ''
-      const boardRes = await fetch(`${API_BASE}/api/participant/pools/${poolId}/board${query}`, { headers })
+      const boardRes = await fetch(`${API_BASE}/api/participant/pools/${poolId}/board${query}`, { headers, credentials: 'include' })
 
       if (boardRes.ok) {
         const boardData = await boardRes.json()
@@ -365,8 +626,8 @@ export function ParticipantView() {
     
     try {
       const [squaresRes, gamesRes] = await Promise.all([
-        fetch(`${API_BASE}/api/participant/pools/${poolId}/squares`, { headers }),
-        fetch(`${API_BASE}/api/participant/pools/${poolId}/games`, { headers })
+        fetch(`${API_BASE}/api/participant/pools/${poolId}/squares`, { headers, credentials: 'include' }),
+        fetch(`${API_BASE}/api/participant/pools/${poolId}/games`, { headers, credentials: 'include' })
       ])
 
       if (squaresRes.ok) setPoolSquares(await squaresRes.json())
@@ -379,7 +640,7 @@ export function ParticipantView() {
 
         const boardPath = `${API_BASE}/api/participant/pools/${poolId}/board`
 
-        const boardRes = await fetch(boardPath, { headers })
+        const boardRes = await fetch(boardPath, { headers, credentials: 'include' })
         if (boardRes.ok) {
           const boardData = await boardRes.json()
           setPoolBoard(boardData.board)
@@ -397,7 +658,7 @@ export function ParticipantView() {
     try {
       const boardRes = await fetch(
         `${API_BASE}/api/participant/pools/${selectedPool}/board?gameId=${gameId}`,
-        { headers }
+        { headers, credentials: 'include' }
       )
 
       if (boardRes.ok) {
@@ -408,6 +669,11 @@ export function ParticipantView() {
       console.error('Failed to load board data:', err)
     }
   }
+
+  useEffect(() => {
+    void verifySession()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     if (typeof window === 'undefined' || view !== 'dashboard' || !selectedPool) {
@@ -461,8 +727,16 @@ export function ParticipantView() {
     }
   }, [poolBoard?.gameId, poolGames, selectedGameId, selectedPool, view])
 
-  const handleLogout = () => {
-    localStorage.removeItem('auth-token')
+  const handleLogout = async () => {
+    try {
+      await fetch(`${API_BASE}/api/auth/logout`, {
+        method: 'POST',
+        credentials: 'include'
+      })
+    } catch {
+      // ignore transport errors while clearing local auth state
+    }
+
     setToken(null)
     setUser(null)
     setView('login')
@@ -473,6 +747,16 @@ export function ParticipantView() {
     setPoolBoard(null)
     setWinnings(null)
   }
+
+  const selectedGame = useMemo(
+    () => poolGames.find((game) => Number(game.id) === Number(selectedGameId) || Number(game.game_id) === Number(selectedGameId)) ?? null,
+    [poolGames, selectedGameId]
+  )
+
+  const selectedGameBranding = useMemo(
+    () => resolveMatchupBranding(selectedGame, poolBoard?.primaryTeam ?? null),
+    [selectedGame, poolBoard?.primaryTeam]
+  )
 
   const boardRows = useMemo(() => {
     if (!poolBoard) return []
@@ -507,18 +791,22 @@ export function ParticipantView() {
       return {
         key: 'winner-score',
         color: poolBoard.teamPrimaryColor,
-        accent: poolBoard.teamSecondaryColor,
+        accent: getReadableTextColor(poolBoard.teamPrimaryColor, poolBoard.teamSecondaryColor),
         logo: ''
       }
     }
 
     return resolveTeamBrand(
       poolBoard.primaryTeam,
-      poolBoard.teamPrimaryColor,
+      selectedGameBranding.primaryColor ?? poolBoard.teamPrimaryColor,
       poolBoard.teamSecondaryColor,
-      poolBoard.teamLogo ? resolveImageUrl(poolBoard.teamLogo) : null
+      poolBoard.teamLogo
+        ? resolveImageUrl(poolBoard.teamLogo)
+        : selectedGameBranding.primaryLogo
+          ? resolveImageUrl(selectedGameBranding.primaryLogo)
+          : null
     )
-  }, [poolBoard])
+  }, [poolBoard, selectedGameBranding])
 
   const opponentBrand = useMemo(() => {
     if (!poolBoard) return null
@@ -526,12 +814,17 @@ export function ParticipantView() {
       return {
         key: 'losing-score',
         color: '#5f6368',
-        accent: '#ffffff',
+        accent: getReadableTextColor('#5f6368', '#ffffff'),
         logo: ''
       }
     }
-    return resolveTeamBrand(poolBoard.opponent, '#0076b6', '#b0b7bc', null)
-  }, [poolBoard])
+    return resolveTeamBrand(
+      poolBoard.opponent,
+      selectedGameBranding.opponentColor ?? '#0076b6',
+      '#b0b7bc',
+      selectedGameBranding.opponentLogo ? resolveImageUrl(selectedGameBranding.opponentLogo) : null
+    )
+  }, [poolBoard, selectedGameBranding])
 
   const topDigits = useMemo(() => normalizeDigits(poolBoard?.colNumbers), [poolBoard?.colNumbers])
   const leftDigits = useMemo(() => normalizeDigits(poolBoard?.rowNumbers), [poolBoard?.rowNumbers])
@@ -563,12 +856,18 @@ export function ParticipantView() {
             <button type="submit" disabled={busy}>
               {busy ? 'Logging in...' : 'Login'}
             </button>
+            <button type="button" className="secondary" onClick={() => void handlePasswordResetFlow()} disabled={busy}>
+              Set / Reset Password
+            </button>
+            <button type="button" className="secondary" onClick={() => void handleRequestAccessFlow()} disabled={busy}>
+              Request Access
+            </button>
           </form>
 
           {loginError && <div className="error-message">{loginError}</div>}
           
           <p style={{ marginTop: '1rem', fontSize: '0.9rem', color: '#666' }}>
-            Use the email for an existing user and any non-empty password.
+            Use the email for an existing user and your secure password.
           </p>
         </div>
       </div>
@@ -797,7 +1096,7 @@ export function ParticipantView() {
 
                   {poolGames.length > 0 ? (
                     <div className="board-game-selector">
-                      <label htmlFor="board-game-id">Week/Game</label>
+                      <label htmlFor="board-game-id">Game</label>
                       <select
                         id="board-game-id"
                         value={selectedGameId ?? ''}

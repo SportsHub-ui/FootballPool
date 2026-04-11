@@ -35,9 +35,17 @@ type LandingGame = {
   game_id: number // normalized shared game PK
   pool_id: number
   week_num: number | null
+  home_team_name?: string | null
+  home_team_primary_color?: string | null
+  home_team_logo_url?: string | null
+  away_team_name?: string | null
+  away_team_primary_color?: string | null
+  away_team_logo_url?: string | null
   opponent: string
   game_dt: string
   state?: string | null
+  current_quarter?: number | null
+  time_remaining_in_quarter?: string | null
   is_simulation: boolean
   row_numbers: number[] | null
   col_numbers: number[] | null
@@ -95,15 +103,33 @@ type LandingBoard = {
   squares: LandingBoardSquare[]
 }
 
-type LoginResponse = {
-  token: string
-  user: {
-    id: number
-    firstName: string
-    lastName: string
-    email: string
-    role: string
+type AuthUser = {
+  id: number
+  userId?: string
+  firstName: string | null
+  lastName: string | null
+  email: string | null
+  role: string
+  isAdmin: boolean
+  managedOrganizationIds?: number[]
+  accessibleOrganizationIds?: number[]
+  permissions?: {
+    canManageOrganizations?: boolean
+    canManageMembers?: boolean
+    canManagePools?: boolean
+    canManageNotifications?: boolean
+    canManageMarketing?: boolean
+    canManageUsers?: boolean
+    canApproveOrgAccess?: boolean
+    canRunSimulation?: boolean
+    canViewMetrics?: boolean
   }
+}
+
+type LoginResponse = {
+  token?: string
+  user: AuthUser
+  message?: string
 }
 
 type DisplayBoardLaunchResponse = {
@@ -246,6 +272,72 @@ const resolveImageUrl = (value: string): string => {
   return `${API_BASE}/images/${value}`
 }
 
+const parseHexColor = (value: string | null | undefined): { r: number; g: number; b: number } | null => {
+  const cleaned = String(value ?? '').trim().replace(/^#/, '')
+
+  if (/^[0-9a-fA-F]{3}$/.test(cleaned)) {
+    return {
+      r: Number.parseInt(`${cleaned[0]}${cleaned[0]}`, 16),
+      g: Number.parseInt(`${cleaned[1]}${cleaned[1]}`, 16),
+      b: Number.parseInt(`${cleaned[2]}${cleaned[2]}`, 16)
+    }
+  }
+
+  if (!/^[0-9a-fA-F]{6}$/.test(cleaned)) {
+    return null
+  }
+
+  return {
+    r: Number.parseInt(cleaned.slice(0, 2), 16),
+    g: Number.parseInt(cleaned.slice(2, 4), 16),
+    b: Number.parseInt(cleaned.slice(4, 6), 16)
+  }
+}
+
+const getRelativeLuminance = (channel: number): number => {
+  const normalized = channel / 255
+  return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4
+}
+
+const getContrastRatio = (backgroundColor: string | null | undefined, foregroundColor: string | null | undefined): number | null => {
+  const background = parseHexColor(backgroundColor)
+  const foreground = parseHexColor(foregroundColor)
+
+  if (!background || !foreground) {
+    return null
+  }
+
+  const backgroundLuminance =
+    0.2126 * getRelativeLuminance(background.r) +
+    0.7152 * getRelativeLuminance(background.g) +
+    0.0722 * getRelativeLuminance(background.b)
+  const foregroundLuminance =
+    0.2126 * getRelativeLuminance(foreground.r) +
+    0.7152 * getRelativeLuminance(foreground.g) +
+    0.0722 * getRelativeLuminance(foreground.b)
+
+  const lighter = Math.max(backgroundLuminance, foregroundLuminance)
+  const darker = Math.min(backgroundLuminance, foregroundLuminance)
+
+  return (lighter + 0.05) / (darker + 0.05)
+}
+
+const getReadableTextColor = (backgroundColor: string | null | undefined, preferredColor: string | null | undefined): string => {
+  const preferred = String(preferredColor ?? '').trim()
+  const preferredContrast = getContrastRatio(backgroundColor, preferred)
+
+  if (preferred && preferredContrast != null && preferredContrast >= 4.5) {
+    return preferred
+  }
+
+  const darkCandidate = '#111827'
+  const lightCandidate = '#FFFFFF'
+  const darkContrast = getContrastRatio(backgroundColor, darkCandidate) ?? 0
+  const lightContrast = getContrastRatio(backgroundColor, lightCandidate) ?? 0
+
+  return lightContrast >= darkContrast ? lightCandidate : darkCandidate
+}
+
 const resolveTeamBrand = (
   teamName: string,
   fallbackColor: string,
@@ -256,14 +348,50 @@ const resolveTeamBrand = (
   const match = NFL_TEAM_BRANDS.find((team) => lowered.includes(team.key))
 
   if (match) {
-    return match
+    return {
+      ...match,
+      accent: getReadableTextColor(match.color, match.accent)
+    }
   }
 
   return {
     key: teamName,
     color: fallbackColor,
-    accent: fallbackAccent,
+    accent: getReadableTextColor(fallbackColor, fallbackAccent),
     logo: fallbackLogo ?? ''
+  }
+}
+
+const normalizeTeamKey = (value: string | null | undefined): string =>
+  String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+
+const resolveMatchupBranding = (
+  game: LandingGame | null | undefined,
+  primaryTeamName: string | null | undefined
+): {
+  primaryColor: string | null
+  primaryLogo: string | null
+  opponentColor: string | null
+  opponentLogo: string | null
+} => {
+  const normalizedPrimary = normalizeTeamKey(primaryTeamName)
+  const normalizedHome = normalizeTeamKey(game?.home_team_name)
+  const normalizedAway = normalizeTeamKey(game?.away_team_name)
+
+  if (normalizedPrimary && normalizedAway === normalizedPrimary && normalizedHome !== normalizedPrimary) {
+    return {
+      primaryColor: game?.away_team_primary_color ?? null,
+      primaryLogo: game?.away_team_logo_url ?? null,
+      opponentColor: game?.home_team_primary_color ?? null,
+      opponentLogo: game?.home_team_logo_url ?? null
+    }
+  }
+
+  return {
+    primaryColor: game?.home_team_primary_color ?? null,
+    primaryLogo: game?.home_team_logo_url ?? null,
+    opponentColor: game?.away_team_primary_color ?? null,
+    opponentLogo: game?.away_team_logo_url ?? null
   }
 }
 
@@ -438,8 +566,34 @@ const isCompletedGame = (game: LandingGame | null): boolean => {
     return false
   }
 
-  return (game.q9_primary_score !== null && game.q9_opponent_score !== null)
-    || (game.q4_primary_score !== null && game.q4_opponent_score !== null)
+  return game.q9_primary_score !== null && game.q9_opponent_score !== null
+}
+
+const isLiveGame = (game: LandingGame | null): boolean => {
+  if (!game) return false
+
+  const normalizedState = String(game.state ?? '').trim().toLowerCase()
+  if (
+    [
+      'in_progress',
+      'in progress',
+      'live',
+      'active',
+      'ongoing',
+      'underway',
+      'midgame',
+      'halftime',
+      'delayed',
+      'delay',
+      'rain_delay',
+      'rain delay',
+      'suspended'
+    ].includes(normalizedState)
+  ) {
+    return true
+  }
+
+  return !isCompletedGame(game) && getLatestScoredQuarter(game) !== null
 }
 
 const getLatestScoredQuarter = (game: LandingGame | null): number | null => {
@@ -543,7 +697,7 @@ const formatQuarterSquareOwner = (square: LandingBoardSquare | null | undefined,
 
 const formatGameOption = (game: LandingGame, primaryTeam: string): string => {
   const dateLabel = formatDate(game.game_dt)
-  const weekLabel = game.week_num != null ? `Week ${game.week_num} • ` : ''
+  const weekLabel = game.week_num != null ? `Game ${game.week_num} • ` : ''
   const isByeWeek = game.opponent.trim().toUpperCase() === 'BYE'
   const finalQuarter = getLatestScoredQuarter(game)
   const finalScores = finalQuarter != null ? getQuarterScores(game, finalQuarter) : { primaryScore: null, opponentScore: null }
@@ -589,16 +743,19 @@ const pickInitialGameId = (
     return preferredGameId
   }
 
+  const liveGame = games.find((game) => isLiveGame(game))
+  if (liveGame) {
+    return liveGame.id
+  }
+
   if (simulationCurrentGameId && games.some((game) => game.id === simulationCurrentGameId)) {
     return simulationCurrentGameId
   }
 
-  const liveOrScoredGame =
-    games.find((game) => !isCompletedGame(game) && getLatestScoredQuarter(game) != null) ??
-    [...games].reverse().find((game) => getLatestScoredQuarter(game) != null)
+  const recentScoredGame = [...games].reverse().find((game) => getLatestScoredQuarter(game) != null)
 
-  if (liveOrScoredGame) {
-    return liveOrScoredGame.id
+  if (recentScoredGame) {
+    return recentScoredGame.id
   }
 
   const today = new Date()
@@ -653,7 +810,8 @@ const getApiErrorMessage = (payload: unknown, fallback: string): string => {
 }
 
 export function LandingPage() {
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem('auth-token'))
+  const [token, setToken] = useState<string | null>(null)
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null)
   const [displayToken] = useState<string | null>(() => {
     if (typeof window === 'undefined') return null
 
@@ -694,6 +852,8 @@ export function LandingPage() {
   const [selectedGameId, setSelectedGameId] = useState<number | null>(null)
   const [board, setBoard] = useState<LandingBoard | null>(null)
   const [selectedSquare, setSelectedSquare] = useState<number | null>(null)
+  const [selectedSquares, setSelectedSquares] = useState<number[]>([])
+  const [showSquareAssignmentModal, setShowSquareAssignmentModal] = useState(false)
   const [simulationStatus, setSimulationStatus] = useState<SimulationControlStatus | null>(null)
   const simulationAdvanceSource: 'espn' = 'espn'
   const [assignForm, setAssignForm] = useState({
@@ -708,30 +868,43 @@ export function LandingPage() {
   const liveRefreshTimerRef = useRef<number | null>(null)
   const displayRefreshInFlightRef = useRef(false)
 
-  const authHeaders = useMemo(() => {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-    if (token) {
-      headers.Authorization = `Bearer ${token}`
-    }
-    return headers
-  }, [token])
+  const authHeaders = useMemo(() => ({ 'Content-Type': 'application/json' }), [])
 
-  const simulationHeaders = useMemo(() => {
-    if (!SHOW_SIMULATION_CONTROLS || token) {
-      return authHeaders
+  const simulationHeaders = useMemo(() => authHeaders, [authHeaders])
+
+  const verifySession = async (): Promise<void> => {
+    if (displayOnlyMode) {
+      return
     }
 
-    return {
-      ...authHeaders,
-      'x-user-id': 'dev-simulation-user',
-      'x-user-role': 'organizer'
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/verify`, { credentials: 'include' })
+
+      if (!response.ok) {
+        setToken(null)
+        setAuthUser(null)
+        return
+      }
+
+      const data = await response.json().catch(() => null)
+      if (data?.authenticated && data.user) {
+        setToken('session-authenticated')
+        setAuthUser(data.user as AuthUser)
+      } else {
+        setToken(null)
+        setAuthUser(null)
+      }
+    } catch {
+      setToken(null)
+      setAuthUser(null)
     }
-  }, [authHeaders, token])
+  }
 
   const loadBoard = async (poolId: number, gameId: number | null): Promise<void> => {
     const query = gameId ? `?gameId=${gameId}` : ''
     const response = await fetch(`${API_BASE}/api/landing/pools/${poolId}/board${query}`, {
-      headers: authHeaders
+      headers: authHeaders,
+      credentials: 'include'
     })
 
     if (!response.ok) {
@@ -749,7 +922,8 @@ export function LandingPage() {
 
     try {
       const response = await fetch(`${API_BASE}/api/setup/pools/${poolId}/simulation`, {
-        headers: simulationHeaders
+        headers: simulationHeaders,
+        credentials: 'include'
       })
 
       if (!response.ok) {
@@ -767,10 +941,13 @@ export function LandingPage() {
     setBusy('loading')
     setPageError(null)
     setSelectedSquare(null)
+    setSelectedSquares([])
+    setShowSquareAssignmentModal(false)
 
     try {
       const response = await fetch(`${API_BASE}/api/landing/pools/${poolId}/games`, {
-        headers: authHeaders
+        headers: authHeaders,
+        credentials: 'include'
       })
 
       if (!response.ok) {
@@ -801,7 +978,8 @@ export function LandingPage() {
   const refreshLivePoolContext = async (poolId: number, preferredGameId?: number | null): Promise<void> => {
     try {
       const response = await fetch(`${API_BASE}/api/landing/pools/${poolId}/games`, {
-        headers: authHeaders
+        headers: authHeaders,
+        credentials: 'include'
       })
 
       if (!response.ok) {
@@ -840,11 +1018,14 @@ export function LandingPage() {
       setPageError(null)
       setPageNotice(null)
       setSelectedSquare(null)
+      setSelectedSquares([])
+      setShowSquareAssignmentModal(false)
     }
 
     try {
       const response = await fetch(`${API_BASE}/api/landing/display/${encodeURIComponent(displayCode)}`, {
-        headers: authHeaders
+        headers: authHeaders,
+        credentials: 'include'
       })
       const data = await response.json().catch(() => null)
 
@@ -902,7 +1083,7 @@ export function LandingPage() {
     setPageError(null)
 
     try {
-      const response = await fetch(`${API_BASE}/api/landing/pools`, { headers: authHeaders })
+      const response = await fetch(`${API_BASE}/api/landing/pools`, { headers: authHeaders, credentials: 'include' })
 
       if (!response.ok) {
         throw new Error('Failed to load pools')
@@ -935,6 +1116,11 @@ export function LandingPage() {
       setBusy(null)
     }
   }
+
+  useEffect(() => {
+    void verifySession()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayOnlyMode])
 
   useEffect(() => {
     if (displayOnlyMode && displayToken) {
@@ -1112,6 +1298,152 @@ export function LandingPage() {
     displayOnlyMode
   ])
 
+  const completePasswordResetWithToken = async (resetToken: string): Promise<boolean> => {
+    if (typeof window === 'undefined') {
+      return false
+    }
+
+    const password = window.prompt('Enter a new strong password (12+ characters with upper/lowercase letters, a number, and a symbol).') ?? ''
+    if (!password) {
+      return false
+    }
+
+    const confirmPassword = window.prompt('Confirm the new password.') ?? ''
+    if (!confirmPassword) {
+      return false
+    }
+
+    setBusy('reset-password')
+    setLoginError(null)
+
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ token: resetToken, password, confirmPassword })
+      })
+
+      const data = await response.json().catch(() => ({})) as LoginResponse & { error?: string; message?: string }
+      if (!response.ok || !data.user) {
+        throw new Error(data.error ?? data.message ?? 'Failed to set the password.')
+      }
+
+      setToken('session-authenticated')
+      setAuthUser(data.user)
+      setShowLogin(false)
+      setPageNotice(data.message ?? 'Your password was updated successfully.')
+      setLoginForm({ email: '', password: '' })
+      return true
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Failed to set the password.')
+      return false
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handlePasswordResetFlow = async (): Promise<void> => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    const email = window.prompt('Enter the email address for the account you want to set or reset.')?.trim() ?? ''
+    if (!email) {
+      return
+    }
+
+    setBusy('forgot-password')
+    setLoginError(null)
+
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email })
+      })
+
+      const data = await response.json().catch(() => ({})) as { error?: string; message?: string; resetToken?: string }
+      if (!response.ok) {
+        throw new Error(data.error ?? data.message ?? 'Failed to start the password reset flow.')
+      }
+
+      setPageNotice(data.message ?? 'If that account exists, password setup instructions were generated.')
+
+      if (data.resetToken) {
+        await completePasswordResetWithToken(data.resetToken)
+      }
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Failed to start the password reset flow.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handleRequestAccessFlow = async (): Promise<void> => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    setBusy('request-access')
+    setLoginError(null)
+
+    try {
+      const orgResponse = await fetch(`${API_BASE}/api/auth/organizations`, { credentials: 'include' })
+      const orgData = await orgResponse.json().catch(() => ({ organizations: [] })) as {
+        organizations?: Array<{ id: number; team_name: string | null }>
+      }
+
+      if (!orgResponse.ok) {
+        throw new Error('Failed to load organizations for the access request flow.')
+      }
+
+      const organizations = Array.isArray(orgData.organizations) ? orgData.organizations : []
+      const orgListing = organizations.map((org) => `${org.id}: ${org.team_name ?? `Organization ${org.id}`}`).join('\n')
+
+      const firstName = window.prompt('First name')?.trim() ?? ''
+      const lastName = window.prompt('Last name')?.trim() ?? ''
+      const email = window.prompt('Email address')?.trim() ?? ''
+      const phone = window.prompt('Phone number (optional)')?.trim() ?? ''
+      const organizationIdValue = window.prompt(`Enter the organization ID you want access to:\n\n${orgListing || 'No organizations are currently available.'}`)?.trim() ?? ''
+      const requestNote = window.prompt('Add a short note for the organization manager (optional).')?.trim() ?? ''
+
+      const organizationId = Number(organizationIdValue)
+      if (!firstName || !lastName || !email || !Number.isFinite(organizationId) || organizationId <= 0) {
+        throw new Error('First name, last name, email, and a valid organization ID are required.')
+      }
+
+      const response = await fetch(`${API_BASE}/api/auth/request-access`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          firstName,
+          lastName,
+          email,
+          phone: phone || undefined,
+          organizationId,
+          requestNote: requestNote || undefined
+        })
+      })
+
+      const data = await response.json().catch(() => ({})) as { error?: string; message?: string; resetToken?: string }
+      if (!response.ok) {
+        throw new Error(data.error ?? data.message ?? 'Failed to submit the access request.')
+      }
+
+      setPageNotice(data.message ?? 'Your access request has been submitted.')
+      if (data.resetToken) {
+        await completePasswordResetWithToken(data.resetToken)
+      }
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Failed to submit the access request.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     setBusy('login')
@@ -1121,17 +1453,18 @@ export function LandingPage() {
       const response = await fetch(`${API_BASE}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(loginForm)
       })
 
-      const data: LoginResponse | { error?: string } = await response.json()
+      const data = await response.json().catch(() => ({})) as LoginResponse & { error?: string; message?: string }
 
-      if (!response.ok || !('token' in data)) {
-        throw new Error(('error' in data && data.error) || 'Login failed')
+      if (!response.ok || !data.user) {
+        throw new Error(data.error ?? data.message ?? 'Login failed')
       }
 
-      localStorage.setItem('auth-token', data.token)
-      setToken(data.token)
+      setToken('session-authenticated')
+      setAuthUser(data.user)
       setShowLogin(false)
       setLoginForm({ email: '', password: '' })
     } catch (error) {
@@ -1141,12 +1474,23 @@ export function LandingPage() {
     }
   }
 
-  const handleLogout = () => {
-    localStorage.removeItem('auth-token')
+  const handleLogout = async () => {
+    try {
+      await fetch(`${API_BASE}/api/auth/logout`, {
+        method: 'POST',
+        credentials: 'include'
+      })
+    } catch {
+      // ignore sign-out transport errors and clear local state anyway
+    }
+
     setToken(null)
+    setAuthUser(null)
     setShowLogin(false)
     setLoginError(null)
     setSelectedSquare(null)
+    setSelectedSquares([])
+    setShowSquareAssignmentModal(false)
     setParticipantOptions([])
     setPlayerOptions([])
     setAssignForm({
@@ -1163,6 +1507,9 @@ export function LandingPage() {
       setGames([])
       setSelectedGameId(null)
       setBoard(null)
+      setSelectedSquare(null)
+      setSelectedSquares([])
+      setShowSquareAssignmentModal(false)
       setSimulationStatus(null)
       return
     }
@@ -1172,6 +1519,9 @@ export function LandingPage() {
 
   const handleGameChange = async (gameId: number | null) => {
     setSelectedGameId(gameId)
+    setSelectedSquare(null)
+    setSelectedSquares([])
+    setShowSquareAssignmentModal(false)
 
     if (!selectedPoolId) {
       return
@@ -1191,8 +1541,8 @@ export function LandingPage() {
 
   const loadSquareOptions = async (poolId: number): Promise<void> => {
     const [usersResponse, playersResponse] = await Promise.all([
-      fetch(`${API_BASE}/api/setup/users`, { headers: authHeaders }),
-      fetch(`${API_BASE}/api/setup/pools/${poolId}/players`, { headers: authHeaders })
+      fetch(`${API_BASE}/api/setup/users`, { headers: authHeaders, credentials: 'include' }),
+      fetch(`${API_BASE}/api/setup/pools/${poolId}/players`, { headers: authHeaders, credentials: 'include' })
     ])
 
     const usersData = await usersResponse.json().catch(() => null)
@@ -1210,7 +1560,7 @@ export function LandingPage() {
     setPlayerOptions(playersData?.players ?? [])
   }
 
-  const handleOpenSquareAssignment = async (square: LandingBoardSquare) => {
+  const handleToggleSquareSelection = async (square: LandingBoardSquare) => {
     if (!token) {
       setShowLogin(true)
       return
@@ -1220,35 +1570,81 @@ export function LandingPage() {
       return
     }
 
-    setSelectedSquare(square.square_num)
+    const isSelected = selectedSquares.includes(square.square_num)
+    const nextSelection = isSelected
+      ? selectedSquares.filter((value) => value !== square.square_num)
+      : [...selectedSquares, square.square_num].sort((left, right) => left - right)
+    const nextPrimarySquare = isSelected ? (nextSelection[0] ?? null) : square.square_num
+
+    setSelectedSquares(nextSelection)
+    setSelectedSquare(nextPrimarySquare)
+    setShowSquareAssignmentModal(false)
     setAssignForm({
       participantId: square.participant_id != null ? String(square.participant_id) : '',
       playerId: square.player_id != null ? String(square.player_id) : '',
       paidFlg: Boolean(square.paid_flg),
       reassign: false
     })
-    setBusy('square-options')
     setPageError(null)
+
+    if (participantOptions.length > 0 || playerOptions.length > 0) {
+      return
+    }
+
+    setBusy('square-options')
 
     try {
       await loadSquareOptions(selectedPoolId)
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'Failed to load square assignment options')
       setSelectedSquare(null)
+      setSelectedSquares([])
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handleOpenSelectedSquareAssignment = async () => {
+    if (!token) {
+      setShowLogin(true)
+      return
+    }
+
+    if (!selectedPoolId || selectedSquares.length === 0) {
+      setPageError('Select one or more squares first')
+      return
+    }
+
+    setShowSquareAssignmentModal(true)
+    setPageError(null)
+
+    if (participantOptions.length > 0 || playerOptions.length > 0) {
+      return
+    }
+
+    setBusy('square-options')
+
+    try {
+      await loadSquareOptions(selectedPoolId)
+    } catch (error) {
+      setPageError(error instanceof Error ? error.message : 'Failed to load square assignment options')
+      setShowSquareAssignmentModal(false)
     } finally {
       setBusy(null)
     }
   }
 
   const handleCloseSquareAssignment = () => {
+    setShowSquareAssignmentModal(false)
     setSelectedSquare(null)
+    setSelectedSquares([])
   }
 
   const handleAssignSquare = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
-    if (!selectedPoolId || selectedSquare == null) {
-      setPageError('Select a square first')
+    if (!selectedPoolId || selectedSquares.length === 0) {
+      setPageError('Select one or more squares first')
       return
     }
 
@@ -1256,25 +1652,31 @@ export function LandingPage() {
     setPageError(null)
 
     try {
-      const response = await fetch(`${API_BASE}/api/setup/pools/${selectedPoolId}/squares/${selectedSquare}`, {
-        method: 'PATCH',
-        headers: authHeaders,
-        body: JSON.stringify({
-          participantId: assignForm.participantId ? Number(assignForm.participantId) : null,
-          playerId: assignForm.playerId ? Number(assignForm.playerId) : null,
-          paidFlg: assignForm.paidFlg,
-          reassign: assignForm.reassign
+      for (const squareNum of selectedSquares) {
+        const response = await fetch(`${API_BASE}/api/setup/pools/${selectedPoolId}/squares/${squareNum}`, {
+          method: 'PATCH',
+          headers: authHeaders,
+          credentials: 'include',
+          body: JSON.stringify({
+            participantId: assignForm.participantId ? Number(assignForm.participantId) : null,
+            playerId: assignForm.playerId ? Number(assignForm.playerId) : null,
+            paidFlg: assignForm.paidFlg,
+            reassign: assignForm.reassign
+          })
         })
-      })
 
-      const data = await response.json().catch(() => null)
+        const data = await response.json().catch(() => null)
 
-      if (!response.ok) {
-        throw new Error(getApiErrorMessage(data, 'Failed to update square assignment'))
+        if (!response.ok) {
+          throw new Error(getApiErrorMessage(data, `Failed to update square ${squareNum}`))
+        }
       }
 
       await loadBoard(selectedPoolId, selectedGameId)
+      setPageNotice(selectedSquares.length > 1 ? `Updated ${selectedSquares.length} squares.` : `Updated square ${selectedSquares[0]}.`)
+      setShowSquareAssignmentModal(false)
       setSelectedSquare(null)
+      setSelectedSquares([])
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'Failed to update square assignment')
     } finally {
@@ -1283,8 +1685,8 @@ export function LandingPage() {
   }
 
   const handleClearSquareAssignment = async () => {
-    if (!selectedPoolId || selectedSquare == null) {
-      setPageError('Select a square first')
+    if (!selectedPoolId || selectedSquares.length === 0) {
+      setPageError('Select one or more squares first')
       return
     }
 
@@ -1292,21 +1694,24 @@ export function LandingPage() {
     setPageError(null)
 
     try {
-      const response = await fetch(`${API_BASE}/api/setup/pools/${selectedPoolId}/squares/${selectedSquare}`, {
-        method: 'PATCH',
-        headers: authHeaders,
-        body: JSON.stringify({
-          participantId: null,
-          playerId: null,
-          paidFlg: false,
-          reassign: true
+      for (const squareNum of selectedSquares) {
+        const response = await fetch(`${API_BASE}/api/setup/pools/${selectedPoolId}/squares/${squareNum}`, {
+          method: 'PATCH',
+          headers: authHeaders,
+          credentials: 'include',
+          body: JSON.stringify({
+            participantId: null,
+            playerId: null,
+            paidFlg: false,
+            reassign: true
+          })
         })
-      })
 
-      const data = await response.json().catch(() => null)
+        const data = await response.json().catch(() => null)
 
-      if (!response.ok) {
-        throw new Error(getApiErrorMessage(data, 'Failed to clear square assignment'))
+        if (!response.ok) {
+          throw new Error(getApiErrorMessage(data, `Failed to clear square ${squareNum}`))
+        }
       }
 
       setAssignForm({
@@ -1316,7 +1721,10 @@ export function LandingPage() {
         reassign: false
       })
       await loadBoard(selectedPoolId, selectedGameId)
+      setPageNotice(selectedSquares.length > 1 ? `Cleared ${selectedSquares.length} squares.` : `Cleared square ${selectedSquares[0]}.`)
+      setShowSquareAssignmentModal(false)
       setSelectedSquare(null)
+      setSelectedSquares([])
     } catch (error) {
       setPageError(error instanceof Error ? error.message : 'Failed to clear square assignment')
     } finally {
@@ -1336,10 +1744,7 @@ export function LandingPage() {
     try {
       const response = await fetch(`${API_BASE}/api/setup/pools/${selectedPoolId}/simulation/advance`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...simulationHeaders
-        },
+        headers: simulationHeaders,
         body: JSON.stringify({ source: simulationAdvanceSource, action })
       })
 
@@ -1390,40 +1795,58 @@ export function LandingPage() {
     [games, selectedGameId]
   )
 
+  const selectedGameBranding = useMemo(
+    () => resolveMatchupBranding(selectedGame, board?.primaryTeam ?? null),
+    [selectedGame, board?.primaryTeam]
+  )
+
   const primaryBrand = useMemo(() => {
     if (board?.winnerLoserMode) {
+      const winnerBarColor = board?.teamPrimaryColor ?? selectedPool?.primary_color ?? '#8a8f98'
       return {
         key: 'winner-score',
-        color: board?.teamPrimaryColor ?? selectedPool?.primary_color ?? '#8a8f98',
-        accent: board?.teamSecondaryColor ?? selectedPool?.secondary_color ?? '#233042',
+        color: winnerBarColor,
+        accent: getReadableTextColor(winnerBarColor, board?.teamSecondaryColor ?? selectedPool?.secondary_color ?? '#233042'),
         logo: ''
       }
     }
 
     const teamName = board?.primaryTeam ?? selectedPool?.team_name ?? 'Preferred Team'
-    const fallbackLogo = selectedPool?.logo_file ? resolveImageUrl(selectedPool.logo_file) : null
+    const fallbackLogo = board?.teamLogo
+      ? resolveImageUrl(board.teamLogo)
+      : selectedGameBranding.primaryLogo
+        ? resolveImageUrl(selectedGameBranding.primaryLogo)
+        : selectedPool?.logo_file
+          ? resolveImageUrl(selectedPool.logo_file)
+          : null
 
     return resolveTeamBrand(
       teamName,
-      board?.teamPrimaryColor ?? selectedPool?.primary_color ?? '#8a8f98',
+      selectedGameBranding.primaryColor ?? board?.teamPrimaryColor ?? selectedPool?.primary_color ?? '#8a8f98',
       board?.teamSecondaryColor ?? selectedPool?.secondary_color ?? '#233042',
       fallbackLogo
     )
-  }, [board, selectedPool])
+  }, [board, selectedGameBranding, selectedPool])
 
   const opponentBrand = useMemo(() => {
     if (board?.winnerLoserMode) {
       return {
         key: 'losing-score',
         color: '#5f6368',
-        accent: '#ffffff',
+        accent: getReadableTextColor('#5f6368', '#ffffff'),
         logo: ''
       }
     }
 
     const opponentName = board?.opponent ?? selectedGame?.opponent ?? 'Opponent'
-    return resolveTeamBrand(opponentName, '#5f6368', '#ffffff', null)
-  }, [board, selectedGame])
+    const fallbackLogo = selectedGameBranding.opponentLogo ? resolveImageUrl(selectedGameBranding.opponentLogo) : null
+    return resolveTeamBrand(
+      opponentName,
+      selectedGameBranding.opponentColor ?? '#5f6368',
+      '#ffffff',
+      fallbackLogo
+    )
+  }, [board, selectedGame, selectedGameBranding])
 
   const logoSrc = selectedPool?.logo_file ? resolveImageUrl(selectedPool.logo_file) : DEFAULT_POOL_LOGO
   const topDigits = normalizeDigits(board?.colNumbers)
@@ -1465,6 +1888,10 @@ export function LandingPage() {
     return board.squares.find((square) => square.square_num === selectedSquare) ?? null
   }, [board, selectedSquare])
 
+  const selectedSquareSummary = selectedSquares.length > 10
+    ? `${selectedSquares.slice(0, 10).join(', ')} +${selectedSquares.length - 10} more`
+    : selectedSquares.join(', ')
+
   const latestScoredQuarter = getLatestScoredQuarter(selectedGame)
   const scoreSegments = useMemo(
     () => getScoreSegmentDefinitions({ activeSlots: board?.payoutSummary?.activeSlots, payoutLabels: board?.payoutSummary?.payoutLabels }),
@@ -1474,6 +1901,18 @@ export function LandingPage() {
     () => getSimulationStepDescriptor({ activeSlots: board?.payoutSummary?.activeSlots, payoutLabels: board?.payoutSummary?.payoutLabels }),
     [board?.payoutSummary]
   )
+
+  const primaryTeamIsAway = useMemo(() => {
+    const normalizedPrimaryTeam = normalizeTeamKey(board?.primaryTeam)
+    const normalizedAwayTeam = normalizeTeamKey(selectedGame?.away_team_name)
+    const normalizedHomeTeam = normalizeTeamKey(selectedGame?.home_team_name)
+
+    return Boolean(
+      normalizedPrimaryTeam &&
+      normalizedAwayTeam === normalizedPrimaryTeam &&
+      normalizedHomeTeam !== normalizedPrimaryTeam
+    )
+  }, [board?.primaryTeam, selectedGame?.away_team_name, selectedGame?.home_team_name])
 
   const quarterSummaries = useMemo(() => {
     if (!board || !selectedGame) {
@@ -1485,8 +1924,13 @@ export function LandingPage() {
       simulationStatus?.mode === 'by_quarter' && Number(simulationStatus.currentGameId ?? 0) === Number(selectedGame.id)
         ? Number(simulationStatus.nextQuarter ?? 1)
         : null
+    const activeLiveQuarter =
+      activeSimulationQuarter == null && !isCompletedGame(selectedGame)
+        ? Number(selectedGame.current_quarter ?? 0) || null
+        : null
+    const activeDisplayQuarter = activeSimulationQuarter ?? activeLiveQuarter ?? latestScoredQuarter
 
-    if (latestScoredQuarter == null && activeSimulationQuarter == null) {
+    if (latestScoredQuarter == null && activeDisplayQuarter == null) {
       return []
     }
 
@@ -1507,10 +1951,9 @@ export function LandingPage() {
         ? resolveWinningSquareNumber(board.rowNumbers, board.colNumbers, opponentScore, primaryScore, winnerLoserMode)
         : null
       const matchingSquare = squareNum != null ? squaresByNumber.get(squareNum) ?? null : null
-      const isActiveQuarter =
-        activeSimulationQuarter != null
-          ? quarter === activeSimulationQuarter
-          : !gameComplete && quarter === latestScoredQuarter
+      const isActiveQuarter = !gameComplete && activeDisplayQuarter != null
+        ? quarter === activeDisplayQuarter
+        : false
 
       return {
         id: segment.slot,
@@ -1519,11 +1962,13 @@ export function LandingPage() {
         status: !hasScore ? (isActiveQuarter ? 'active' : 'pending') : !gameComplete && isActiveQuarter ? 'active' : 'completed',
         primaryScore: displayScores.topScore,
         opponentScore: displayScores.sideScore,
+        awayScore: primaryTeamIsAway ? displayScores.topScore : displayScores.sideScore,
+        homeScore: primaryTeamIsAway ? displayScores.sideScore : displayScores.topScore,
         squareNum,
         ownerName: hasScore ? formatQuarterSquareOwner(matchingSquare, squareNum) : isActiveQuarter ? 'Live scoring in progress' : 'Awaiting score'
       }
     })
-  }, [board, latestScoredQuarter, scoreSegments, selectedGame, selectedPool, simulationStatus])
+  }, [board, latestScoredQuarter, primaryTeamIsAway, scoreSegments, selectedGame, selectedPool, simulationStatus])
 
   const hasCompactQuarterSummaryLayout = quarterSummaries.length >= 6
   const showQuarterSummaries = quarterSummaries.length > 0
@@ -1603,7 +2048,13 @@ export function LandingPage() {
   const previousGameId = currentGameIndex > 0 ? games[currentGameIndex - 1]?.id ?? null : null
   const nextGameId = currentGameIndex >= 0 && currentGameIndex < games.length - 1 ? games[currentGameIndex + 1]?.id ?? null : null
 
-  const canManageSquares = Boolean(!displayOnlyMode && token && selectedPoolId && board)
+  const canManageSquares = Boolean(
+    !displayOnlyMode &&
+      token &&
+      selectedPoolId &&
+      board &&
+      (authUser?.isAdmin || authUser?.permissions?.canManagePools)
+  )
   const poolTracksMembers = Boolean(selectedPool?.has_members_flg ?? true)
   const showMemberSelector = poolTracksMembers && playerOptions.length > 0
   const showSimulationAdvance = !displayOnlyMode && SHOW_SIMULATION_CONTROLS && Boolean(simulationStatus?.progressAction)
@@ -1613,6 +2064,10 @@ export function LandingPage() {
   const opponentTeamLabel = board?.opponent ?? selectedGame?.opponent ?? 'Opponent'
   const primaryTeamLogo = primaryBrand.logo
   const opponentTeamLogo = opponentBrand.logo
+  const awayTeamLabel = selectedGame?.away_team_name ?? (primaryTeamIsAway ? primaryTeamLabel : opponentTeamLabel)
+  const homeTeamLabel = selectedGame?.home_team_name ?? (primaryTeamIsAway ? opponentTeamLabel : primaryTeamLabel)
+  const awayTeamLogo = selectedGame?.away_team_logo_url ? resolveImageUrl(selectedGame.away_team_logo_url) : (primaryTeamIsAway ? primaryTeamLogo : opponentTeamLogo)
+  const homeTeamLogo = selectedGame?.home_team_logo_url ? resolveImageUrl(selectedGame.home_team_logo_url) : (primaryTeamIsAway ? opponentTeamLogo : primaryTeamLogo)
 
   const heroTitle = selectedPool
     ? `${selectedPool.team_name ?? 'Team'} • ${selectedPool.pool_name ?? 'Pool'}`
@@ -1654,9 +2109,9 @@ export function LandingPage() {
             <button
               type="button"
               className="landing-signin-btn"
-              onClick={() => (token ? handleLogout() : setShowLogin((current) => !current))}
+              onClick={() => (token ? void handleLogout() : setShowLogin((current) => !current))}
             >
-              {token ? 'Sign Out' : 'Sign In'}
+              {token ? `Sign Out${authUser?.firstName ? ` • ${authUser.firstName}` : ''}` : 'Sign In'}
             </button>
           </nav>
 
@@ -1664,7 +2119,7 @@ export function LandingPage() {
             <section className="landing-login-card">
               <div>
                 <h2>Sign in</h2>
-                <p>Use the email for an existing user. Any non-empty password works right now.</p>
+                <p>Use your account email and secure password. New users can request organization access and set a password from here.</p>
               </div>
               <form className="landing-login-form" onSubmit={handleLogin}>
                 <input
@@ -1686,6 +2141,12 @@ export function LandingPage() {
                 <div className="landing-login-actions">
                   <button type="submit" className="primary" disabled={busy !== null}>
                     {busy === 'login' ? 'Signing in...' : 'Sign In'}
+                  </button>
+                  <button type="button" className="secondary" onClick={() => void handlePasswordResetFlow()} disabled={busy !== null}>
+                    Set / Reset Password
+                  </button>
+                  <button type="button" className="secondary" onClick={() => void handleRequestAccessFlow()} disabled={busy !== null}>
+                    Request Access
                   </button>
                 </div>
               </form>
@@ -1726,7 +2187,7 @@ export function LandingPage() {
               </label>
 
               <label className="field-block">
-                <span>Week / Game</span>
+                <span>Game</span>
                 <select
                   value={selectedGameId ?? ''}
                   onChange={(event) => {
@@ -1773,6 +2234,40 @@ export function LandingPage() {
                   ) : null}
                 </div>
               ) : null}
+
+              {hasActiveSelection ? (
+                <div className="landing-board-dev-actions">
+                  <p className="small landing-selection-hint">
+                    {selectedSquares.length > 0
+                      ? `Selected squares: ${selectedSquareSummary}`
+                      : 'Click one or more squares, then assign them together with one save.'}
+                  </p>
+                  <div className="landing-selection-actions">
+                    <button
+                      type="button"
+                      className="primary"
+                      onClick={() => void handleOpenSelectedSquareAssignment()}
+                      disabled={busy !== null || selectedSquares.length === 0}
+                    >
+                      {selectedSquares.length > 1
+                        ? `Assign ${selectedSquares.length} squares`
+                        : selectedSquares.length === 1
+                          ? `Assign square ${selectedSquares[0]}`
+                          : 'Select squares to assign'}
+                    </button>
+                    {selectedSquares.length > 0 ? (
+                      <button
+                        type="button"
+                        className="secondary"
+                        onClick={handleCloseSquareAssignment}
+                        disabled={busy !== null}
+                      >
+                        Clear selection
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -1802,8 +2297,8 @@ export function LandingPage() {
                     className="pool-board-nav-arrow"
                     onClick={() => void handleGameChange(previousGameId)}
                     disabled={!previousGameId || busy === 'loading'}
-                    aria-label="Previous week"
-                    title="Previous week"
+                    aria-label="Previous game"
+                    title="Previous game"
                   >
                     ←
                   </button>
@@ -1822,8 +2317,8 @@ export function LandingPage() {
                     className="pool-board-nav-arrow"
                     onClick={() => void handleGameChange(nextGameId)}
                     disabled={!nextGameId || busy === 'loading'}
-                    aria-label="Next week"
-                    title="Next week"
+                    aria-label="Next game"
+                    title="Next game"
                   >
                     →
                   </button>
@@ -1834,10 +2329,10 @@ export function LandingPage() {
                 <section className={`display-scoreboard-spotlight is-${featuredDisplaySummary.status}`} aria-label="Featured live scoreboard">
                   <div className="display-scoreboard-team">
                     <div className="display-scoreboard-team-brand">
-                      {primaryTeamLogo ? <img src={primaryTeamLogo} alt={primaryTeamLabel} className="display-scoreboard-team-logo" /> : null}
-                      <span className="display-scoreboard-team-name">{primaryTeamLabel}</span>
+                      {awayTeamLogo ? <img src={awayTeamLogo} alt={awayTeamLabel} className="display-scoreboard-team-logo" /> : null}
+                      <span className="display-scoreboard-team-name">{awayTeamLabel}</span>
                     </div>
-                    <strong className="display-scoreboard-team-score">{featuredDisplaySummary.primaryScore ?? '—'}</strong>
+                    <strong className="display-scoreboard-team-score">{featuredDisplaySummary.awayScore ?? '—'}</strong>
                   </div>
 
                   <div className="display-scoreboard-meta">
@@ -1847,11 +2342,11 @@ export function LandingPage() {
                   </div>
 
                   <div className="display-scoreboard-team is-opponent">
+                    <strong className="display-scoreboard-team-score">{featuredDisplaySummary.homeScore ?? '—'}</strong>
                     <div className="display-scoreboard-team-brand">
-                      {opponentTeamLogo ? <img src={opponentTeamLogo} alt={opponentTeamLabel} className="display-scoreboard-team-logo" /> : null}
-                      <span className="display-scoreboard-team-name">{opponentTeamLabel}</span>
+                      {homeTeamLogo ? <img src={homeTeamLogo} alt={homeTeamLabel} className="display-scoreboard-team-logo" /> : null}
+                      <span className="display-scoreboard-team-name">{homeTeamLabel}</span>
                     </div>
-                    <strong className="display-scoreboard-team-score">{featuredDisplaySummary.opponentScore ?? '—'}</strong>
                   </div>
                 </section>
               ) : null}
@@ -1900,7 +2395,7 @@ export function LandingPage() {
                                   const isCurrentLeader = Boolean(square.is_current_score_leader)
                                   const winClass = hasWeekWin ? 'win-3' : hasSeasonWin ? 'win-1' : 'win-0'
                                   const winStateClass = hasWeekWin ? 'is-week-win' : hasSeasonWin ? 'is-season-win' : ''
-                                  const isSelectedSquare = selectedSquare === square.square_num
+                                  const isSelectedSquare = selectedSquares.includes(square.square_num)
                                   const ownershipClass = square.participant_id ? 'owned' : 'open'
                                   const paymentStateClass = !square.participant_id
                                     ? 'is-open'
@@ -1921,7 +2416,7 @@ export function LandingPage() {
                                       key={square.square_num}
                                       type="button"
                                       className={`landing-square-card ${ownershipClass} ${paymentStateClass} ${square.paid_flg ? 'paid' : ''} ${winClass} ${winStateClass} ${isCurrentLeader ? 'is-current-win' : ''} ${isSelectedSquare ? 'is-selected' : ''} ${hasActiveSelection ? 'is-manageable' : ''}`}
-                                      onClick={hasActiveSelection ? () => void handleOpenSquareAssignment(square) : undefined}
+                                      onClick={hasActiveSelection ? () => void handleToggleSquareSelection(square) : undefined}
                                       aria-label={squareTooltip}
                                     >
                                       {square.participant_id ? (
@@ -1959,24 +2454,21 @@ export function LandingPage() {
                               </div>
 
                               <div className="board-quarter-scoreline">
-                                <div>
-                                  {primaryTeamLogo ? (
-                                    <img src={primaryTeamLogo} alt={primaryTeamLabel} className="quarter-team-logo" />
+                                <div className="board-quarter-score-item">
+                                  {awayTeamLogo ? (
+                                    <img src={awayTeamLogo} alt={awayTeamLabel} className="quarter-team-logo" />
                                   ) : null}
-                                  <span>{summary.primaryScore ?? '—'}</span>
+                                  <span>{summary.awayScore ?? '—'}</span>
                                 </div>
-                                <div>
-                                  {opponentTeamLogo ? (
-                                    <img src={opponentTeamLogo} alt={opponentTeamLabel} className="quarter-team-logo" />
+                                <div className="board-quarter-score-item">
+                                  {homeTeamLogo ? (
+                                    <img src={homeTeamLogo} alt={homeTeamLabel} className="quarter-team-logo" />
                                   ) : null}
-                                  <span>{summary.opponentScore ?? '—'}</span>
+                                  <span>{summary.homeScore ?? '—'}</span>
                                 </div>
                               </div>
 
                               <div className="board-quarter-winner">
-                                <span className="board-quarter-winner-label">
-                                  {summary.status === 'completed' ? 'Winner' : summary.status === 'active' ? 'Leader' : 'Pending'}
-                                </span>
                                 <strong>{summary.ownerName}</strong>
                               </div>
                             </article>
@@ -2026,7 +2518,7 @@ export function LandingPage() {
                                   const isCurrentLeader = Boolean(square.is_current_score_leader)
                                   const winClass = hasWeekWin ? 'win-3' : hasSeasonWin ? 'win-1' : 'win-0'
                                   const winStateClass = hasWeekWin ? 'is-week-win' : hasSeasonWin ? 'is-season-win' : ''
-                                  const isSelectedSquare = selectedSquare === square.square_num
+                                  const isSelectedSquare = selectedSquares.includes(square.square_num)
                                   const ownershipClass = square.participant_id ? 'owned' : 'open'
                                   const paymentStateClass = !square.participant_id
                                     ? 'is-open'
@@ -2047,7 +2539,7 @@ export function LandingPage() {
                                       key={square.square_num}
                                       type="button"
                                       className={`landing-square-card ${ownershipClass} ${paymentStateClass} ${square.paid_flg ? 'paid' : ''} ${winClass} ${winStateClass} ${isCurrentLeader ? 'is-current-win' : ''} ${isSelectedSquare ? 'is-selected' : ''} ${hasActiveSelection ? 'is-manageable' : ''}`}
-                                      onClick={hasActiveSelection ? () => void handleOpenSquareAssignment(square) : undefined}
+                                      onClick={hasActiveSelection ? () => void handleToggleSquareSelection(square) : undefined}
                                       aria-label={squareTooltip}
                                     >
                                       {square.participant_id ? (
@@ -2085,24 +2577,21 @@ export function LandingPage() {
                               </div>
 
                               <div className="board-quarter-scoreline">
-                                <div>
-                                  {primaryTeamLogo ? (
-                                    <img src={primaryTeamLogo} alt={primaryTeamLabel} className="quarter-team-logo" />
+                                <div className="board-quarter-score-item">
+                                  {awayTeamLogo ? (
+                                    <img src={awayTeamLogo} alt={awayTeamLabel} className="quarter-team-logo" />
                                   ) : null}
-                                  <span>{summary.primaryScore ?? '—'}</span>
+                                  <span>{summary.awayScore ?? '—'}</span>
                                 </div>
-                                <div>
-                                  {opponentTeamLogo ? (
-                                    <img src={opponentTeamLogo} alt={opponentTeamLabel} className="quarter-team-logo" />
+                                <div className="board-quarter-score-item">
+                                  {homeTeamLogo ? (
+                                    <img src={homeTeamLogo} alt={homeTeamLabel} className="quarter-team-logo" />
                                   ) : null}
-                                  <span>{summary.opponentScore ?? '—'}</span>
+                                  <span>{summary.homeScore ?? '—'}</span>
                                 </div>
                               </div>
 
                               <div className="board-quarter-winner">
-                                <span className="board-quarter-winner-label">
-                                  {summary.status === 'completed' ? 'Winner' : summary.status === 'active' ? 'Leader' : 'Pending'}
-                                </span>
                                 <strong>{summary.ownerName}</strong>
                               </div>
                             </article>
@@ -2149,12 +2638,12 @@ export function LandingPage() {
             <article className="panel">
               <h2>{pools.length > 0 ? 'Select Pool' : 'No Pools Available'}</h2>
               <p className="small">
-                {pools.length > 0 ? 'Choose a pool and week above to load the board.' : 'No squares board is available yet.'}
+                {pools.length > 0 ? 'Choose a pool and game above to load the board.' : 'No squares board is available yet.'}
               </p>
             </article>
           )}
 
-          {selectedSquare != null && canManageSquares ? (
+          {showSquareAssignmentModal && selectedSquares.length > 0 && canManageSquares ? (
             <div className="modal-backdrop" onClick={handleCloseSquareAssignment}>
               <div
                 className="modal-card"
@@ -2164,17 +2653,23 @@ export function LandingPage() {
                 onClick={(event) => event.stopPropagation()}
               >
                 <div className="modal-header">
-                  <h3 id="landing-square-modal-title">Square {selectedSquare}</h3>
+                  <h3 id="landing-square-modal-title">
+                    {selectedSquares.length > 1 ? `Assign ${selectedSquares.length} Squares` : `Square ${selectedSquare}`}
+                  </h3>
                   <button type="button" className="secondary compact" onClick={handleCloseSquareAssignment}>
                     Close
                   </button>
                 </div>
 
                 <p className="small">
-                  Current owner:{' '}
-                  {selectedBoardSquare?.participant_id
-                    ? `${selectedBoardSquare.participant_first_name ?? ''} ${selectedBoardSquare.participant_last_name ?? ''}`.trim() || `User #${selectedBoardSquare.participant_id}`
-                    : 'Unassigned'}
+                  <strong>Selected:</strong> {selectedSquareSummary}
+                </p>
+                <p className="small">
+                  {selectedSquares.length > 1
+                    ? 'These squares will all be updated with the same participant, member, and payment status.'
+                    : selectedBoardSquare?.participant_id
+                      ? `Current owner: ${`${selectedBoardSquare.participant_first_name ?? ''} ${selectedBoardSquare.participant_last_name ?? ''}`.trim() || `User #${selectedBoardSquare.participant_id}`}`
+                      : 'Current owner: Unassigned'}
                 </p>
 
                 <form onSubmit={handleAssignSquare} className="assign-form modal-assign-form">
@@ -2229,10 +2724,10 @@ export function LandingPage() {
                       onClick={handleClearSquareAssignment}
                       disabled={busy !== null || !selectedPoolId}
                     >
-                      {busy === 'clear-square' ? 'Clearing...' : 'Clear square'}
+                      {busy === 'clear-square' ? 'Clearing...' : selectedSquares.length > 1 ? 'Clear selected' : 'Clear square'}
                     </button>
                     <button className="primary" type="submit" disabled={busy !== null || !selectedPoolId}>
-                      {busy === 'assign-square' ? 'Saving...' : 'Save assignment'}
+                      {busy === 'assign-square' ? 'Saving...' : selectedSquares.length > 1 ? 'Save assignments' : 'Save assignment'}
                     </button>
                   </div>
                 </form>

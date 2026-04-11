@@ -391,7 +391,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
   }, [authHeaders, token])
 
   const request = async <T,>(path: string, init?: RequestInit): Promise<T> => {
-    const response = await fetch(`${apiBase}${path}`, init)
+    const response = await fetch(`${apiBase}${path}`, { credentials: 'include', ...init })
     const data = await response.json().catch(() => ({}))
 
     if (!response.ok) {
