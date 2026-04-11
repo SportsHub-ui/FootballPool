@@ -2318,11 +2318,11 @@ export function LandingPage() {
                   </div>
 
                   <div className="display-scoreboard-team is-opponent">
+                    <strong className="display-scoreboard-team-score">{featuredDisplaySummary.opponentScore ?? '—'}</strong>
                     <div className="display-scoreboard-team-brand">
                       {opponentTeamLogo ? <img src={opponentTeamLogo} alt={opponentTeamLabel} className="display-scoreboard-team-logo" /> : null}
                       <span className="display-scoreboard-team-name">{opponentTeamLabel}</span>
                     </div>
-                    <strong className="display-scoreboard-team-score">{featuredDisplaySummary.opponentScore ?? '—'}</strong>
                   </div>
                 </section>
               ) : null}

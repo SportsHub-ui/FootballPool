@@ -2396,11 +2396,23 @@ button:disabled {
   padding: 0.55rem 0.75rem;
 }
 
+.display-scoreboard-team.is-opponent {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
 .display-scoreboard-team-brand {
   display: flex;
   align-items: center;
   gap: 0.55rem;
   min-width: 0;
+}
+
+.display-scoreboard-team.is-opponent .display-scoreboard-team-brand {
+  justify-content: flex-end;
+}
+
+.display-scoreboard-team.is-opponent .display-scoreboard-team-name {
+  text-align: right;
 }
 
 .display-scoreboard-team-logo {
