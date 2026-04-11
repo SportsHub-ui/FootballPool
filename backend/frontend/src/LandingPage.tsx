@@ -1423,16 +1423,21 @@ export function LandingPage() {
         body: JSON.stringify({ token, email: resetForm.email.trim() || undefined, password, confirmPassword })
       })
 
-      const data = await response.json().catch(() => ({})) as LoginResponse & { error?: string; message?: string }
-      if (!response.ok || !data.user) {
-        throw new Error(data.error ?? data.message ?? 'Failed to set the password.')
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(data, 'Failed to set the password.'))
+      }
+
+      const loginData = data as LoginResponse | null
+      if (!loginData?.user) {
+        throw new Error(getApiErrorMessage(data, 'Failed to set the password.'))
       }
 
       setToken('session-authenticated')
-      setAuthUser(data.user)
+      setAuthUser(loginData.user)
       setShowLogin(false)
       setAuthMode('login')
-      setPageNotice(data.message ?? 'Your password was updated successfully.')
+      setPageNotice(loginData.message ?? 'Your password was updated successfully.')
       setLoginForm({ email: '', password: '' })
       setResetForm({ email: '', token: '', password: '', confirmPassword: '' })
       return true
@@ -1470,16 +1475,21 @@ export function LandingPage() {
         body: JSON.stringify({ email: normalizedEmail, password, confirmPassword })
       })
 
-      const data = await response.json().catch(() => ({})) as LoginResponse & { error?: string; message?: string }
-      if (!response.ok || !data.user) {
-        throw new Error(data.error ?? data.message ?? 'Failed to set the password.')
+      const data = await response.json().catch(() => null)
+      if (!response.ok) {
+        throw new Error(getApiErrorMessage(data, 'Failed to set the password.'))
+      }
+
+      const loginData = data as LoginResponse | null
+      if (!loginData?.user) {
+        throw new Error(getApiErrorMessage(data, 'Failed to set the password.'))
       }
 
       setToken('session-authenticated')
-      setAuthUser(data.user)
+      setAuthUser(loginData.user)
       setShowLogin(false)
       setAuthMode('login')
-      setPageNotice(data.message ?? 'Your password was updated successfully.')
+      setPageNotice(loginData.message ?? 'Your password was updated successfully.')
       setLoginForm({ email: '', password: '' })
       setResetForm({ email: '', token: '', password: '', confirmPassword: '' })
       return true
@@ -1531,12 +1541,12 @@ export function LandingPage() {
         body: JSON.stringify({ email })
       })
 
-      const data = await response.json().catch(() => ({})) as { error?: string; message?: string; resetToken?: string }
+      const data = await response.json().catch(() => null)
       if (!response.ok) {
-        throw new Error(data.error ?? data.message ?? 'Failed to start the password reset flow.')
+        throw new Error(getApiErrorMessage(data, 'Failed to start the password reset flow.'))
       }
 
-      await continuePasswordResetFlow(email, data)
+      await continuePasswordResetFlow(email, (data ?? {}) as { message?: string; resetToken?: string })
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Failed to start the password reset flow.')
     } finally {
@@ -1604,12 +1614,12 @@ export function LandingPage() {
         })
       })
 
-      const data = await response.json().catch(() => ({})) as { error?: string; message?: string; resetToken?: string }
+      const data = await response.json().catch(() => null)
       if (!response.ok) {
-        throw new Error(data.error ?? data.message ?? 'Failed to submit the access request.')
+        throw new Error(getApiErrorMessage(data, 'Failed to submit the access request.'))
       }
 
-      await continuePasswordResetFlow(requestAccessForm.email.trim(), data)
+      await continuePasswordResetFlow(requestAccessForm.email.trim(), (data ?? {}) as { message?: string; resetToken?: string })
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Failed to submit the access request.')
     } finally {
@@ -1630,10 +1640,11 @@ export function LandingPage() {
         body: JSON.stringify(loginForm)
       })
 
-      const data = await response.json().catch(() => ({})) as LoginResponse & { error?: string; message?: string }
+      const data = await response.json().catch(() => null)
+      const loginData = data as LoginResponse | null
 
-      if (!response.ok || !data.user) {
-        const errorMessage = data.error ?? data.message ?? 'Login failed'
+      if (!response.ok || !loginData?.user) {
+        const errorMessage = getApiErrorMessage(data, 'Login failed')
         if (response.status === 403 && /password/i.test(errorMessage)) {
           setAuthMode('reset')
           setResetForm((current) => ({
@@ -1646,7 +1657,7 @@ export function LandingPage() {
       }
 
       setToken('session-authenticated')
-      setAuthUser(data.user)
+      setAuthUser(loginData.user)
       setShowLogin(false)
       setLoginForm({ email: '', password: '' })
     } catch (error) {
