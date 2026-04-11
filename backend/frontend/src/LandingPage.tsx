@@ -871,7 +871,18 @@ export function LandingPage() {
   const [displayAdItems, setDisplayAdItems] = useState<DisplayAdItem[]>([])
   const [displayAdSettings, setDisplayAdSettings] = useState<DisplayAdSettings>(DEFAULT_DISPLAY_AD_SETTINGS)
   const [postgameRotationSeconds, setPostgameRotationSeconds] = useState<number | null>(null)
+  const [authMode, setAuthMode] = useState<'login' | 'reset' | 'request-access'>('login')
   const [loginForm, setLoginForm] = useState({ email: '', password: '' })
+  const [resetForm, setResetForm] = useState({ email: '', token: '', password: '', confirmPassword: '' })
+  const [requestAccessForm, setRequestAccessForm] = useState({
+    firstName: '',
+    lastName: '',
+    email: '',
+    phone: '',
+    organizationId: '',
+    requestNote: ''
+  })
+  const [requestableOrganizations, setRequestableOrganizations] = useState<Array<{ id: number; team_name: string | null }>>([])
   const [pools, setPools] = useState<LandingPool[]>([])
   const [selectedPoolId, setSelectedPoolId] = useState<number | null>(null)
   const [games, setGames] = useState<LandingGame[]>([])
@@ -1334,18 +1345,33 @@ export function LandingPage() {
     displayOnlyMode
   ])
 
+  const loadRequestableOrganizations = async (): Promise<Array<{ id: number; team_name: string | null }>> => {
+    const orgResponse = await fetch(`${API_BASE}/api/auth/organizations`, { credentials: 'include' })
+    const orgData = await orgResponse.json().catch(() => ({ organizations: [] })) as {
+      organizations?: Array<{ id: number; team_name: string | null }>
+    }
+
+    if (!orgResponse.ok) {
+      throw new Error('Failed to load organizations for the access request flow.')
+    }
+
+    const organizations = Array.isArray(orgData.organizations) ? orgData.organizations : []
+    setRequestableOrganizations(organizations)
+    return organizations
+  }
+
   const completePasswordResetWithToken = async (resetToken: string): Promise<boolean> => {
-    if (typeof window === 'undefined') {
+    const token = resetToken.trim()
+    const password = resetForm.password
+    const confirmPassword = resetForm.confirmPassword
+
+    if (!token) {
+      setLoginError('Paste the reset token from your email, or leave it blank only if your account is approved for direct setup.')
       return false
     }
 
-    const password = window.prompt('Enter a new strong password (12+ characters with upper/lowercase letters, a number, and a symbol).') ?? ''
-    if (!password) {
-      return false
-    }
-
-    const confirmPassword = window.prompt('Confirm the new password.') ?? ''
-    if (!confirmPassword) {
+    if (!password || !confirmPassword) {
+      setLoginError('Enter and confirm the new password.')
       return false
     }
 
@@ -1357,7 +1383,7 @@ export function LandingPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ token: resetToken, password, confirmPassword })
+        body: JSON.stringify({ token, email: resetForm.email.trim() || undefined, password, confirmPassword })
       })
 
       const data = await response.json().catch(() => ({})) as LoginResponse & { error?: string; message?: string }
@@ -1368,8 +1394,10 @@ export function LandingPage() {
       setToken('session-authenticated')
       setAuthUser(data.user)
       setShowLogin(false)
+      setAuthMode('login')
       setPageNotice(data.message ?? 'Your password was updated successfully.')
       setLoginForm({ email: '', password: '' })
+      setResetForm({ email: '', token: '', password: '', confirmPassword: '' })
       return true
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Failed to set the password.')
@@ -1380,17 +1408,17 @@ export function LandingPage() {
   }
 
   const completePasswordResetWithEmail = async (email: string): Promise<boolean> => {
-    if (typeof window === 'undefined') {
+    const normalizedEmail = email.trim()
+    const password = resetForm.password
+    const confirmPassword = resetForm.confirmPassword
+
+    if (!normalizedEmail) {
+      setLoginError('Enter the account email first.')
       return false
     }
 
-    const password = window.prompt('Enter a new strong password (12+ characters with upper/lowercase letters, a number, and a symbol).') ?? ''
-    if (!password) {
-      return false
-    }
-
-    const confirmPassword = window.prompt('Confirm the new password.') ?? ''
-    if (!confirmPassword) {
+    if (!password || !confirmPassword) {
+      setLoginError('Enter and confirm the new password.')
       return false
     }
 
@@ -1402,7 +1430,7 @@ export function LandingPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ email, password, confirmPassword })
+        body: JSON.stringify({ email: normalizedEmail, password, confirmPassword })
       })
 
       const data = await response.json().catch(() => ({})) as LoginResponse & { error?: string; message?: string }
@@ -1413,8 +1441,10 @@ export function LandingPage() {
       setToken('session-authenticated')
       setAuthUser(data.user)
       setShowLogin(false)
+      setAuthMode('login')
       setPageNotice(data.message ?? 'Your password was updated successfully.')
       setLoginForm({ email: '', password: '' })
+      setResetForm({ email: '', token: '', password: '', confirmPassword: '' })
       return true
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Failed to set the password.')
@@ -1428,35 +1458,28 @@ export function LandingPage() {
     email: string,
     data: { message?: string; resetToken?: string }
   ): Promise<void> => {
-    const providedToken = data.resetToken?.trim() ?? ''
-
-    if (providedToken) {
-      await completePasswordResetWithToken(providedToken)
-      return
-    }
-
-    const manualToken = window.prompt(
-      `${data.message ?? 'Password setup instructions have been generated.'}\n\nPaste the reset token from your email to continue. If token email is unavailable for this approved account, leave this blank and press OK to create the password directly.`
-    )?.trim() ?? ''
-
-    if (!manualToken) {
-      const completedWithoutToken = await completePasswordResetWithEmail(email)
-      if (!completedWithoutToken) {
-        setPageNotice(`If token email is unavailable, ask an organizer to allow direct setup for ${email} or retry with the reset token.`)
-      }
-      return
-    }
-
-    await completePasswordResetWithToken(manualToken)
+    setAuthMode('reset')
+    setResetForm((current) => ({
+      ...current,
+      email: email || current.email,
+      token: data.resetToken?.trim() ?? current.token
+    }))
+    setPageNotice(data.message ?? 'If that account exists, password setup instructions were generated. Enter the token below and choose a new password.')
   }
 
-  const handlePasswordResetFlow = async (): Promise<void> => {
-    if (typeof window === 'undefined') {
-      return
-    }
+  const handlePasswordResetFlow = (): void => {
+    setAuthMode('reset')
+    setLoginError(null)
+    setResetForm((current) => ({
+      ...current,
+      email: current.email || loginForm.email.trim()
+    }))
+  }
 
-    const email = window.prompt('Enter the email address for the account you want to set or reset.')?.trim() ?? ''
+  const handleSendPasswordResetInstructions = async (): Promise<void> => {
+    const email = resetForm.email.trim()
     if (!email) {
+      setLoginError('Enter the email address for the account you want to set or reset.')
       return
     }
 
@@ -1476,7 +1499,6 @@ export function LandingPage() {
         throw new Error(data.error ?? data.message ?? 'Failed to start the password reset flow.')
       }
 
-      setPageNotice(data.message ?? 'If that account exists, password setup instructions were generated.')
       await continuePasswordResetFlow(email, data)
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Failed to start the password reset flow.')
@@ -1485,8 +1507,45 @@ export function LandingPage() {
     }
   }
 
+  const handleCompletePasswordReset = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault()
+
+    if (resetForm.token.trim()) {
+      await completePasswordResetWithToken(resetForm.token)
+      return
+    }
+
+    await completePasswordResetWithEmail(resetForm.email)
+  }
+
   const handleRequestAccessFlow = async (): Promise<void> => {
-    if (typeof window === 'undefined') {
+    setAuthMode('request-access')
+    setLoginError(null)
+    setRequestAccessForm((current) => ({
+      ...current,
+      email: current.email || loginForm.email.trim()
+    }))
+
+    if (requestableOrganizations.length > 0) {
+      return
+    }
+
+    setBusy('request-access-organizations')
+    try {
+      await loadRequestableOrganizations()
+    } catch (error) {
+      setLoginError(error instanceof Error ? error.message : 'Failed to load organizations for the access request flow.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const handleSubmitRequestAccess = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault()
+
+    const organizationId = Number(requestAccessForm.organizationId)
+    if (!requestAccessForm.firstName.trim() || !requestAccessForm.lastName.trim() || !requestAccessForm.email.trim() || !Number.isFinite(organizationId) || organizationId <= 0) {
+      setLoginError('First name, last name, email, and a valid organization are required.')
       return
     }
 
@@ -1494,41 +1553,17 @@ export function LandingPage() {
     setLoginError(null)
 
     try {
-      const orgResponse = await fetch(`${API_BASE}/api/auth/organizations`, { credentials: 'include' })
-      const orgData = await orgResponse.json().catch(() => ({ organizations: [] })) as {
-        organizations?: Array<{ id: number; team_name: string | null }>
-      }
-
-      if (!orgResponse.ok) {
-        throw new Error('Failed to load organizations for the access request flow.')
-      }
-
-      const organizations = Array.isArray(orgData.organizations) ? orgData.organizations : []
-      const orgListing = organizations.map((org) => `${org.id}: ${org.team_name ?? `Organization ${org.id}`}`).join('\n')
-
-      const firstName = window.prompt('First name')?.trim() ?? ''
-      const lastName = window.prompt('Last name')?.trim() ?? ''
-      const email = window.prompt('Email address')?.trim() ?? ''
-      const phone = window.prompt('Phone number (optional)')?.trim() ?? ''
-      const organizationIdValue = window.prompt(`Enter the organization ID you want access to:\n\n${orgListing || 'No organizations are currently available.'}`)?.trim() ?? ''
-      const requestNote = window.prompt('Add a short note for the organization manager (optional).')?.trim() ?? ''
-
-      const organizationId = Number(organizationIdValue)
-      if (!firstName || !lastName || !email || !Number.isFinite(organizationId) || organizationId <= 0) {
-        throw new Error('First name, last name, email, and a valid organization ID are required.')
-      }
-
       const response = await fetch(`${API_BASE}/api/auth/request-access`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-          firstName,
-          lastName,
-          email,
-          phone: phone || undefined,
+          firstName: requestAccessForm.firstName.trim(),
+          lastName: requestAccessForm.lastName.trim(),
+          email: requestAccessForm.email.trim(),
+          phone: requestAccessForm.phone.trim() || undefined,
           organizationId,
-          requestNote: requestNote || undefined
+          requestNote: requestAccessForm.requestNote.trim() || undefined
         })
       })
 
@@ -1537,8 +1572,7 @@ export function LandingPage() {
         throw new Error(data.error ?? data.message ?? 'Failed to submit the access request.')
       }
 
-      setPageNotice(data.message ?? 'Your access request has been submitted.')
-      await continuePasswordResetFlow(email, data)
+      await continuePasswordResetFlow(requestAccessForm.email.trim(), data)
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Failed to submit the access request.')
     } finally {
@@ -1564,7 +1598,12 @@ export function LandingPage() {
       if (!response.ok || !data.user) {
         const errorMessage = data.error ?? data.message ?? 'Login failed'
         if (response.status === 403 && /password/i.test(errorMessage)) {
-          setPageNotice('Use Set / Reset Password to finish setup. After entering your email, paste the token from your email and choose a new password.')
+          setAuthMode('reset')
+          setResetForm((current) => ({
+            ...current,
+            email: loginForm.email.trim()
+          }))
+          setPageNotice('Use Set / Reset Password to finish setup. Enter your email, paste the token from the email if you have one, and then choose a new password on the screen below.')
         }
         throw new Error(errorMessage)
       }
@@ -2186,6 +2225,201 @@ export function LandingPage() {
   const heroDate = selectedPool
     ? formatDate(selectedGame?.game_dt ?? board?.gameDate, { timeZone: displayOnlyMode ? displayTimeZone : null })
     : formatDate(null, { timeZone: displayOnlyMode ? displayTimeZone : null })
+
+  if (!displayOnlyMode && !token) {
+    return (
+      <div className="landing-page-shell landing-auth-shell">
+        <section className="landing-auth-screen">
+          <article className="landing-auth-hero">
+            <p className="kicker">Football Pool</p>
+            <h1>Sign in to open the app</h1>
+            <p className="subhead">Use your account email and password. If you need to set or reset one, do it here on screen without popup prompts.</p>
+          </article>
+
+          <section className="landing-login-card landing-auth-card">
+            <div className="landing-auth-tabs" role="tablist" aria-label="Authentication options">
+              <button
+                type="button"
+                className={`landing-auth-tab ${authMode === 'login' ? 'is-active' : ''}`}
+                onClick={() => setAuthMode('login')}
+                disabled={busy !== null}
+              >
+                Sign In
+              </button>
+              <button
+                type="button"
+                className={`landing-auth-tab ${authMode === 'reset' ? 'is-active' : ''}`}
+                onClick={() => handlePasswordResetFlow()}
+                disabled={busy !== null}
+              >
+                Set / Reset Password
+              </button>
+              <button
+                type="button"
+                className={`landing-auth-tab ${authMode === 'request-access' ? 'is-active' : ''}`}
+                onClick={() => void handleRequestAccessFlow()}
+                disabled={busy !== null}
+              >
+                Request Access
+              </button>
+            </div>
+
+            {authMode === 'login' ? (
+              <form className="landing-login-form" onSubmit={handleLogin}>
+                <input
+                  type="email"
+                  placeholder="Email"
+                  value={loginForm.email}
+                  onChange={(event) => setLoginForm((current) => ({ ...current, email: event.target.value }))}
+                  autoComplete="email"
+                  required
+                  disabled={busy !== null}
+                />
+                <input
+                  type="password"
+                  placeholder="Password"
+                  value={loginForm.password}
+                  onChange={(event) => setLoginForm((current) => ({ ...current, password: event.target.value }))}
+                  autoComplete="current-password"
+                  required
+                  disabled={busy !== null}
+                />
+                <div className="landing-login-actions landing-auth-form-actions">
+                  <button type="submit" className="primary" disabled={busy !== null}>
+                    {busy === 'login' ? 'Signing in...' : 'Sign In'}
+                  </button>
+                </div>
+              </form>
+            ) : null}
+
+            {authMode === 'reset' ? (
+              <form className="landing-login-form" onSubmit={(event) => void handleCompletePasswordReset(event)}>
+                <input
+                  type="email"
+                  placeholder="Email"
+                  value={resetForm.email}
+                  onChange={(event) => setResetForm((current) => ({ ...current, email: event.target.value }))}
+                  autoComplete="email"
+                  required
+                  disabled={busy !== null}
+                />
+                <input
+                  type="text"
+                  placeholder="Reset token (leave blank only if direct setup is enabled for your account)"
+                  value={resetForm.token}
+                  onChange={(event) => setResetForm((current) => ({ ...current, token: event.target.value }))}
+                  disabled={busy !== null}
+                />
+                <input
+                  type="password"
+                  placeholder="New password"
+                  value={resetForm.password}
+                  onChange={(event) => setResetForm((current) => ({ ...current, password: event.target.value }))}
+                  autoComplete="new-password"
+                  required
+                  disabled={busy !== null}
+                />
+                <input
+                  type="password"
+                  placeholder="Confirm new password"
+                  value={resetForm.confirmPassword}
+                  onChange={(event) => setResetForm((current) => ({ ...current, confirmPassword: event.target.value }))}
+                  autoComplete="new-password"
+                  required
+                  disabled={busy !== null}
+                />
+                <div className="landing-login-actions landing-auth-form-actions">
+                  <button type="button" className="secondary" onClick={() => void handleSendPasswordResetInstructions()} disabled={busy !== null}>
+                    {busy === 'forgot-password' ? 'Sending...' : 'Send Token'}
+                  </button>
+                  <button type="submit" className="primary" disabled={busy !== null}>
+                    {busy === 'reset-password' ? 'Saving...' : 'Set Password'}
+                  </button>
+                </div>
+                <p className="small landing-auth-help-text">
+                  If email is disabled for your approved account, leave the token blank and create the initial password directly.
+                </p>
+              </form>
+            ) : null}
+
+            {authMode === 'request-access' ? (
+              <form className="landing-login-form" onSubmit={(event) => void handleSubmitRequestAccess(event)}>
+                <div className="landing-auth-grid landing-auth-grid-two-up">
+                  <input
+                    type="text"
+                    placeholder="First name"
+                    value={requestAccessForm.firstName}
+                    onChange={(event) => setRequestAccessForm((current) => ({ ...current, firstName: event.target.value }))}
+                    required
+                    disabled={busy !== null}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Last name"
+                    value={requestAccessForm.lastName}
+                    onChange={(event) => setRequestAccessForm((current) => ({ ...current, lastName: event.target.value }))}
+                    required
+                    disabled={busy !== null}
+                  />
+                </div>
+                <input
+                  type="email"
+                  placeholder="Email"
+                  value={requestAccessForm.email}
+                  onChange={(event) => setRequestAccessForm((current) => ({ ...current, email: event.target.value }))}
+                  autoComplete="email"
+                  required
+                  disabled={busy !== null}
+                />
+                <input
+                  type="tel"
+                  placeholder="Phone (optional)"
+                  value={requestAccessForm.phone}
+                  onChange={(event) => setRequestAccessForm((current) => ({ ...current, phone: event.target.value }))}
+                  autoComplete="tel"
+                  disabled={busy !== null}
+                />
+                <select
+                  value={requestAccessForm.organizationId}
+                  onChange={(event) => setRequestAccessForm((current) => ({ ...current, organizationId: event.target.value }))}
+                  required
+                  disabled={busy !== null || requestableOrganizations.length === 0}
+                >
+                  <option value="">
+                    {busy === 'request-access-organizations' ? 'Loading organizations...' : requestableOrganizations.length > 0 ? 'Select organization' : 'No organizations available'}
+                  </option>
+                  {requestableOrganizations.map((organization) => (
+                    <option key={organization.id} value={organization.id}>
+                      {organization.team_name ?? `Organization ${organization.id}`}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  placeholder="Note (optional)"
+                  value={requestAccessForm.requestNote}
+                  onChange={(event) => setRequestAccessForm((current) => ({ ...current, requestNote: event.target.value }))}
+                  disabled={busy !== null}
+                />
+                <div className="landing-login-actions landing-auth-form-actions">
+                  <button type="submit" className="primary" disabled={busy !== null || requestableOrganizations.length === 0}>
+                    {busy === 'request-access' ? 'Submitting...' : 'Request Access'}
+                  </button>
+                </div>
+              </form>
+            ) : null}
+
+            {loginError ? <div className="error-banner">{loginError}</div> : null}
+            {pageNotice ? (
+              <div className="panel landing-auth-panel-note">
+                <p className="small landing-readonly-note">{pageNotice}</p>
+              </div>
+            ) : null}
+          </section>
+        </section>
+      </div>
+    )
+  }
 
   return (
     <div className={`landing-page-shell ${activePage === 'Squares' ? 'is-squares-page' : 'is-scroll-page'} ${displayOnlyMode ? 'is-display-only' : ''}`}>
