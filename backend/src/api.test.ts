@@ -1525,7 +1525,7 @@ describe('Football Pool API', () => {
       await db.query(
         `UPDATE football_pool.game
          SET state = 'in_progress',
-             current_quarter = 4
+             current_quarter = 6
          WHERE id = $1`,
         [todayGameId]
       )
@@ -1536,6 +1536,7 @@ describe('Football Pool API', () => {
       expect(displayResponse.body.pool?.id).toBe(displayPoolId)
       expect(displayResponse.body.selectedGameId).toBe(todayGameId)
       expect(displayResponse.body.selectedGameId).not.toBe(tomorrowGameId)
+      expect(displayResponse.body.games.find((game: { id: number; current_quarter: number | null }) => game.id === todayGameId)?.current_quarter).toBe(6)
       expect(displayResponse.body.board?.poolId).toBe(displayPoolId)
       expect(displayResponse.body.board?.gameId).toBe(todayGameId)
     })

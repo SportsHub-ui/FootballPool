@@ -44,6 +44,8 @@ type LandingGame = {
   opponent: string
   game_dt: string
   state?: string | null
+  current_quarter?: number | null
+  time_remaining_in_quarter?: string | null
   is_simulation: boolean
   row_numbers: number[] | null
   col_numbers: number[] | null
@@ -1900,6 +1902,18 @@ export function LandingPage() {
     [board?.payoutSummary]
   )
 
+  const primaryTeamIsAway = useMemo(() => {
+    const normalizedPrimaryTeam = normalizeTeamKey(board?.primaryTeam)
+    const normalizedAwayTeam = normalizeTeamKey(selectedGame?.away_team_name)
+    const normalizedHomeTeam = normalizeTeamKey(selectedGame?.home_team_name)
+
+    return Boolean(
+      normalizedPrimaryTeam &&
+      normalizedAwayTeam === normalizedPrimaryTeam &&
+      normalizedHomeTeam !== normalizedPrimaryTeam
+    )
+  }, [board?.primaryTeam, selectedGame?.away_team_name, selectedGame?.home_team_name])
+
   const quarterSummaries = useMemo(() => {
     if (!board || !selectedGame) {
       return []
@@ -1910,8 +1924,13 @@ export function LandingPage() {
       simulationStatus?.mode === 'by_quarter' && Number(simulationStatus.currentGameId ?? 0) === Number(selectedGame.id)
         ? Number(simulationStatus.nextQuarter ?? 1)
         : null
+    const activeLiveQuarter =
+      activeSimulationQuarter == null && !isCompletedGame(selectedGame)
+        ? Number(selectedGame.current_quarter ?? 0) || null
+        : null
+    const activeDisplayQuarter = activeSimulationQuarter ?? activeLiveQuarter ?? latestScoredQuarter
 
-    if (latestScoredQuarter == null && activeSimulationQuarter == null) {
+    if (latestScoredQuarter == null && activeDisplayQuarter == null) {
       return []
     }
 
@@ -1932,10 +1951,9 @@ export function LandingPage() {
         ? resolveWinningSquareNumber(board.rowNumbers, board.colNumbers, opponentScore, primaryScore, winnerLoserMode)
         : null
       const matchingSquare = squareNum != null ? squaresByNumber.get(squareNum) ?? null : null
-      const isActiveQuarter =
-        activeSimulationQuarter != null
-          ? quarter === activeSimulationQuarter
-          : !gameComplete && quarter === latestScoredQuarter
+      const isActiveQuarter = !gameComplete && activeDisplayQuarter != null
+        ? quarter === activeDisplayQuarter
+        : false
 
       return {
         id: segment.slot,
@@ -1944,11 +1962,13 @@ export function LandingPage() {
         status: !hasScore ? (isActiveQuarter ? 'active' : 'pending') : !gameComplete && isActiveQuarter ? 'active' : 'completed',
         primaryScore: displayScores.topScore,
         opponentScore: displayScores.sideScore,
+        awayScore: primaryTeamIsAway ? displayScores.topScore : displayScores.sideScore,
+        homeScore: primaryTeamIsAway ? displayScores.sideScore : displayScores.topScore,
         squareNum,
         ownerName: hasScore ? formatQuarterSquareOwner(matchingSquare, squareNum) : isActiveQuarter ? 'Live scoring in progress' : 'Awaiting score'
       }
     })
-  }, [board, latestScoredQuarter, scoreSegments, selectedGame, selectedPool, simulationStatus])
+  }, [board, latestScoredQuarter, primaryTeamIsAway, scoreSegments, selectedGame, selectedPool, simulationStatus])
 
   const hasCompactQuarterSummaryLayout = quarterSummaries.length >= 6
   const showQuarterSummaries = quarterSummaries.length > 0
@@ -2044,6 +2064,10 @@ export function LandingPage() {
   const opponentTeamLabel = board?.opponent ?? selectedGame?.opponent ?? 'Opponent'
   const primaryTeamLogo = primaryBrand.logo
   const opponentTeamLogo = opponentBrand.logo
+  const awayTeamLabel = selectedGame?.away_team_name ?? (primaryTeamIsAway ? primaryTeamLabel : opponentTeamLabel)
+  const homeTeamLabel = selectedGame?.home_team_name ?? (primaryTeamIsAway ? opponentTeamLabel : primaryTeamLabel)
+  const awayTeamLogo = selectedGame?.away_team_logo_url ? resolveImageUrl(selectedGame.away_team_logo_url) : (primaryTeamIsAway ? primaryTeamLogo : opponentTeamLogo)
+  const homeTeamLogo = selectedGame?.home_team_logo_url ? resolveImageUrl(selectedGame.home_team_logo_url) : (primaryTeamIsAway ? opponentTeamLogo : primaryTeamLogo)
 
   const heroTitle = selectedPool
     ? `${selectedPool.team_name ?? 'Team'} • ${selectedPool.pool_name ?? 'Pool'}`
@@ -2305,10 +2329,10 @@ export function LandingPage() {
                 <section className={`display-scoreboard-spotlight is-${featuredDisplaySummary.status}`} aria-label="Featured live scoreboard">
                   <div className="display-scoreboard-team">
                     <div className="display-scoreboard-team-brand">
-                      {primaryTeamLogo ? <img src={primaryTeamLogo} alt={primaryTeamLabel} className="display-scoreboard-team-logo" /> : null}
-                      <span className="display-scoreboard-team-name">{primaryTeamLabel}</span>
+                      {awayTeamLogo ? <img src={awayTeamLogo} alt={awayTeamLabel} className="display-scoreboard-team-logo" /> : null}
+                      <span className="display-scoreboard-team-name">{awayTeamLabel}</span>
                     </div>
-                    <strong className="display-scoreboard-team-score">{featuredDisplaySummary.primaryScore ?? '—'}</strong>
+                    <strong className="display-scoreboard-team-score">{featuredDisplaySummary.awayScore ?? '—'}</strong>
                   </div>
 
                   <div className="display-scoreboard-meta">
@@ -2318,10 +2342,10 @@ export function LandingPage() {
                   </div>
 
                   <div className="display-scoreboard-team is-opponent">
-                    <strong className="display-scoreboard-team-score">{featuredDisplaySummary.opponentScore ?? '—'}</strong>
+                    <strong className="display-scoreboard-team-score">{featuredDisplaySummary.homeScore ?? '—'}</strong>
                     <div className="display-scoreboard-team-brand">
-                      {opponentTeamLogo ? <img src={opponentTeamLogo} alt={opponentTeamLabel} className="display-scoreboard-team-logo" /> : null}
-                      <span className="display-scoreboard-team-name">{opponentTeamLabel}</span>
+                      {homeTeamLogo ? <img src={homeTeamLogo} alt={homeTeamLabel} className="display-scoreboard-team-logo" /> : null}
+                      <span className="display-scoreboard-team-name">{homeTeamLabel}</span>
                     </div>
                   </div>
                 </section>
@@ -2431,16 +2455,16 @@ export function LandingPage() {
 
                               <div className="board-quarter-scoreline">
                                 <div className="board-quarter-score-item">
-                                  {primaryTeamLogo ? (
-                                    <img src={primaryTeamLogo} alt={primaryTeamLabel} className="quarter-team-logo" />
+                                  {awayTeamLogo ? (
+                                    <img src={awayTeamLogo} alt={awayTeamLabel} className="quarter-team-logo" />
                                   ) : null}
-                                  <span>{summary.primaryScore ?? '—'}</span>
+                                  <span>{summary.awayScore ?? '—'}</span>
                                 </div>
                                 <div className="board-quarter-score-item">
-                                  {opponentTeamLogo ? (
-                                    <img src={opponentTeamLogo} alt={opponentTeamLabel} className="quarter-team-logo" />
+                                  {homeTeamLogo ? (
+                                    <img src={homeTeamLogo} alt={homeTeamLabel} className="quarter-team-logo" />
                                   ) : null}
-                                  <span>{summary.opponentScore ?? '—'}</span>
+                                  <span>{summary.homeScore ?? '—'}</span>
                                 </div>
                               </div>
 
@@ -2554,16 +2578,16 @@ export function LandingPage() {
 
                               <div className="board-quarter-scoreline">
                                 <div className="board-quarter-score-item">
-                                  {primaryTeamLogo ? (
-                                    <img src={primaryTeamLogo} alt={primaryTeamLabel} className="quarter-team-logo" />
+                                  {awayTeamLogo ? (
+                                    <img src={awayTeamLogo} alt={awayTeamLabel} className="quarter-team-logo" />
                                   ) : null}
-                                  <span>{summary.primaryScore ?? '—'}</span>
+                                  <span>{summary.awayScore ?? '—'}</span>
                                 </div>
                                 <div className="board-quarter-score-item">
-                                  {opponentTeamLogo ? (
-                                    <img src={opponentTeamLogo} alt={opponentTeamLabel} className="quarter-team-logo" />
+                                  {homeTeamLogo ? (
+                                    <img src={homeTeamLogo} alt={homeTeamLabel} className="quarter-team-logo" />
                                   ) : null}
-                                  <span>{summary.opponentScore ?? '—'}</span>
+                                  <span>{summary.homeScore ?? '—'}</span>
                                 </div>
                               </div>
 

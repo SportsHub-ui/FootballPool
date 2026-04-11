@@ -157,6 +157,8 @@ const mapLandingGameRow = (row: Record<string, any>) => {
         ? row.column_numbers
         : null,
     state: typeof row.state === 'string' ? row.state : null,
+    current_quarter: toNullableNumber(row.current_quarter),
+    time_remaining_in_quarter: typeof row.time_remaining_in_quarter === 'string' ? row.time_remaining_in_quarter : null,
     q1_primary_score: toNullableNumber(row.q1_primary_score) ?? toNullableNumber(scores['1']?.home),
     q1_opponent_score: toNullableNumber(row.q1_opponent_score) ?? toNullableNumber(scores['1']?.away),
     q2_primary_score: toNullableNumber(row.q2_primary_score) ?? toNullableNumber(scores['2']?.home),
@@ -199,6 +201,8 @@ const loadPoolGames = async (client: PoolClient, poolId: number) => {
             pg.row_numbers,
             pg.column_numbers,
             COALESCE(g.state, 'scheduled') AS state,
+            g.current_quarter,
+            g.time_remaining_in_quarter,
             g.scores_by_quarter
      FROM football_pool.pool_game pg
      JOIN football_pool.game g ON g.id = pg.game_id
