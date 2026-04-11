@@ -6,7 +6,11 @@ import { db } from '../config/db';
 import { env } from '../config/env';
 import { getPoolLeagueDefinition, getPayoutValueForSlot, type PayoutSlotKey } from '../config/poolLeagues';
 import { ensurePoolSquaresInitialized } from '../services/poolSquares';
-import { ensurePoolDisplayTokenSupport } from '../services/poolDisplay';
+import {
+  ensureOrganizationDisplayTokenSupport,
+  ensurePoolDisplayTokenSupport,
+  getOrganizationDisplayRotationSeconds
+} from '../services/poolDisplay';
 import { getPoolSimulationStatus } from '../services/poolSimulation';
 import { ensureNotificationSupport } from '../services/notifications';
 import { loadPoolPayoutConfig, resolvePoolPayoutsForRound } from '../services/poolPayouts';
@@ -428,6 +432,72 @@ const loadPoolByDisplayToken = async (client: PoolClient, displayToken: string) 
   );
 
   return result.rows[0] ?? null;
+};
+
+const loadOrganizationByDisplayToken = async (client: PoolClient, displayToken: string) => {
+  await ensureOrganizationDisplayTokenSupport(client);
+
+  const result = await client.query(
+    `SELECT id,
+            team_name,
+            primary_color,
+            secondary_color,
+            logo_file,
+            COALESCE(display_token, '') AS display_token,
+            COALESCE(display_rotation_seconds, 30) AS display_rotation_seconds
+     FROM football_pool.organization
+     WHERE display_token = $1
+     LIMIT 1`,
+    [displayToken]
+  );
+
+  return result.rows[0] ?? null;
+};
+
+const loadOrganizationPoolsForDisplay = async (client: PoolClient, organizationId: number) => {
+  await ensurePoolDisplayTokenSupport(client);
+
+  const result = await client.query(
+    `SELECT p.id,
+            p.pool_name,
+            p.season,
+            p.team_id,
+            COALESCE(p.pool_type, 'season') AS pool_type,
+            p.primary_team,
+            p.primary_sport_team_id,
+            p.sport_code,
+            p.league_code,
+            COALESCE(p.winner_loser_flg, FALSE) AS winner_loser_flg,
+            p.square_cost,
+            COALESCE(p.default_flg, FALSE) AS default_flg,
+            COALESCE(p.sign_in_req_flg, FALSE) AS sign_in_req_flg,
+            COALESCE(p.display_token, '') AS display_token,
+            t.team_name,
+            COALESCE(NULLIF(t.primary_color, ''), st.primary_color) AS primary_color,
+            t.secondary_color,
+            COALESCE(NULLIF(t.logo_file, ''), st.logo_url) AS logo_file,
+            COALESCE(t.has_members_flg, TRUE) AS has_members_flg
+     FROM football_pool.pool p
+     LEFT JOIN football_pool.organization t ON t.id = p.team_id
+     LEFT JOIN football_pool.sport_team st ON st.id = COALESCE(p.primary_sport_team_id, t.sport_team_id)
+     WHERE p.team_id = $1
+     ORDER BY COALESCE(p.default_flg, FALSE) DESC,
+              p.pool_name NULLS LAST,
+              p.id`,
+    [organizationId]
+  );
+
+  return result.rows;
+};
+
+const pickDisplayPoolId = (pools: Array<{ id: number }>, rotationSeconds: number): number | null => {
+  if (pools.length === 0) {
+    return null;
+  }
+
+  const rotationMs = Math.max(5, rotationSeconds) * 1000;
+  const poolIndex = Math.floor(Date.now() / rotationMs) % pools.length;
+  return Number(pools[Math.max(0, poolIndex)]?.id ?? pools[0].id);
 };
 
 const pickDisplayGameId = (
@@ -1449,17 +1519,35 @@ landingRouter.get('/display/:displayToken', async (req, res) => {
 
     const client = await db.connect();
     try {
-      const pool = await loadPoolByDisplayToken(client, displayToken);
+      let pool = await loadPoolByDisplayToken(client, displayToken);
+      const organization = pool ? null : await loadOrganizationByDisplayToken(client, displayToken);
+      let organizationRotationSeconds: number | null = null;
+
+      if (!pool && organization) {
+        const organizationPools = await loadOrganizationPoolsForDisplay(client, Number(organization.id));
+
+        if (organizationPools.length === 0) {
+          return res.status(404).json({ error: 'Organization display link has no pools to show yet' });
+        }
+
+        organizationRotationSeconds = getOrganizationDisplayRotationSeconds(organization.display_rotation_seconds);
+        const selectedPoolId = pickDisplayPoolId(
+          organizationPools as Array<{ id: number }>,
+          organizationRotationSeconds
+        );
+
+        pool = organizationPools.find((entry) => Number(entry.id) === Number(selectedPoolId)) ?? organizationPools[0];
+      }
 
       if (!pool) {
-        return res.status(404).json({ error: 'Pool display link not found' });
+        return res.status(404).json({ error: 'Display link not found' });
       }
 
       await ensureDisplayAdvertisingSupport(client);
       const games = await loadPoolGames(client, Number(pool.id));
       const simulationStatus = await getPoolSimulationStatus(client, Number(pool.id)).catch(() => null);
       const { settings: displayAdSettings, ads: displayAds } = await loadDisplayAdvertising(client, {
-        organizationId: Number(pool.team_id ?? 0) || null
+        organizationId: Number(pool.team_id ?? organization?.id ?? 0) || null
       });
       const selectedGameId = pickDisplayGameId(
         games as Array<{
@@ -1494,6 +1582,13 @@ landingRouter.get('/display/:displayToken', async (req, res) => {
 
       return res.json({
         displayOnly: true,
+        organization: organization
+          ? {
+              id: Number(organization.id),
+              team_name: organization.team_name ?? null
+            }
+          : null,
+        organizationRotationSeconds,
         pool,
         games,
         selectedGameId,

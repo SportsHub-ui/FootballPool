@@ -27,7 +27,13 @@ import {
   getPoolSimulationStatus
 } from '../services/poolSimulation';
 import { ensurePoolSquaresInitialized } from '../services/poolSquares';
-import { ensurePoolDisplayTokenSupport, generateUniquePoolDisplayToken } from '../services/poolDisplay';
+import {
+  DEFAULT_ORGANIZATION_DISPLAY_ROTATION_SECONDS,
+  ensureOrganizationDisplayTokenSupport,
+  ensurePoolDisplayTokenSupport,
+  generateUniqueOrganizationDisplayToken,
+  generateUniquePoolDisplayToken
+} from '../services/poolDisplay';
 import { ensureNotificationSupport } from '../services/notifications';
 import { ensurePoolGameStructureSupport } from '../services/poolGameStructureSupport';
 import { ensurePoolPayoutStructureSupport } from '../services/poolPayoutStructureSupport';
@@ -301,6 +307,7 @@ const createTeamSchema = z.object({
   primaryContactId: z.number().int().positive().optional(),
   secondaryContactId: z.number().int().positive().optional(),
   hasMembers: z.boolean().optional(),
+  displayRotationSeconds: z.number().int().min(5).max(3600).optional(),
   sportTeamId: z.number().int().positive().optional(),
   espnTeamUid: z.string().trim().min(1).max(64).optional(),
   sportTeamAbbr: z.string().trim().min(1).max(16).optional(),
@@ -1727,9 +1734,12 @@ setupRouter.post('/teams', async (req, res) => {
     }
 
     await client.query('BEGIN');
+    await ensureOrganizationDisplayTokenSupport(client);
     const id = await nextId(client, 'organization');
     const resolvedSportTeamId = await resolveSportTeamId(client, parsed.data);
     const tracksMembers = parsed.data.hasMembers ?? true;
+    const displayToken = await generateUniqueOrganizationDisplayToken(client);
+    const displayRotationSeconds = parsed.data.displayRotationSeconds ?? DEFAULT_ORGANIZATION_DISPLAY_ROTATION_SECONDS;
 
     await client.query(
       `
@@ -1743,9 +1753,11 @@ setupRouter.post('/teams', async (req, res) => {
           secondary_contact_id,
           has_members_flg,
           sport_team_id,
+          display_token,
+          display_rotation_seconds,
           created_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
       `,
       [
         id,
@@ -1756,7 +1768,9 @@ setupRouter.post('/teams', async (req, res) => {
         parsed.data.primaryContactId ?? null,
         parsed.data.secondaryContactId ?? null,
         tracksMembers,
-        resolvedSportTeamId
+        resolvedSportTeamId,
+        displayToken,
+        displayRotationSeconds
       ]
     );
 
@@ -1765,7 +1779,9 @@ setupRouter.post('/teams', async (req, res) => {
       id,
       sport_team_id: resolvedSportTeamId,
       nfl_team_id: resolvedSportTeamId,
-      has_members_flg: tracksMembers
+      has_members_flg: tracksMembers,
+      display_token: displayToken,
+      display_rotation_seconds: displayRotationSeconds
     });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -2774,8 +2790,12 @@ setupRouter.delete('/users/:userId', async (req, res) => {
 });
 
 setupRouter.get('/teams', async (req, res) => {
+  const client = await db.connect();
+
   try {
-    const result = await db.query(
+    await ensureOrganizationDisplayTokenSupport(client);
+
+    const result = await client.query(
       `
         SELECT
           id,
@@ -2786,7 +2806,9 @@ setupRouter.get('/teams', async (req, res) => {
           primary_contact_id,
           secondary_contact_id,
           COALESCE(has_members_flg, TRUE) AS has_members_flg,
-          sport_team_id
+          sport_team_id,
+          COALESCE(display_token, '') AS display_token,
+          COALESCE(display_rotation_seconds, ${DEFAULT_ORGANIZATION_DISPLAY_ROTATION_SECONDS}) AS display_rotation_seconds
         FROM football_pool.organization
         WHERE ($1::boolean = TRUE OR id = ANY($2::int[]))
         ORDER BY team_name, id
@@ -2801,6 +2823,8 @@ setupRouter.get('/teams', async (req, res) => {
       error: 'Failed to load teams',
       detail: error instanceof Error ? error.message : 'Unknown error'
     });
+  } finally {
+    client.release();
   }
 });
 
@@ -2886,14 +2910,17 @@ setupRouter.patch('/teams/:teamId', async (req, res) => {
     return;
   }
 
+  const client = await db.connect();
+
   try {
     if (!ensureOrganizationScope(req, res, parsedParams.data.teamId)) {
       return;
     }
 
-    const resolvedSportTeamId = await resolveSportTeamId(db, parsedBody.data);
+    await ensureOrganizationDisplayTokenSupport(client);
+    const resolvedSportTeamId = await resolveSportTeamId(client, parsedBody.data);
 
-    const result = await db.query(
+    const result = await client.query(
       `
         UPDATE football_pool.organization
         SET
@@ -2904,7 +2931,8 @@ setupRouter.patch('/teams/:teamId', async (req, res) => {
           primary_contact_id = $6,
           secondary_contact_id = $7,
           has_members_flg = COALESCE($8, has_members_flg),
-          sport_team_id = COALESCE($9, sport_team_id)
+          sport_team_id = COALESCE($9, sport_team_id),
+          display_rotation_seconds = COALESCE($10, display_rotation_seconds)
         WHERE id = $1
         RETURNING id
       `,
@@ -2917,7 +2945,8 @@ setupRouter.patch('/teams/:teamId', async (req, res) => {
         parsedBody.data.primaryContactId ?? null,
         parsedBody.data.secondaryContactId ?? null,
         parsedBody.data.hasMembers ?? null,
-        resolvedSportTeamId
+        resolvedSportTeamId,
+        parsedBody.data.displayRotationSeconds ?? null
       ]
     );
 
@@ -2932,6 +2961,8 @@ setupRouter.patch('/teams/:teamId', async (req, res) => {
       error: 'Failed to update team',
       detail: error instanceof Error ? error.message : 'Unknown error'
     });
+  } finally {
+    client.release();
   }
 });
 
