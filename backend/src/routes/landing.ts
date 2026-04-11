@@ -3,6 +3,7 @@ import { Request, Router } from 'express';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { db } from '../config/db';
+import { env } from '../config/env';
 import { getPoolLeagueDefinition, getPayoutValueForSlot, type PayoutSlotKey } from '../config/poolLeagues';
 import { ensurePoolSquaresInitialized } from '../services/poolSquares';
 import { ensurePoolDisplayTokenSupport } from '../services/poolDisplay';
@@ -455,7 +456,8 @@ const pickDisplayGameId = (
     q9_primary_score: number | null;
     q9_opponent_score: number | null;
   }>,
-  currentGameId?: number | null
+  currentGameId?: number | null,
+  options?: { enablePostgameRotation?: boolean }
 ): number | null => {
   if (games.length === 0) {
     return null;
@@ -524,7 +526,21 @@ const pickDisplayGameId = (
     return !isCompletedGame(game) && getLatestScoredQuarter(game) != null;
   };
 
+  const getGameTimestamp = (game: { game_dt?: string | null; gameDate?: string | null }): number | null => {
+    const rawGameDate = game.game_dt ?? game.gameDate;
+
+    if (!rawGameDate) {
+      return null;
+    }
+
+    const timestamp = new Date(rawGameDate).getTime();
+    return Number.isNaN(timestamp) ? null : timestamp;
+  };
+
   const selectableGames = games.filter((game) => !isByeGame(game));
+  const nowMs = Date.now();
+  const lastCompletedGame = [...selectableGames].reverse().find((game) => isCompletedGame(game));
+  const lastCompletedTimestamp = lastCompletedGame ? getGameTimestamp(lastCompletedGame) : null;
 
   const liveGame = selectableGames.find((game) => isLiveGame(game));
   if (liveGame) {
@@ -538,30 +554,45 @@ const pickDisplayGameId = (
     }
   }
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const startedGame = [...selectableGames].reverse().find((game) => {
+    if (isCompletedGame(game)) {
+      return false;
+    }
+
+    const timestamp = getGameTimestamp(game);
+    if (timestamp == null || timestamp > nowMs) {
+      return false;
+    }
+
+    if (lastCompletedTimestamp != null && timestamp < lastCompletedTimestamp) {
+      return false;
+    }
+
+    return true;
+  });
+
+  if (startedGame) {
+    return Number(startedGame.id);
+  }
 
   const nextUpcomingGame = selectableGames.find((game) => {
-    const rawGameDate = game.game_dt ?? game.gameDate;
-
-    if (isCompletedGame(game) || !rawGameDate) {
+    if (isCompletedGame(game)) {
       return false;
     }
 
-    const gameDate = new Date(rawGameDate);
-    if (Number.isNaN(gameDate.getTime())) {
-      return false;
-    }
-
-    gameDate.setHours(0, 0, 0, 0);
-    return gameDate >= today;
+    const timestamp = getGameTimestamp(game);
+    return timestamp != null && timestamp > nowMs;
   });
+
+  if (options?.enablePostgameRotation && lastCompletedGame && nextUpcomingGame) {
+    const rotationMs = Math.max(1, env.DISPLAY_POSTGAME_ROTATION_SECONDS) * 1000;
+    const shouldShowNextGame = Math.floor(nowMs / rotationMs) % 2 === 1;
+    return Number((shouldShowNextGame ? nextUpcomingGame : lastCompletedGame).id);
+  }
 
   if (nextUpcomingGame) {
     return Number(nextUpcomingGame.id);
   }
-
-  const lastCompletedGame = [...selectableGames].reverse().find((game) => isCompletedGame(game));
   const selectedId = lastCompletedGame?.id ?? selectableGames[0]?.id ?? games[0]?.id ?? null;
 
   return selectedId != null ? Number(selectedId) : null;
@@ -1394,7 +1425,8 @@ landingRouter.get('/display/:displayToken', async (req, res) => {
           q9_primary_score: number | null;
           q9_opponent_score: number | null;
         }>,
-        simulationStatus?.currentGameId ?? null
+        simulationStatus?.currentGameId ?? null,
+        { enablePostgameRotation: true }
       );
       const { board } = await loadBoardPayload(client, Number(pool.id), pool, selectedGameId);
 
@@ -1405,7 +1437,8 @@ landingRouter.get('/display/:displayToken', async (req, res) => {
         selectedGameId,
         board,
         displayAds,
-        displayAdSettings
+        displayAdSettings,
+        postgameRotationSeconds: env.DISPLAY_POSTGAME_ROTATION_SECONDS
       });
     } finally {
       client.release();

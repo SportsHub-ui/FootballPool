@@ -1363,84 +1363,294 @@ describe('Football Pool API', () => {
     })
 
     it('should open a display link on the current active game for the pool', async () => {
-      const poolResponse = await request(app)
-        .post('/api/setup/pools')
-        .set(organizerHeaders)
-        .send({
-          poolName: `Display Link Pool ${Date.now()}`,
-          teamId: teamId,
-          season: 2026,
-          primaryTeam: 'Packers',
-          squareCost: 25,
-          q1Payout: 250,
-          q2Payout: 250,
-          q3Payout: 250,
-          q4Payout: 500
-        })
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-09-17T18:05:00.000Z'))
 
-      expect(poolResponse.status).toBe(201)
-      const displayPoolId = Number(poolResponse.body.id)
-      const displayPoolToken = String(poolResponse.body.displayToken)
+      try {
+        const poolResponse = await request(app)
+          .post('/api/setup/pools')
+          .set(organizerHeaders)
+          .send({
+            poolName: `Display Link Pool ${Date.now()}`,
+            teamId: teamId,
+            season: 2026,
+            primaryTeam: 'Packers',
+            squareCost: 25,
+            q1Payout: 250,
+            q2Payout: 250,
+            q3Payout: 250,
+            q4Payout: 500
+          })
 
-      const weekOneResponse = await request(app)
-        .post('/api/games')
-        .set(organizerHeaders)
-        .send({
-          poolId: displayPoolId,
-          weekNum: 1,
-          opponentNflTeamAbbr: 'CHI',
-          gameDate: '2026-09-10T18:00:00.000Z'
-        })
+        expect(poolResponse.status).toBe(201)
+        const displayPoolId = Number(poolResponse.body.id)
+        const displayPoolToken = String(poolResponse.body.displayToken)
 
-      const weekTwoResponse = await request(app)
-        .post('/api/games')
-        .set(organizerHeaders)
-        .send({
-          poolId: displayPoolId,
-          weekNum: 2,
-          opponentNflTeamAbbr: 'DET',
-          gameDate: '2026-09-17T18:00:00.000Z'
-        })
+        const weekOneResponse = await request(app)
+          .post('/api/games')
+          .set(organizerHeaders)
+          .send({
+            poolId: displayPoolId,
+            weekNum: 1,
+            opponentNflTeamAbbr: 'CHI',
+            gameDate: '2026-09-10T18:00:00.000Z'
+          })
 
-      expect(weekOneResponse.status).toBe(200)
-      expect(weekTwoResponse.status).toBe(200)
+        const weekTwoResponse = await request(app)
+          .post('/api/games')
+          .set(organizerHeaders)
+          .send({
+            poolId: displayPoolId,
+            weekNum: 2,
+            opponentNflTeamAbbr: 'DET',
+            gameDate: '2026-09-17T18:00:00.000Z'
+          })
 
-      const weekOneGameId = Number(weekOneResponse.body.game.id)
-      const weekTwoGameId = Number(weekTwoResponse.body.game.id)
+        expect(weekOneResponse.status).toBe(200)
+        expect(weekTwoResponse.status).toBe(200)
 
-      const completedScoreResponse = await request(app)
-        .patch(`/api/games/${weekOneGameId}/scores`)
-        .set(organizerHeaders)
-        .send({
-          q1PrimaryScore: 7,
-          q1OpponentScore: 0,
-          q2PrimaryScore: 14,
-          q2OpponentScore: 3,
-          q3PrimaryScore: 21,
-          q3OpponentScore: 10,
-          q4PrimaryScore: 28,
-          q4OpponentScore: 17
-        })
+        const weekOneGameId = Number(weekOneResponse.body.game.id)
+        const weekTwoGameId = Number(weekTwoResponse.body.game.id)
 
-      // No direct update to any legacy game table; use pool_game / normalized game setup as needed.
+        const completedScoreResponse = await request(app)
+          .patch(`/api/games/${weekOneGameId}/scores`)
+          .set(organizerHeaders)
+          .send({
+            q1PrimaryScore: 7,
+            q1OpponentScore: 0,
+            q2PrimaryScore: 14,
+            q2OpponentScore: 3,
+            q3PrimaryScore: 21,
+            q3OpponentScore: 10,
+            q4PrimaryScore: 28,
+            q4OpponentScore: 17
+          })
 
-      expect(completedScoreResponse.status).toBe(200)
+        // No direct update to any legacy game table; use pool_game / normalized game setup as needed.
 
-      const listResponse = await request(app)
-        .get('/api/setup/pools')
-        .set(organizerHeaders)
+        expect(completedScoreResponse.status).toBe(200)
 
-      expect(listResponse.status).toBe(200)
-      const createdPool = listResponse.body.pools.find((pool: { id: number }) => pool.id === displayPoolId)
-      expect(createdPool?.display_token).toBe(displayPoolToken)
+        const listResponse = await request(app)
+          .get('/api/setup/pools')
+          .set(organizerHeaders)
 
-      const displayResponse = await request(app).get(`/api/landing/display/${displayPoolToken}`)
+        expect(listResponse.status).toBe(200)
+        const createdPool = listResponse.body.pools.find((pool: { id: number }) => pool.id === displayPoolId)
+        expect(createdPool?.display_token).toBe(displayPoolToken)
 
-      expect(displayResponse.status).toBe(200)
-      expect(displayResponse.body.pool?.id).toBe(displayPoolId)
-      expect(displayResponse.body.selectedGameId).toBe(weekTwoGameId)
-      expect(displayResponse.body.board?.poolId).toBe(displayPoolId)
-      expect(displayResponse.body.board?.gameId).toBe(weekTwoGameId)
+        const displayResponse = await request(app).get(`/api/landing/display/${displayPoolToken}`)
+
+        expect(displayResponse.status).toBe(200)
+        expect(displayResponse.body.pool?.id).toBe(displayPoolId)
+        expect(displayResponse.body.selectedGameId).toBe(weekTwoGameId)
+        expect(displayResponse.body.board?.poolId).toBe(displayPoolId)
+        expect(displayResponse.body.board?.gameId).toBe(weekTwoGameId)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('should rotate the display link between the last completed game and the next scheduled game until the next game starts', async () => {
+      vi.useFakeTimers()
+
+      try {
+        const poolResponse = await request(app)
+          .post('/api/setup/pools')
+          .set(organizerHeaders)
+          .send({
+            poolName: `Rotating Display Pool ${Date.now()}`,
+            teamId: teamId,
+            season: 2026,
+            primaryTeam: 'Packers',
+            squareCost: 25,
+            q1Payout: 250,
+            q2Payout: 250,
+            q3Payout: 250,
+            q4Payout: 500
+          })
+
+        expect(poolResponse.status).toBe(201)
+        const displayPoolToken = String(poolResponse.body.displayToken)
+        const displayPoolId = Number(poolResponse.body.id)
+
+        const weekOneResponse = await request(app)
+          .post('/api/games')
+          .set(organizerHeaders)
+          .send({
+            poolId: displayPoolId,
+            weekNum: 1,
+            opponentNflTeamAbbr: 'CHI',
+            gameDate: '2026-09-10T18:00:00.000Z'
+          })
+
+        const weekTwoResponse = await request(app)
+          .post('/api/games')
+          .set(organizerHeaders)
+          .send({
+            poolId: displayPoolId,
+            weekNum: 2,
+            opponentNflTeamAbbr: 'DET',
+            gameDate: '2026-09-17T18:00:00.000Z'
+          })
+
+        expect(weekOneResponse.status).toBe(200)
+        expect(weekTwoResponse.status).toBe(200)
+
+        const weekOneGameId = Number(weekOneResponse.body.game.id)
+        const weekTwoGameId = Number(weekTwoResponse.body.game.id)
+
+        const completedScoreResponse = await request(app)
+          .patch(`/api/games/${weekOneGameId}/scores`)
+          .set(organizerHeaders)
+          .send({
+            q1PrimaryScore: 7,
+            q1OpponentScore: 0,
+            q2PrimaryScore: 14,
+            q2OpponentScore: 3,
+            q3PrimaryScore: 21,
+            q3OpponentScore: 10,
+            q4PrimaryScore: 28,
+            q4OpponentScore: 17
+          })
+
+        expect(completedScoreResponse.status).toBe(200)
+
+        vi.setSystemTime(new Date('2026-09-11T12:00:00.000Z'))
+        const firstDisplayResponse = await request(app).get(`/api/landing/display/${displayPoolToken}`)
+
+        vi.setSystemTime(new Date('2026-09-11T12:00:16.000Z'))
+        const secondDisplayResponse = await request(app).get(`/api/landing/display/${displayPoolToken}`)
+
+        expect(firstDisplayResponse.status).toBe(200)
+        expect(secondDisplayResponse.status).toBe(200)
+        expect([weekOneGameId, weekTwoGameId]).toContain(firstDisplayResponse.body.selectedGameId)
+        expect([weekOneGameId, weekTwoGameId]).toContain(secondDisplayResponse.body.selectedGameId)
+        expect(new Set([firstDisplayResponse.body.selectedGameId, secondDisplayResponse.body.selectedGameId])).toEqual(
+          new Set([weekOneGameId, weekTwoGameId])
+        )
+
+        vi.setSystemTime(new Date('2026-09-17T18:05:00.000Z'))
+        const startedGameResponse = await request(app).get(`/api/landing/display/${displayPoolToken}`)
+
+        expect(startedGameResponse.status).toBe(200)
+        expect(startedGameResponse.body.selectedGameId).toBe(weekTwoGameId)
+        expect(startedGameResponse.body.board?.gameId).toBe(weekTwoGameId)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('should ignore an older past scheduled game and rotate from the latest completed game to the next upcoming game', async () => {
+      vi.useFakeTimers()
+
+      try {
+        const poolResponse = await request(app)
+          .post('/api/setup/pools')
+          .set(organizerHeaders)
+          .send({
+            poolName: `Past Scheduled Rotation ${Date.now()}`,
+            teamId,
+            season: 2026,
+            poolType: 'single_game',
+            leagueCode: 'MLB',
+            primaryTeam: 'Milwaukee Brewers',
+            squareCost: 25,
+            q1Payout: 10,
+            q2Payout: 10,
+            q3Payout: 10,
+            q4Payout: 10,
+            q5Payout: 10,
+            q6Payout: 10,
+            q7Payout: 10,
+            q8Payout: 10,
+            q9Payout: 20
+          })
+
+        expect(poolResponse.status).toBe(201)
+        const displayPoolToken = String(poolResponse.body.displayToken)
+        const poolId = Number(poolResponse.body.id)
+
+        const stalePastResponse = await request(app)
+          .post('/api/games')
+          .set(organizerHeaders)
+          .send({
+            poolId,
+            weekNum: 1,
+            opponent: 'St. Louis Cardinals',
+            gameDate: '2026-04-03T18:00:00.000Z'
+          })
+
+        const completedResponse = await request(app)
+          .post('/api/games')
+          .set(organizerHeaders)
+          .send({
+            poolId,
+            weekNum: 2,
+            opponent: 'Washington Nationals',
+            gameDate: '2026-04-10T18:00:00.000Z'
+          })
+
+        const upcomingResponse = await request(app)
+          .post('/api/games')
+          .set(organizerHeaders)
+          .send({
+            poolId,
+            weekNum: 3,
+            opponent: 'Chicago Cubs',
+            gameDate: '2026-04-11T18:00:00.000Z'
+          })
+
+        expect(stalePastResponse.status).toBe(200)
+        expect(completedResponse.status).toBe(200)
+        expect(upcomingResponse.status).toBe(200)
+
+        const stalePastGameId = Number(stalePastResponse.body.game.id)
+        const completedGameId = Number(completedResponse.body.game.id)
+        const upcomingGameId = Number(upcomingResponse.body.game.id)
+
+        const completedScoreResponse = await request(app)
+          .patch(`/api/games/${completedGameId}/scores`)
+          .set(organizerHeaders)
+          .send({
+            q1PrimaryScore: 1,
+            q1OpponentScore: 0,
+            q2PrimaryScore: 1,
+            q2OpponentScore: 0,
+            q3PrimaryScore: 2,
+            q3OpponentScore: 1,
+            q4PrimaryScore: 3,
+            q4OpponentScore: 2,
+            q5PrimaryScore: 3,
+            q5OpponentScore: 2,
+            q6PrimaryScore: 3,
+            q6OpponentScore: 2,
+            q7PrimaryScore: 3,
+            q7OpponentScore: 2,
+            q8PrimaryScore: 3,
+            q8OpponentScore: 2,
+            q9PrimaryScore: 3,
+            q9OpponentScore: 2
+          })
+
+        expect(completedScoreResponse.status).toBe(200)
+
+        await db.query(
+          `UPDATE football_pool.game
+           SET state = 'completed',
+               current_quarter = 9
+           WHERE id = $1`,
+          [completedGameId]
+        )
+
+        vi.setSystemTime(new Date('2026-04-10T23:00:00.000Z'))
+        const displayResponse = await request(app).get(`/api/landing/display/${displayPoolToken}`)
+
+        expect(displayResponse.status).toBe(200)
+        expect(displayResponse.body.selectedGameId).not.toBe(stalePastGameId)
+        expect([completedGameId, upcomingGameId]).toContain(displayResponse.body.selectedGameId)
+      } finally {
+        vi.useRealTimers()
+      }
     })
 
     it('should keep the display link on the live MLB game instead of jumping to tomorrow', async () => {
@@ -2217,6 +2427,161 @@ describe('Football Pool API', () => {
       expect(winningsResponse.body).toHaveLength(9)
       expect(Math.max(...winningsResponse.body.map((entry: { quarter: number }) => Number(entry.quarter)))).toBe(9)
       expect(winningsResponse.body.find((entry: { quarter: number; amount_won: number }) => Number(entry.quarter) === 9)?.amount_won).toBe(20)
+    })
+
+    it('should use live MLB ninth-inning totals for the Final card before the game is complete', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        const url = String(input)
+
+        if (url.includes('/sports/baseball/mlb/scoreboard?dates=20260410')) {
+          return new Response(
+            JSON.stringify({
+              events: [
+                {
+                  id: '401814999',
+                  uid: 's:10~l:442~e:401814999',
+                  competitions: [
+                    {
+                      status: {
+                        period: 9,
+                        displayClock: 'Top 9th',
+                        type: {
+                          completed: false,
+                          description: 'In Progress',
+                          shortDetail: 'Top 9th'
+                        }
+                      },
+                      competitors: [
+                        {
+                          homeAway: 'home',
+                          score: '3',
+                          linescores: [
+                            { value: 0 },
+                            { value: 1 },
+                            { value: 0 },
+                            { value: 1 },
+                            { value: 0 },
+                            { value: 0 },
+                            { value: 1 },
+                            { value: 0 }
+                          ],
+                          team: {
+                            id: '158',
+                            uid: 's:10~l:442~t:158',
+                            displayName: 'Milwaukee Brewers',
+                            shortDisplayName: 'Brewers',
+                            abbreviation: 'MIL'
+                          }
+                        },
+                        {
+                          homeAway: 'away',
+                          score: '4',
+                          linescores: [
+                            { value: 1 },
+                            { value: 0 },
+                            { value: 1 },
+                            { value: 0 },
+                            { value: 0 },
+                            { value: 1 },
+                            { value: 0 },
+                            { value: 1 }
+                          ],
+                          team: {
+                            id: '120',
+                            uid: 's:10~l:442~t:120',
+                            displayName: 'Washington Nationals',
+                            shortDisplayName: 'Nationals',
+                            abbreviation: 'WSH'
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }),
+            {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' }
+            }
+          )
+        }
+
+        return new Response(JSON.stringify({ events: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        })
+      })
+
+      try {
+        const teamResponse = await request(app)
+          .post('/api/setup/teams')
+          .set(organizerHeaders)
+          .send({ teamName: `Live MLB Ninth Team ${Date.now()}` })
+
+        expect(teamResponse.status).toBe(201)
+
+        const poolResponse = await request(app)
+          .post('/api/setup/pools')
+          .set(organizerHeaders)
+          .send({
+            poolName: `Live MLB Ninth Pool ${Date.now()}`,
+            teamId: teamResponse.body.id,
+            season: 2026,
+            poolType: 'single_game',
+            leagueCode: 'MLB',
+            primaryTeam: 'Milwaukee Brewers',
+            squareCost: 20,
+            q1Payout: 10,
+            q2Payout: 10,
+            q3Payout: 10,
+            q4Payout: 10,
+            q5Payout: 10,
+            q6Payout: 10,
+            q7Payout: 10,
+            q8Payout: 10,
+            q9Payout: 20
+          })
+
+        expect(poolResponse.status).toBe(201)
+        const poolId = Number(poolResponse.body.id)
+
+        const gameResponse = await request(app)
+          .post('/api/games')
+          .set(organizerHeaders)
+          .send({
+            poolId,
+            weekNum: 1,
+            opponent: 'Washington Nationals',
+            gameDate: '2026-04-10T18:00:00.000Z'
+          })
+
+        expect(gameResponse.status).toBe(200)
+        const gameId = Number(gameResponse.body.game.id)
+
+        const ingestResponse = await request(app)
+          .post(`/api/ingestion/games/${gameId}/scores`)
+          .set(organizerHeaders)
+          .send({ source: 'espn' })
+
+        expect(ingestResponse.status).toBe(200)
+        expect(ingestResponse.body.currentQuarter).toBe(9)
+        expect(ingestResponse.body.state).toBe('in_progress')
+        expect(ingestResponse.body.scores.q9PrimaryScore).toBe(3)
+        expect(ingestResponse.body.scores.q9OpponentScore).toBe(4)
+
+        const displayResponse = await request(app)
+          .get(`/api/landing/pools/${poolId}/games`)
+          .set(organizerHeaders)
+
+        expect(displayResponse.status).toBe(200)
+        const liveGame = displayResponse.body.games.find((game: { id: number }) => Number(game.id) === gameId)
+        expect(liveGame?.current_quarter).toBe(9)
+        expect(liveGame?.q9_primary_score).toBe(3)
+        expect(liveGame?.q9_opponent_score).toBe(4)
+      } finally {
+        fetchSpy.mockRestore()
+      }
     })
 
     it('should treat postponed ESPN MLB games as scheduled and clear prior payouts', async () => {

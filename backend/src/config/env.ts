@@ -56,6 +56,7 @@ const envSchema = z.object({
   SCORE_INGEST_DAILY_START_HOUR_CT: z.coerce.number().int().min(0).max(23).default(6),
   SCORE_INGEST_REQUEST_TIMEOUT_MS: z.coerce.number().int().positive().default(8000),
   SCORE_INGEST_PRIMARY_TEAM: z.string().optional().default(''),
+  DISPLAY_POSTGAME_ROTATION_SECONDS: z.coerce.number().int().positive().default(15),
   SIMULATION_ENABLED: z
     .enum(['true', 'false'])
     .optional()

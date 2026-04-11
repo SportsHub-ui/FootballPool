@@ -354,7 +354,8 @@ const buildSportAwareScoresFromCompetition = (
   target: IngestionGameTarget,
   primaryCompetitor: EspnCompetitor | null | undefined,
   opponentCompetitor: EspnCompetitor | null | undefined,
-  state: string
+  state: string,
+  currentQuarter?: number | null
 ): QuarterScoresInput => {
   const primaryCumulative = toCumulativeQuarterScores(primaryCompetitor?.linescores);
   const opponentCumulative = toCumulativeQuarterScores(opponentCompetitor?.linescores);
@@ -365,6 +366,7 @@ const buildSportAwareScoresFromCompetition = (
 
   if (normalizedSport === 'BASEBALL') {
     const scores: QuarterScoresInput = { ...EMPTY_SCORES };
+    const liveInning = currentQuarter != null && Number.isFinite(Number(currentQuarter)) ? Number(currentQuarter) : null;
 
     for (let inning = 1; inning <= 8; inning += 1) {
       setQuarterScoresOnInput(scores, inning, {
@@ -373,7 +375,12 @@ const buildSportAwareScoresFromCompetition = (
       });
     }
 
-    if (state === 'completed' && primaryFinal != null && opponentFinal != null) {
+    const shouldPopulateFinalInning =
+      primaryFinal != null &&
+      opponentFinal != null &&
+      (state === 'completed' || (state === 'in_progress' && (liveInning ?? 0) >= 9));
+
+    if (shouldPopulateFinalInning) {
       setQuarterScoresOnInput(scores, 9, {
         primaryScore: primaryFinal,
         opponentScore: opponentFinal
@@ -814,14 +821,15 @@ const buildEspnUpdateFromCompetition = (
           target.state
   );
 
-  const scores = buildSportAwareScoresFromCompetition(target, primaryCompetitor, opponentCompetitor, state);
+  const liveQuarter = toNullableScore(competition.status?.period) ?? target.currentQuarter ?? null;
+  const scores = buildSportAwareScoresFromCompetition(target, primaryCompetitor, opponentCompetitor, state, liveQuarter);
 
   return {
     gameId,
     source: 'espn',
     scores,
     state,
-    currentQuarter: toNullableScore(competition.status?.period) ?? inferCurrentQuarter(scores, target.currentQuarter),
+    currentQuarter: liveQuarter ?? inferCurrentQuarter(scores, target.currentQuarter),
     timeRemainingInQuarter:
       competition.status?.displayClock ??
       competition.status?.type?.shortDetail ??

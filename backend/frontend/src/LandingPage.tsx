@@ -140,6 +140,7 @@ type DisplayBoardLaunchResponse = {
   board: LandingBoard | null
   displayAds?: DisplayAdItem[]
   displayAdSettings?: Partial<DisplayAdSettings> | null
+  postgameRotationSeconds?: number | null
 }
 
 type LandingUserOption = {
@@ -869,6 +870,7 @@ export function LandingPage() {
   const [activeDisplayAdIndex, setActiveDisplayAdIndex] = useState(0)
   const [displayAdItems, setDisplayAdItems] = useState<DisplayAdItem[]>([])
   const [displayAdSettings, setDisplayAdSettings] = useState<DisplayAdSettings>(DEFAULT_DISPLAY_AD_SETTINGS)
+  const [postgameRotationSeconds, setPostgameRotationSeconds] = useState<number | null>(null)
   const [loginForm, setLoginForm] = useState({ email: '', password: '' })
   const [pools, setPools] = useState<LandingPool[]>([])
   const [selectedPoolId, setSelectedPoolId] = useState<number | null>(null)
@@ -1071,6 +1073,11 @@ export function LandingPage() {
       setBoard(launch.board ?? null)
       setDisplayAdItems(nextDisplayAdItems)
       setDisplayAdSettings(nextDisplayAdSettings)
+      setPostgameRotationSeconds(
+        typeof launch.postgameRotationSeconds === 'number' && Number.isFinite(launch.postgameRotationSeconds)
+          ? Math.max(5, Math.floor(launch.postgameRotationSeconds))
+          : null
+      )
       setActiveDisplayAdIndex((current) => (nextDisplayAdInventoryCount > 0 ? current % nextDisplayAdInventoryCount : 0))
       if (!nextDisplayAdSettings.adsEnabled || nextDisplayAdSettings.hideAdsForOrganization || nextDisplayAdInventoryCount === 0) {
         setDisplayAdVisible(false)
@@ -1092,6 +1099,7 @@ export function LandingPage() {
         setDisplayAdItems([])
         setDisplayAdSettings(DEFAULT_DISPLAY_AD_SETTINGS)
         setDisplayAdVisible(false)
+        setPostgameRotationSeconds(null)
       }
     } finally {
       if (quiet) {
@@ -1164,9 +1172,13 @@ export function LandingPage() {
     let intervalId: number | null = null
 
     if (displayOnlyMode && displayToken) {
+      const effectiveDisplayRefreshSeconds = postgameRotationSeconds != null
+        ? Math.max(5, Math.min(displayRefreshSeconds, postgameRotationSeconds))
+        : displayRefreshSeconds
+
       intervalId = window.setInterval(() => {
         void loadDisplayBoard(displayToken, { quiet: true })
-      }, displayRefreshSeconds * 1000)
+      }, effectiveDisplayRefreshSeconds * 1000)
     }
 
     if (displayOnlyMode ? !displayToken : !selectedPoolId) {
@@ -1234,7 +1246,7 @@ export function LandingPage() {
       eventSource.removeEventListener('game-updated', handleGameUpdated as EventListener)
       eventSource.close()
     }
-  }, [activePage, board?.gameId, displayOnlyMode, displayRefreshSeconds, displayToken, games, selectedGameId, selectedPoolId, token])
+  }, [activePage, board?.gameId, displayOnlyMode, displayRefreshSeconds, displayToken, games, postgameRotationSeconds, selectedGameId, selectedPoolId, token])
 
   useEffect(() => {
     if (typeof document === 'undefined') {
