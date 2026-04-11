@@ -508,8 +508,25 @@ const buildDisplayAdWindow = (items: DisplayAdItem[], count: number, startIndex:
   return Array.from({ length: Math.min(count, items.length) }, (_, offset) => items[(startIndex + offset) % items.length])
 }
 
+const parseCalendarDate = (value: string | null | undefined): Date => {
+  if (!value) {
+    return new Date()
+  }
+
+  const trimmed = value.trim()
+  const midnightUtcMatch = trimmed.match(/^(\d{4}-\d{2}-\d{2})(?:T00:00:00(?:\.000)?Z)?$/)
+
+  if (midnightUtcMatch) {
+    const [year, month, day] = midnightUtcMatch[1].split('-').map((part) => Number(part))
+    return new Date(year, month - 1, day, 12, 0, 0, 0)
+  }
+
+  const parsed = new Date(trimmed)
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed
+}
+
 const formatDate = (value: string | null | undefined, options?: { timeZone?: string | null }): string => {
-  const dateValue = value ? new Date(value) : new Date()
+  const dateValue = parseCalendarDate(value)
 
   return new Intl.DateTimeFormat(undefined, {
     year: 'numeric',
@@ -787,7 +804,7 @@ const pickInitialGameId = (
   today.setHours(0, 0, 0, 0)
 
   const nextScheduled = games.find((game) => {
-    const gameDate = new Date(game.game_dt)
+    const gameDate = parseCalendarDate(game.game_dt)
     gameDate.setHours(0, 0, 0, 0)
     return gameDate >= today
   })
