@@ -140,6 +140,7 @@ type DisplayBoardLaunchResponse = {
   board: LandingBoard | null
   displayAds?: DisplayAdItem[]
   displayAdSettings?: Partial<DisplayAdSettings> | null
+  postgameRotationSeconds?: number | null
 }
 
 type LandingUserOption = {
@@ -598,15 +599,15 @@ const isLiveGame = (game: LandingGame | null): boolean => {
 
 const getLatestScoredQuarter = (game: LandingGame | null): number | null => {
   if (!game) return null
-  if (game.q9_primary_score !== null && game.q9_opponent_score !== null) return 9
-  if (game.q8_primary_score !== null && game.q8_opponent_score !== null) return 8
-  if (game.q7_primary_score !== null && game.q7_opponent_score !== null) return 7
-  if (game.q6_primary_score !== null && game.q6_opponent_score !== null) return 6
-  if (game.q5_primary_score !== null && game.q5_opponent_score !== null) return 5
-  if (game.q4_primary_score !== null && game.q4_opponent_score !== null) return 4
-  if (game.q3_primary_score !== null && game.q3_opponent_score !== null) return 3
-  if (game.q2_primary_score !== null && game.q2_opponent_score !== null) return 2
-  if (game.q1_primary_score !== null && game.q1_opponent_score !== null) return 1
+  if (game.q9_primary_score !== null || game.q9_opponent_score !== null) return 9
+  if (game.q8_primary_score !== null || game.q8_opponent_score !== null) return 8
+  if (game.q7_primary_score !== null || game.q7_opponent_score !== null) return 7
+  if (game.q6_primary_score !== null || game.q6_opponent_score !== null) return 6
+  if (game.q5_primary_score !== null || game.q5_opponent_score !== null) return 5
+  if (game.q4_primary_score !== null || game.q4_opponent_score !== null) return 4
+  if (game.q3_primary_score !== null || game.q3_opponent_score !== null) return 3
+  if (game.q2_primary_score !== null || game.q2_opponent_score !== null) return 2
+  if (game.q1_primary_score !== null || game.q1_opponent_score !== null) return 1
   return null
 }
 
@@ -623,6 +624,30 @@ const getQuarterScores = (
   if (quarter === 7) return { primaryScore: game.q7_primary_score, opponentScore: game.q7_opponent_score }
   if (quarter === 8) return { primaryScore: game.q8_primary_score, opponentScore: game.q8_opponent_score }
   return { primaryScore: game.q9_primary_score, opponentScore: game.q9_opponent_score }
+}
+
+const getDisplayQuarterScores = (
+  game: LandingGame,
+  quarter: number,
+  currentQuarter?: number | null
+): { primaryScore: number | null; opponentScore: number | null } => {
+  const normalizedCurrentQuarter = Number(currentQuarter ?? 0) || null
+
+  if (!isCompletedGame(game) && normalizedCurrentQuarter != null && quarter > normalizedCurrentQuarter) {
+    return { primaryScore: null, opponentScore: null }
+  }
+
+  let primaryScore: number | null = null
+  let opponentScore: number | null = null
+  const cappedQuarter = Math.min(Math.max(quarter, 1), 9)
+
+  for (let index = 1; index <= cappedQuarter; index += 1) {
+    const scoreEntry = getQuarterScores(game, index)
+    if (scoreEntry.primaryScore != null) primaryScore = scoreEntry.primaryScore
+    if (scoreEntry.opponentScore != null) opponentScore = scoreEntry.opponentScore
+  }
+
+  return { primaryScore, opponentScore }
 }
 
 const getDisplayScores = (
@@ -845,6 +870,7 @@ export function LandingPage() {
   const [activeDisplayAdIndex, setActiveDisplayAdIndex] = useState(0)
   const [displayAdItems, setDisplayAdItems] = useState<DisplayAdItem[]>([])
   const [displayAdSettings, setDisplayAdSettings] = useState<DisplayAdSettings>(DEFAULT_DISPLAY_AD_SETTINGS)
+  const [postgameRotationSeconds, setPostgameRotationSeconds] = useState<number | null>(null)
   const [loginForm, setLoginForm] = useState({ email: '', password: '' })
   const [pools, setPools] = useState<LandingPool[]>([])
   const [selectedPoolId, setSelectedPoolId] = useState<number | null>(null)
@@ -1047,6 +1073,11 @@ export function LandingPage() {
       setBoard(launch.board ?? null)
       setDisplayAdItems(nextDisplayAdItems)
       setDisplayAdSettings(nextDisplayAdSettings)
+      setPostgameRotationSeconds(
+        typeof launch.postgameRotationSeconds === 'number' && Number.isFinite(launch.postgameRotationSeconds)
+          ? Math.max(5, Math.floor(launch.postgameRotationSeconds))
+          : null
+      )
       setActiveDisplayAdIndex((current) => (nextDisplayAdInventoryCount > 0 ? current % nextDisplayAdInventoryCount : 0))
       if (!nextDisplayAdSettings.adsEnabled || nextDisplayAdSettings.hideAdsForOrganization || nextDisplayAdInventoryCount === 0) {
         setDisplayAdVisible(false)
@@ -1068,6 +1099,7 @@ export function LandingPage() {
         setDisplayAdItems([])
         setDisplayAdSettings(DEFAULT_DISPLAY_AD_SETTINGS)
         setDisplayAdVisible(false)
+        setPostgameRotationSeconds(null)
       }
     } finally {
       if (quiet) {
@@ -1140,9 +1172,13 @@ export function LandingPage() {
     let intervalId: number | null = null
 
     if (displayOnlyMode && displayToken) {
+      const effectiveDisplayRefreshSeconds = postgameRotationSeconds != null
+        ? Math.max(5, Math.min(displayRefreshSeconds, postgameRotationSeconds))
+        : displayRefreshSeconds
+
       intervalId = window.setInterval(() => {
         void loadDisplayBoard(displayToken, { quiet: true })
-      }, displayRefreshSeconds * 1000)
+      }, effectiveDisplayRefreshSeconds * 1000)
     }
 
     if (displayOnlyMode ? !displayToken : !selectedPoolId) {
@@ -1210,7 +1246,7 @@ export function LandingPage() {
       eventSource.removeEventListener('game-updated', handleGameUpdated as EventListener)
       eventSource.close()
     }
-  }, [activePage, board?.gameId, displayOnlyMode, displayRefreshSeconds, displayToken, games, selectedGameId, selectedPoolId, token])
+  }, [activePage, board?.gameId, displayOnlyMode, displayRefreshSeconds, displayToken, games, postgameRotationSeconds, selectedGameId, selectedPoolId, token])
 
   useEffect(() => {
     if (typeof document === 'undefined') {
@@ -1343,6 +1379,29 @@ export function LandingPage() {
     }
   }
 
+  const continuePasswordResetFlow = async (
+    email: string,
+    data: { message?: string; resetToken?: string }
+  ): Promise<void> => {
+    const providedToken = data.resetToken?.trim() ?? ''
+
+    if (providedToken) {
+      await completePasswordResetWithToken(providedToken)
+      return
+    }
+
+    const manualToken = window.prompt(
+      `${data.message ?? 'Password setup instructions have been generated.'}\n\nPaste the reset token from your email to continue, or press Cancel and come back after it arrives.`
+    )?.trim() ?? ''
+
+    if (!manualToken) {
+      setPageNotice(`A password setup token was sent for ${email}. Use Set / Reset Password again once you have it.`)
+      return
+    }
+
+    await completePasswordResetWithToken(manualToken)
+  }
+
   const handlePasswordResetFlow = async (): Promise<void> => {
     if (typeof window === 'undefined') {
       return
@@ -1370,10 +1429,7 @@ export function LandingPage() {
       }
 
       setPageNotice(data.message ?? 'If that account exists, password setup instructions were generated.')
-
-      if (data.resetToken) {
-        await completePasswordResetWithToken(data.resetToken)
-      }
+      await continuePasswordResetFlow(email, data)
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Failed to start the password reset flow.')
     } finally {
@@ -1434,9 +1490,7 @@ export function LandingPage() {
       }
 
       setPageNotice(data.message ?? 'Your access request has been submitted.')
-      if (data.resetToken) {
-        await completePasswordResetWithToken(data.resetToken)
-      }
+      await continuePasswordResetFlow(email, data)
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Failed to submit the access request.')
     } finally {
@@ -1460,7 +1514,11 @@ export function LandingPage() {
       const data = await response.json().catch(() => ({})) as LoginResponse & { error?: string; message?: string }
 
       if (!response.ok || !data.user) {
-        throw new Error(data.error ?? data.message ?? 'Login failed')
+        const errorMessage = data.error ?? data.message ?? 'Login failed'
+        if (response.status === 403 && /password/i.test(errorMessage)) {
+          setPageNotice('Use Set / Reset Password to finish setup. After entering your email, paste the token from your email and choose a new password.')
+        }
+        throw new Error(errorMessage)
       }
 
       setToken('session-authenticated')
@@ -1944,7 +2002,7 @@ export function LandingPage() {
 
     return scoreSegments.map((segment) => {
       const quarter = segment.quarter
-      const { primaryScore, opponentScore } = getQuarterScores(selectedGame, quarter)
+      const { primaryScore, opponentScore } = getDisplayQuarterScores(selectedGame, quarter, activeDisplayQuarter)
       const displayScores = getDisplayScores(primaryScore, opponentScore, winnerLoserMode)
       const hasScore = primaryScore !== null && opponentScore !== null
       const squareNum = hasScore
@@ -2119,7 +2177,7 @@ export function LandingPage() {
             <section className="landing-login-card">
               <div>
                 <h2>Sign in</h2>
-                <p>Use your account email and secure password. New users can request organization access and set a password from here.</p>
+                <p>Use your account email and secure password. If you need to set or reset one, use the emailed token in the Set / Reset Password flow.</p>
               </div>
               <form className="landing-login-form" onSubmit={handleLogin}>
                 <input

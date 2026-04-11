@@ -3,6 +3,7 @@ import { Request, Router } from 'express';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { db } from '../config/db';
+import { env } from '../config/env';
 import { getPoolLeagueDefinition, getPayoutValueForSlot, type PayoutSlotKey } from '../config/poolLeagues';
 import { ensurePoolSquaresInitialized } from '../services/poolSquares';
 import { ensurePoolDisplayTokenSupport } from '../services/poolDisplay';
@@ -46,15 +47,15 @@ const getLatestScoredQuarter = (game: {
   q9_primary_score?: number | null;
   q9_opponent_score?: number | null;
 }): number | null => {
-  if (game.q9_primary_score != null && game.q9_opponent_score != null) return 9;
-  if (game.q8_primary_score != null && game.q8_opponent_score != null) return 8;
-  if (game.q7_primary_score != null && game.q7_opponent_score != null) return 7;
-  if (game.q6_primary_score != null && game.q6_opponent_score != null) return 6;
-  if (game.q5_primary_score != null && game.q5_opponent_score != null) return 5;
-  if (game.q4_primary_score != null && game.q4_opponent_score != null) return 4;
-  if (game.q3_primary_score != null && game.q3_opponent_score != null) return 3;
-  if (game.q2_primary_score != null && game.q2_opponent_score != null) return 2;
-  if (game.q1_primary_score != null && game.q1_opponent_score != null) return 1;
+  if (game.q9_primary_score != null || game.q9_opponent_score != null) return 9;
+  if (game.q8_primary_score != null || game.q8_opponent_score != null) return 8;
+  if (game.q7_primary_score != null || game.q7_opponent_score != null) return 7;
+  if (game.q6_primary_score != null || game.q6_opponent_score != null) return 6;
+  if (game.q5_primary_score != null || game.q5_opponent_score != null) return 5;
+  if (game.q4_primary_score != null || game.q4_opponent_score != null) return 4;
+  if (game.q3_primary_score != null || game.q3_opponent_score != null) return 3;
+  if (game.q2_primary_score != null || game.q2_opponent_score != null) return 2;
+  if (game.q1_primary_score != null || game.q1_opponent_score != null) return 1;
   return null;
 };
 
@@ -90,6 +91,52 @@ const getQuarterScores = (
   if (quarter === 7) return { primaryScore: game.q7_primary_score ?? null, opponentScore: game.q7_opponent_score ?? null };
   if (quarter === 8) return { primaryScore: game.q8_primary_score ?? null, opponentScore: game.q8_opponent_score ?? null };
   return { primaryScore: game.q9_primary_score ?? null, opponentScore: game.q9_opponent_score ?? null };
+};
+
+const getDisplayQuarterScores = (
+  game: {
+    state?: string | null;
+    q1_primary_score: number | null;
+    q1_opponent_score: number | null;
+    q2_primary_score: number | null;
+    q2_opponent_score: number | null;
+    q3_primary_score: number | null;
+    q3_opponent_score: number | null;
+    q4_primary_score: number | null;
+    q4_opponent_score: number | null;
+    q5_primary_score?: number | null;
+    q5_opponent_score?: number | null;
+    q6_primary_score?: number | null;
+    q6_opponent_score?: number | null;
+    q7_primary_score?: number | null;
+    q7_opponent_score?: number | null;
+    q8_primary_score?: number | null;
+    q8_opponent_score?: number | null;
+    q9_primary_score?: number | null;
+    q9_opponent_score?: number | null;
+  },
+  quarter: number,
+  currentQuarter?: number | null
+): { primaryScore: number | null; opponentScore: number | null } => {
+  const normalizedState = String(game.state ?? '').trim().toLowerCase();
+  const isCompleted = ['completed', 'complete', 'closed', 'finished', 'final', 'post'].includes(normalizedState);
+  const normalizedCurrentQuarter = Number(currentQuarter ?? 0) || null;
+
+  if (!isCompleted && normalizedCurrentQuarter != null && quarter > normalizedCurrentQuarter) {
+    return { primaryScore: null, opponentScore: null };
+  }
+
+  let primaryScore: number | null = null;
+  let opponentScore: number | null = null;
+  const cappedQuarter = Math.min(Math.max(quarter, 1), 9);
+
+  for (let index = 1; index <= cappedQuarter; index += 1) {
+    const scoreEntry = getQuarterScores(game, index);
+    if (scoreEntry.primaryScore != null) primaryScore = scoreEntry.primaryScore;
+    if (scoreEntry.opponentScore != null) opponentScore = scoreEntry.opponentScore;
+  }
+
+  return { primaryScore, opponentScore };
 };
 
 type QuarterKey = '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9';
@@ -409,7 +456,8 @@ const pickDisplayGameId = (
     q9_primary_score: number | null;
     q9_opponent_score: number | null;
   }>,
-  currentGameId?: number | null
+  currentGameId?: number | null,
+  options?: { enablePostgameRotation?: boolean }
 ): number | null => {
   if (games.length === 0) {
     return null;
@@ -478,7 +526,21 @@ const pickDisplayGameId = (
     return !isCompletedGame(game) && getLatestScoredQuarter(game) != null;
   };
 
+  const getGameTimestamp = (game: { game_dt?: string | null; gameDate?: string | null }): number | null => {
+    const rawGameDate = game.game_dt ?? game.gameDate;
+
+    if (!rawGameDate) {
+      return null;
+    }
+
+    const timestamp = new Date(rawGameDate).getTime();
+    return Number.isNaN(timestamp) ? null : timestamp;
+  };
+
   const selectableGames = games.filter((game) => !isByeGame(game));
+  const nowMs = Date.now();
+  const lastCompletedGame = [...selectableGames].reverse().find((game) => isCompletedGame(game));
+  const lastCompletedTimestamp = lastCompletedGame ? getGameTimestamp(lastCompletedGame) : null;
 
   const liveGame = selectableGames.find((game) => isLiveGame(game));
   if (liveGame) {
@@ -492,30 +554,45 @@ const pickDisplayGameId = (
     }
   }
 
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const startedGame = [...selectableGames].reverse().find((game) => {
+    if (isCompletedGame(game)) {
+      return false;
+    }
+
+    const timestamp = getGameTimestamp(game);
+    if (timestamp == null || timestamp > nowMs) {
+      return false;
+    }
+
+    if (lastCompletedTimestamp != null && timestamp < lastCompletedTimestamp) {
+      return false;
+    }
+
+    return true;
+  });
+
+  if (startedGame) {
+    return Number(startedGame.id);
+  }
 
   const nextUpcomingGame = selectableGames.find((game) => {
-    const rawGameDate = game.game_dt ?? game.gameDate;
-
-    if (isCompletedGame(game) || !rawGameDate) {
+    if (isCompletedGame(game)) {
       return false;
     }
 
-    const gameDate = new Date(rawGameDate);
-    if (Number.isNaN(gameDate.getTime())) {
-      return false;
-    }
-
-    gameDate.setHours(0, 0, 0, 0);
-    return gameDate >= today;
+    const timestamp = getGameTimestamp(game);
+    return timestamp != null && timestamp > nowMs;
   });
+
+  if (options?.enablePostgameRotation && lastCompletedGame && nextUpcomingGame) {
+    const rotationMs = Math.max(1, env.DISPLAY_POSTGAME_ROTATION_SECONDS) * 1000;
+    const shouldShowNextGame = Math.floor(nowMs / rotationMs) % 2 === 1;
+    return Number((shouldShowNextGame ? nextUpcomingGame : lastCompletedGame).id);
+  }
 
   if (nextUpcomingGame) {
     return Number(nextUpcomingGame.id);
   }
-
-  const lastCompletedGame = [...selectableGames].reverse().find((game) => isCompletedGame(game));
   const selectedId = lastCompletedGame?.id ?? selectableGames[0]?.id ?? games[0]?.id ?? null;
 
   return selectedId != null ? Number(selectedId) : null;
@@ -636,15 +713,22 @@ const loadBoardPayload = async (client: PoolClient, poolId: number, pool: any, g
     Number(simulationStatus.currentGameId ?? 0) === Number(selectedGame.id) &&
     simulationStatus.nextQuarter != null;
   const latestScoredQuarter = selectedGame ? getLatestScoredQuarter(selectedGame) : null;
+  const currentDisplayQuarter = selectedGameIsLiveSimulationQuarter
+    ? Number(simulationStatus?.nextQuarter ?? latestScoredQuarter ?? 0) || latestScoredQuarter
+    : Number(selectedGame?.current_quarter ?? 0) || latestScoredQuarter;
+  const displayQuarterScores = selectedGame && currentDisplayQuarter != null
+    ? getDisplayQuarterScores(selectedGame, currentDisplayQuarter, currentDisplayQuarter)
+    : null;
   const currentLeaderSquare =
     selectedGame &&
-    latestScoredQuarter != null &&
+    currentDisplayQuarter != null &&
+    displayQuarterScores &&
     !['completed', 'complete', 'closed', 'finished', 'final', 'post'].includes(String(selectedGame.state ?? '').trim().toLowerCase())
       ? resolveWinningSquareNumber(
           selectedGame.row_numbers,
           selectedGame.col_numbers,
-          getQuarterScores(selectedGame, latestScoredQuarter).opponentScore,
-          getQuarterScores(selectedGame, latestScoredQuarter).primaryScore,
+          displayQuarterScores.opponentScore,
+          displayQuarterScores.primaryScore,
           winnerLoserMode
         )
       : null;
@@ -1341,7 +1425,8 @@ landingRouter.get('/display/:displayToken', async (req, res) => {
           q9_primary_score: number | null;
           q9_opponent_score: number | null;
         }>,
-        simulationStatus?.currentGameId ?? null
+        simulationStatus?.currentGameId ?? null,
+        { enablePostgameRotation: true }
       );
       const { board } = await loadBoardPayload(client, Number(pool.id), pool, selectedGameId);
 
@@ -1352,7 +1437,8 @@ landingRouter.get('/display/:displayToken', async (req, res) => {
         selectedGameId,
         board,
         displayAds,
-        displayAdSettings
+        displayAdSettings,
+        postgameRotationSeconds: env.DISPLAY_POSTGAME_ROTATION_SECONDS
       });
     } finally {
       client.release();

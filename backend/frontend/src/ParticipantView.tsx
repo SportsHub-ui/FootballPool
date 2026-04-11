@@ -429,6 +429,29 @@ export function ParticipantView() {
     }
   }
 
+  const continuePasswordResetFlow = async (
+    email: string,
+    data: { message?: string; resetToken?: string }
+  ): Promise<void> => {
+    const providedToken = data.resetToken?.trim() ?? ''
+
+    if (providedToken) {
+      await completePasswordResetWithToken(providedToken)
+      return
+    }
+
+    const manualToken = window.prompt(
+      `${data.message ?? 'Password setup instructions have been generated.'}\n\nPaste the reset token from your email to continue, or press Cancel and come back after it arrives.`
+    )?.trim() ?? ''
+
+    if (!manualToken) {
+      window.alert(`A password setup token was sent for ${email}. Use Set / Reset Password again once you have it.`)
+      return
+    }
+
+    await completePasswordResetWithToken(manualToken)
+  }
+
   const handlePasswordResetFlow = async (): Promise<void> => {
     if (typeof window === 'undefined') {
       return
@@ -455,11 +478,7 @@ export function ParticipantView() {
         throw new Error(data.error ?? data.message ?? 'Failed to start the password reset flow.')
       }
 
-      if (data.resetToken) {
-        await completePasswordResetWithToken(data.resetToken)
-      } else if (data.message) {
-        window.alert(data.message)
-      }
+      await continuePasswordResetFlow(email, data)
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Failed to start the password reset flow.')
     } finally {
@@ -519,11 +538,7 @@ export function ParticipantView() {
         throw new Error(data.error ?? data.message ?? 'Failed to submit the access request.')
       }
 
-      if (data.resetToken) {
-        await completePasswordResetWithToken(data.resetToken)
-      } else if (data.message) {
-        window.alert(data.message)
-      }
+      await continuePasswordResetFlow(email, data)
     } catch (error) {
       setLoginError(error instanceof Error ? error.message : 'Failed to submit the access request.')
     } finally {
@@ -578,7 +593,13 @@ export function ParticipantView() {
       })
 
       const data = await res.json().catch(() => ({})) as { error?: string; message?: string; user?: { id: number; email: string; firstName: string; lastName: string } }
-      if (!res.ok || !data.user) throw new Error(data.error ?? data.message ?? 'Login failed')
+      if (!res.ok || !data.user) {
+        const errorMessage = data.error ?? data.message ?? 'Login failed'
+        if (res.status === 403 && /password/i.test(errorMessage)) {
+          window.alert('Use Set / Reset Password to finish setup. After entering your email, paste the token from your email and choose a new password.')
+        }
+        throw new Error(errorMessage)
+      }
 
       setToken('session-authenticated')
       setUser(data.user)
@@ -867,7 +888,7 @@ export function ParticipantView() {
           {loginError && <div className="error-message">{loginError}</div>}
           
           <p style={{ marginTop: '1rem', fontSize: '0.9rem', color: '#666' }}>
-            Use the email for an existing user and your secure password.
+            Use the email for an existing user and your secure password. If you need to set or reset one, use the emailed token in the Set / Reset Password flow.
           </p>
         </div>
       </div>
