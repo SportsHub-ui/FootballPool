@@ -716,15 +716,30 @@ const pickDisplayGameId = (
     return timestamp != null && timestamp > nowMs;
   });
 
-  if (options?.enablePostgameRotation && lastCompletedGame && nextUpcomingGame) {
+  const nextScheduledRotationGame =
+    nextUpcomingGame ??
+    selectableGames.find((game) => {
+      if (isCompletedGame(game) || isLiveGame(game)) {
+        return false;
+      }
+
+      return true;
+    });
+
+  if (options?.enablePostgameRotation && lastCompletedGame && nextScheduledRotationGame) {
     const rotationMs = Math.max(1, env.DISPLAY_POSTGAME_ROTATION_SECONDS) * 1000;
     const shouldShowNextGame = Math.floor(nowMs / rotationMs) % 2 === 1;
-    return Number((shouldShowNextGame ? nextUpcomingGame : lastCompletedGame).id);
+    return Number((shouldShowNextGame ? nextScheduledRotationGame : lastCompletedGame).id);
   }
 
   if (nextUpcomingGame) {
     return Number(nextUpcomingGame.id);
   }
+
+  if (nextScheduledRotationGame) {
+    return Number(nextScheduledRotationGame.id);
+  }
+
   const selectedId = lastCompletedGame?.id ?? selectableGames[0]?.id ?? games[0]?.id ?? null;
 
   return selectedId != null ? Number(selectedId) : null;

@@ -1380,6 +1380,7 @@ export function LandingPage() {
 
       if (postgameRotationSeconds != null) {
         cadenceCandidates.push(postgameRotationSeconds)
+        cadenceCandidates.push(Math.max(5, Math.floor(postgameRotationSeconds / 2)))
       }
 
       if (organizationRotationSeconds != null) {
