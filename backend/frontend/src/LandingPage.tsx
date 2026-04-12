@@ -2917,7 +2917,7 @@ export function LandingPage() {
                     <div className={`board-display-shell ${showQuarterSummaries ? 'with-quarter-summaries' : ''}`}>
                       <div className="board-display-main">
                         <div className="board-display-logo">
-                          {displayOnlyMode && !isMobileKioskView && kioskShareUrl && kioskQrImageUrl ? (
+                          {displayOnlyMode && kioskShareUrl && kioskQrImageUrl ? (
                             <a
                               className="kiosk-logo-qr"
                               href={kioskShareUrl}
@@ -3056,7 +3056,7 @@ export function LandingPage() {
                     <div className={`board-display-shell ${showQuarterSummaries ? 'with-quarter-summaries' : ''}`}>
                       <div className="board-display-main">
                         <div className="board-display-logo">
-                          {displayOnlyMode && !isMobileKioskView && kioskShareUrl && kioskQrImageUrl ? (
+                          {displayOnlyMode && kioskShareUrl && kioskQrImageUrl ? (
                             <a
                               className="kiosk-logo-qr"
                               href={kioskShareUrl}
