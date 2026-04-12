@@ -1016,6 +1016,22 @@ export function LandingPage() {
   const liveRefreshTimerRef = useRef<number | null>(null)
   const displayRefreshInFlightRef = useRef(false)
 
+  const kioskShareUrl = useMemo(() => {
+    if (!displayOnlyMode || typeof window === 'undefined') {
+      return ''
+    }
+
+    return window.location.href
+  }, [displayOnlyMode])
+
+  const kioskQrImageUrl = useMemo(() => {
+    if (!kioskShareUrl) {
+      return ''
+    }
+
+    return `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(kioskShareUrl)}`
+  }, [kioskShareUrl])
+
   const authHeaders = useMemo(() => ({ 'Content-Type': 'application/json' }), [])
 
   const simulationHeaders = useMemo(() => authHeaders, [authHeaders])
@@ -2840,7 +2856,17 @@ export function LandingPage() {
                     <div className={`board-display-shell ${showQuarterSummaries ? 'with-quarter-summaries' : ''}`}>
                       <div className="board-display-main">
                         <div className="board-display-logo">
-                          {logoSrc ? (
+                          {displayOnlyMode && kioskShareUrl && kioskQrImageUrl ? (
+                            <a
+                              className="kiosk-logo-qr"
+                              href={kioskShareUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              aria-label="Open the current kiosk display URL"
+                            >
+                              <img src={kioskQrImageUrl} alt="QR code for the current kiosk display URL" />
+                            </a>
+                          ) : logoSrc ? (
                             <img src={logoSrc} alt={selectedPool?.team_name ?? 'Football Pool'} />
                           ) : (
                             <div className="pool-board-logo-fallback">{selectedPool?.team_name ?? 'Football Pool'}</div>
@@ -2969,7 +2995,17 @@ export function LandingPage() {
                     <div className={`board-display-shell ${showQuarterSummaries ? 'with-quarter-summaries' : ''}`}>
                       <div className="board-display-main">
                         <div className="board-display-logo">
-                          {logoSrc ? (
+                          {displayOnlyMode && kioskShareUrl && kioskQrImageUrl ? (
+                            <a
+                              className="kiosk-logo-qr"
+                              href={kioskShareUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              aria-label="Open the current kiosk display URL"
+                            >
+                              <img src={kioskQrImageUrl} alt="QR code for the current kiosk display URL" />
+                            </a>
+                          ) : logoSrc ? (
                             <img src={logoSrc} alt={selectedPool?.team_name ?? 'Football Pool'} />
                           ) : (
                             <div className="pool-board-logo-fallback">{selectedPool?.team_name ?? 'Football Pool'}</div>
