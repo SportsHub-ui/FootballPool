@@ -7,6 +7,8 @@ type PoolScheduleContext = {
   id: number;
   season: number | null;
   pool_type: string | null;
+  start_date: string | null;
+  end_date: string | null;
   primary_team: string | null;
   team_name: string | null;
   team_id: number | null;
@@ -81,6 +83,46 @@ const addDays = (value: string, days: number): string => {
   const parsed = new Date(value);
   parsed.setUTCDate(parsed.getUTCDate() + days);
   return parsed.toISOString().slice(0, 10);
+};
+
+const toUtcDayTime = (value: string): number => {
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return parsed.getTime();
+};
+
+const pickSingleGameEntry = (
+  schedule: ImportedScheduleEntry[],
+  options: { startDate?: string | null; endDate?: string | null; referenceDate?: string }
+): ImportedScheduleEntry => {
+  const playableGames = schedule.filter((entry) => !entry.isBye);
+  if (playableGames.length === 0) {
+    throw new Error('No playable games were found for this team in the selected season.');
+  }
+
+  const startDate = options.startDate?.trim() || null;
+  const endDate = options.endDate?.trim() || null;
+  const referenceDate = options.referenceDate ?? new Date().toISOString().slice(0, 10);
+
+  if (startDate && endDate) {
+    const inWindow = playableGames.filter((entry) => entry.gameDate >= startDate && entry.gameDate <= endDate);
+    if (inWindow.length > 0) {
+      return inWindow.find((entry) => entry.gameDate >= referenceDate) ?? inWindow[0];
+    }
+
+    const targetTime = toUtcDayTime(startDate);
+    return [...playableGames].sort((left, right) => {
+      const leftDistance = Math.abs(toUtcDayTime(left.gameDate) - targetTime);
+      const rightDistance = Math.abs(toUtcDayTime(right.gameDate) - targetTime);
+      if (leftDistance !== rightDistance) {
+        return leftDistance - rightDistance;
+      }
+
+      return left.gameDate.localeCompare(right.gameDate);
+    })[0];
+  }
+
+  const targetDate = startDate ?? endDate ?? referenceDate;
+  return playableGames.find((entry) => entry.gameDate >= targetDate) ?? playableGames[playableGames.length - 1];
 };
 
 const getRegularSeasonWeekCount = (leagueCode: string | null | undefined, season: number): number => {
@@ -392,6 +434,8 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
     `SELECT p.id,
             p.season,
             p.pool_type,
+            p.start_date::text,
+            p.end_date::text,
             p.primary_team,
             p.primary_sport_team_id,
             p.sport_code,
@@ -418,12 +462,22 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
     throw new Error('This pool does not have a season year configured.');
   }
 
-  if (getPoolTypeDefinition(pool.pool_type).code !== 'season') {
-    throw new Error('Fill Schedule currently supports season pools only. Add playoff or tournament matchups manually on the Schedules page.');
+  const poolType = getPoolTypeDefinition(pool.pool_type).code;
+  if (poolType !== 'season' && poolType !== 'single_game') {
+    throw new Error('Fill Schedule currently supports Season and Single Game pools only. Add other matchups manually on the Schedules page.');
   }
 
   const team = await findEspnTeam(pool);
   const importedSchedule = await fetchSeasonSchedule(team, Number(pool.season));
+  const scheduleToImport =
+    poolType === 'single_game'
+      ? [
+          pickSingleGameEntry(importedSchedule, {
+            startDate: pool.start_date,
+            endDate: pool.end_date
+          })
+        ]
+      : importedSchedule;
   const primarySportTeamId = await upsertSportTeamFromEspn(client, team);
 
   await client.query(
@@ -454,7 +508,7 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
   // Map of weekNum to normalized game id
   const gameByWeek = new Map<number, number>();
   // Insert or find all normalized shared games for this team
-  for (const entry of importedSchedule) {
+  for (const entry of scheduleToImport) {
     if (entry.isBye) continue;
     // Try to find an existing normalized game row
     const existingGame = await client.query<{ id: number }>(
@@ -552,7 +606,7 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
   }
 
   // Link games to this pool in pool_game
-  for (const entry of importedSchedule) {
+  for (const entry of scheduleToImport) {
     if (entry.isBye) {
       byeWeeks.push(entry.weekNum);
       continue;
@@ -584,7 +638,7 @@ export async function importSchedule(client: PoolClient, poolId: number): Promis
     created,
     updated,
     skipped,
-    totalWeeks: importedSchedule.length,
+    totalWeeks: scheduleToImport.length,
     byeWeeks
   };
 }

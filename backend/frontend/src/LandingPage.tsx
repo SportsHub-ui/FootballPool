@@ -17,6 +17,8 @@ type LandingPool = {
   pool_name: string | null
   season: number | null
   primary_team_id: number | null // references sport_team.id
+  sport_code?: string | null
+  league_code?: string | null
   pool_type?: string | null
   winner_loser_flg?: boolean
   default_flg: boolean
@@ -225,6 +227,7 @@ const DEFAULT_DISPLAY_REFRESH_SECONDS = Math.max(
   Number.parseInt((import.meta.env.VITE_DISPLAY_REFRESH_SECONDS ?? '30').toString(), 10) || 30
 )
 const DEFAULT_DISPLAY_TIME_ZONE = (import.meta.env.VITE_DISPLAY_TIME_ZONE ?? '').toString().trim()
+const MOBILE_KIOSK_MAX_WIDTH = 900
 const DEFAULT_DISPLAY_AD_SETTINGS: DisplayAdSettings = {
   adsEnabled: false,
   frequencySeconds: 180,
@@ -370,6 +373,120 @@ const resolveTeamBrand = (
 
 const normalizeTeamKey = (value: string | null | undefined): string =>
   String(value ?? '').trim().toLowerCase().replace(/\s+/g, ' ')
+
+type ActiveTeamSide = 'away' | 'home' | null
+
+const toTeamHintTokens = (value: string | null | undefined): string[] => {
+  const normalized = normalizeTeamKey(value).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!normalized) {
+    return []
+  }
+
+  const words = normalized.split(' ').filter(Boolean)
+  const tokens = new Set<string>([normalized])
+
+  if (words.length > 0) {
+    tokens.add(words[words.length - 1])
+    tokens.add(words[0])
+  }
+
+  return Array.from(tokens).filter((token) => token.length >= 2)
+}
+
+const resolveSideFromTeamHint = (
+  hint: string,
+  awayTeamName: string | null | undefined,
+  homeTeamName: string | null | undefined
+): ActiveTeamSide => {
+  const normalizedHint = normalizeTeamKey(hint).replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!normalizedHint) {
+    return null
+  }
+
+  const awayHints = toTeamHintTokens(awayTeamName)
+  const homeHints = toTeamHintTokens(homeTeamName)
+
+  const awayMatch = awayHints.some((token) => normalizedHint.includes(token) || token.includes(normalizedHint))
+  const homeMatch = homeHints.some((token) => normalizedHint.includes(token) || token.includes(normalizedHint))
+
+  if (awayMatch && !homeMatch) return 'away'
+  if (homeMatch && !awayMatch) return 'home'
+  return null
+}
+
+const resolveBaseballBattingSide = (detail: string): ActiveTeamSide => {
+  if (!detail) {
+    return null
+  }
+
+  const normalizedDetail = detail.toLowerCase()
+  const halfInningMatches: Array<{ side: ActiveTeamSide; index: number }> = []
+
+  for (const match of normalizedDetail.matchAll(/\b(top|bot(?:tom)?)\s*(?:of\s*)?\d{1,2}(?:st|nd|rd|th)?\b/g)) {
+    const token = (match[1] ?? '').toLowerCase()
+    halfInningMatches.push({
+      side: token.startsWith('top') ? 'away' : 'home',
+      index: match.index ?? -1
+    })
+  }
+
+  for (const match of normalizedDetail.matchAll(/\b([tb])\s*\d{1,2}\b/g)) {
+    const token = (match[1] ?? '').toLowerCase()
+    halfInningMatches.push({
+      side: token === 't' ? 'away' : 'home',
+      index: match.index ?? -1
+    })
+  }
+
+  if (halfInningMatches.length === 0) {
+    return null
+  }
+
+  halfInningMatches.sort((a, b) => a.index - b.index)
+  return halfInningMatches[halfInningMatches.length - 1]?.side ?? null
+}
+
+const resolveActiveTeamSide = (
+  game: LandingGame | null | undefined,
+  options: { sportCode?: string | null; leagueCode?: string | null }
+): ActiveTeamSide => {
+  if (!game || !isLiveGame(game)) {
+    return null
+  }
+
+  const sportCode = String(options.sportCode ?? '').trim().toUpperCase()
+  const leagueCode = String(options.leagueCode ?? '').trim().toUpperCase()
+  const detail = String(game.time_remaining_in_quarter ?? '').trim()
+
+  if (sportCode === 'BASEBALL' || leagueCode === 'MLB') {
+    const battingSide = resolveBaseballBattingSide(detail)
+    if (battingSide) {
+      return battingSide
+    }
+  }
+
+  if (sportCode === 'FOOTBALL' || leagueCode === 'NFL' || leagueCode === 'NCAAF') {
+    const possessionPatterns = [
+      /(?:ball|possession)\s*[:\-]\s*([a-z0-9 .'-]{2,})/i,
+      /\b([a-z0-9.'-]{2,})\s+(?:ball|possession)\b/i
+    ]
+
+    for (const pattern of possessionPatterns) {
+      const match = detail.match(pattern)
+      const teamHint = match?.[1]?.trim()
+      if (!teamHint) {
+        continue
+      }
+
+      const resolved = resolveSideFromTeamHint(teamHint, game.away_team_name, game.home_team_name)
+      if (resolved) {
+        return resolved
+      }
+    }
+  }
+
+  return null
+}
 
 const resolveMatchupBranding = (
   game: LandingGame | null | undefined,
@@ -882,6 +999,13 @@ export function LandingPage() {
     return resolveDisplayTimeZone(searchParams.get('tz') ?? DEFAULT_DISPLAY_TIME_ZONE)
   })
   const displayOnlyMode = Boolean(displayToken)
+  const [isMobileKioskView, setIsMobileKioskView] = useState<boolean>(() => {
+    if (typeof window === 'undefined') {
+      return false
+    }
+
+    return window.matchMedia(`(max-width: ${MOBILE_KIOSK_MAX_WIDTH}px)`).matches
+  })
   const [showLogin, setShowLogin] = useState(false)
   const [activePage, setActivePage] = useState<'Squares' | 'Metrics' | 'Marketing' | 'Notifications' | 'Players' | 'Teams' | 'Pools' | 'Schedules' | 'Users'>('Squares')
   const [busy, setBusy] = useState<string | null>(null)
@@ -928,6 +1052,22 @@ export function LandingPage() {
   const liveRefreshTimerRef = useRef<number | null>(null)
   const displayRefreshInFlightRef = useRef(false)
 
+  const kioskShareUrl = useMemo(() => {
+    if (!displayOnlyMode || typeof window === 'undefined') {
+      return ''
+    }
+
+    return window.location.href
+  }, [displayOnlyMode])
+
+  const kioskQrImageUrl = useMemo(() => {
+    if (!kioskShareUrl) {
+      return ''
+    }
+
+    return `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(kioskShareUrl)}`
+  }, [kioskShareUrl])
+
   const authHeaders = useMemo(() => ({ 'Content-Type': 'application/json' }), [])
 
   const simulationHeaders = useMemo(() => authHeaders, [authHeaders])
@@ -959,6 +1099,30 @@ export function LandingPage() {
       setAuthUser(null)
     }
   }
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    if (!displayOnlyMode) {
+      setIsMobileKioskView(false)
+      return
+    }
+
+    const mediaQuery = window.matchMedia(`(max-width: ${MOBILE_KIOSK_MAX_WIDTH}px)`)
+    const updateFromMediaQuery = () => setIsMobileKioskView(mediaQuery.matches)
+
+    updateFromMediaQuery()
+
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', updateFromMediaQuery)
+      return () => mediaQuery.removeEventListener('change', updateFromMediaQuery)
+    }
+
+    mediaQuery.addListener(updateFromMediaQuery)
+    return () => mediaQuery.removeListener(updateFromMediaQuery)
+  }, [displayOnlyMode])
 
   const loadBoard = async (poolId: number, gameId: number | null): Promise<void> => {
     const query = gameId ? `?gameId=${gameId}` : ''
@@ -2041,6 +2205,11 @@ export function LandingPage() {
     )
   }, [board, selectedGame, selectedGameBranding])
 
+  const activeTeamSide = useMemo(
+    () => resolveActiveTeamSide(selectedGame, { sportCode: selectedPool?.sport_code, leagueCode: selectedPool?.league_code }),
+    [selectedGame, selectedPool?.league_code, selectedPool?.sport_code]
+  )
+
   const logoSrc = selectedPool?.logo_file ? resolveImageUrl(selectedPool.logo_file) : DEFAULT_POOL_LOGO
   const topDigits = normalizeDigits(board?.colNumbers)
   const leftDigits = normalizeDigits(board?.rowNumbers)
@@ -2164,7 +2333,7 @@ export function LandingPage() {
   }, [board, latestScoredQuarter, primaryTeamIsAway, scoreSegments, selectedGame, selectedPool, simulationStatus])
 
   const hasCompactQuarterSummaryLayout = quarterSummaries.length >= 6
-  const showQuarterSummaries = quarterSummaries.length > 0
+  const showQuarterSummaries = !isMobileKioskView && quarterSummaries.length > 0
   const displayAdScale = Math.min(0.95, Math.max(0.5, displayAdSettings.shrinkPercent / 100))
   const displayAdSidebarCount = Math.min(4, Math.max(0, Number(displayAdSettings.sidebarCount ?? 1) || 0))
   const displayAdBannerCount = Math.min(6, Math.max(0, Number(displayAdSettings.bannerCount ?? 1) || 0))
@@ -2181,7 +2350,7 @@ export function LandingPage() {
     (displayAdSidebarCount > 0 && sidebarDisplayAdItems.length > 0) ||
     (displayAdBannerCount > 0 && (bannerDisplayAdItems.length > 0 || Boolean(displayAdFallbackMessage)))
   )
-  const showDisplayAds = displayOnlyMode && displayAdSettings.adsEnabled && hasDisplayAdContent && displayAdVisible
+  const showDisplayAds = !isMobileKioskView && displayOnlyMode && displayAdSettings.adsEnabled && hasDisplayAdContent && displayAdVisible
   const visibleSidebarAds = useMemo(
     () => (showDisplayAds ? buildDisplayAdWindow(sidebarDisplayAdItems, displayAdSidebarCount, activeDisplayAdIndex) : []),
     [activeDisplayAdIndex, displayAdSidebarCount, showDisplayAds, sidebarDisplayAdItems]
@@ -2224,14 +2393,14 @@ export function LandingPage() {
   const showDisplaySidebar = showDisplayAds && visibleSidebarAds.length > 0 && displayAdSidebarCount > 0
   const showDisplayBanner = showDisplayAds && visibleBannerAds.length > 0 && displayAdBannerCount > 0
   const featuredDisplaySummary = useMemo(() => {
-    if (!displayOnlyMode || quarterSummaries.length === 0) {
+    if (!displayOnlyMode || isMobileKioskView || quarterSummaries.length === 0) {
       return null
     }
 
     return quarterSummaries.find((summary) => summary.status === 'active')
       ?? [...quarterSummaries].reverse().find((summary) => summary.status === 'completed')
       ?? quarterSummaries[0]
-  }, [displayOnlyMode, quarterSummaries])
+  }, [displayOnlyMode, isMobileKioskView, quarterSummaries])
 
   const currentGameIndex = useMemo(
     () => games.findIndex((game) => game.id === selectedGameId),
@@ -2717,6 +2886,7 @@ export function LandingPage() {
                 <section className={`display-scoreboard-spotlight is-${featuredDisplaySummary.status}`} aria-label="Featured live scoreboard">
                   <div className="display-scoreboard-team">
                     <div className="display-scoreboard-team-brand">
+                      {activeTeamSide === 'away' ? <span className="team-live-indicator-dot" aria-hidden="true" /> : null}
                       {awayTeamLogo ? <img src={awayTeamLogo} alt={awayTeamLabel} className="display-scoreboard-team-logo" /> : null}
                       <span className="display-scoreboard-team-name">{awayTeamLabel}</span>
                     </div>
@@ -2732,6 +2902,7 @@ export function LandingPage() {
                   <div className="display-scoreboard-team is-opponent">
                     <strong className="display-scoreboard-team-score">{featuredDisplaySummary.homeScore ?? '—'}</strong>
                     <div className="display-scoreboard-team-brand">
+                      {activeTeamSide === 'home' ? <span className="team-live-indicator-dot" aria-hidden="true" /> : null}
                       {homeTeamLogo ? <img src={homeTeamLogo} alt={homeTeamLabel} className="display-scoreboard-team-logo" /> : null}
                       <span className="display-scoreboard-team-name">{homeTeamLabel}</span>
                     </div>
@@ -2745,7 +2916,17 @@ export function LandingPage() {
                     <div className={`board-display-shell ${showQuarterSummaries ? 'with-quarter-summaries' : ''}`}>
                       <div className="board-display-main">
                         <div className="board-display-logo">
-                          {logoSrc ? (
+                          {displayOnlyMode && !isMobileKioskView && kioskShareUrl && kioskQrImageUrl ? (
+                            <a
+                              className="kiosk-logo-qr"
+                              href={kioskShareUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              aria-label="Open the current kiosk display URL"
+                            >
+                              <img src={kioskQrImageUrl} alt="QR code for the current kiosk display URL" />
+                            </a>
+                          ) : logoSrc ? (
                             <img src={logoSrc} alt={selectedPool?.team_name ?? 'Football Pool'} />
                           ) : (
                             <div className="pool-board-logo-fallback">{selectedPool?.team_name ?? 'Football Pool'}</div>
@@ -2843,15 +3024,21 @@ export function LandingPage() {
 
                               <div className="board-quarter-scoreline">
                                 <div className="board-quarter-score-item">
-                                  {awayTeamLogo ? (
-                                    <img src={awayTeamLogo} alt={awayTeamLabel} className="quarter-team-logo" />
-                                  ) : null}
+                                  <span className="board-quarter-score-team-icon">
+                                    {summary.status === 'active' && activeTeamSide === 'away' ? <span className="team-live-indicator-dot" aria-hidden="true" /> : null}
+                                    {awayTeamLogo ? (
+                                      <img src={awayTeamLogo} alt={awayTeamLabel} className="quarter-team-logo" />
+                                    ) : null}
+                                  </span>
                                   <span>{summary.awayScore ?? '—'}</span>
                                 </div>
                                 <div className="board-quarter-score-item">
-                                  {homeTeamLogo ? (
-                                    <img src={homeTeamLogo} alt={homeTeamLabel} className="quarter-team-logo" />
-                                  ) : null}
+                                  <span className="board-quarter-score-team-icon">
+                                    {summary.status === 'active' && activeTeamSide === 'home' ? <span className="team-live-indicator-dot" aria-hidden="true" /> : null}
+                                    {homeTeamLogo ? (
+                                      <img src={homeTeamLogo} alt={homeTeamLabel} className="quarter-team-logo" />
+                                    ) : null}
+                                  </span>
                                   <span>{summary.homeScore ?? '—'}</span>
                                 </div>
                               </div>
@@ -2868,7 +3055,17 @@ export function LandingPage() {
                     <div className={`board-display-shell ${showQuarterSummaries ? 'with-quarter-summaries' : ''}`}>
                       <div className="board-display-main">
                         <div className="board-display-logo">
-                          {logoSrc ? (
+                          {displayOnlyMode && !isMobileKioskView && kioskShareUrl && kioskQrImageUrl ? (
+                            <a
+                              className="kiosk-logo-qr"
+                              href={kioskShareUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              aria-label="Open the current kiosk display URL"
+                            >
+                              <img src={kioskQrImageUrl} alt="QR code for the current kiosk display URL" />
+                            </a>
+                          ) : logoSrc ? (
                             <img src={logoSrc} alt={selectedPool?.team_name ?? 'Football Pool'} />
                           ) : (
                             <div className="pool-board-logo-fallback">{selectedPool?.team_name ?? 'Football Pool'}</div>
@@ -2966,15 +3163,21 @@ export function LandingPage() {
 
                               <div className="board-quarter-scoreline">
                                 <div className="board-quarter-score-item">
-                                  {awayTeamLogo ? (
-                                    <img src={awayTeamLogo} alt={awayTeamLabel} className="quarter-team-logo" />
-                                  ) : null}
+                                  <span className="board-quarter-score-team-icon">
+                                    {summary.status === 'active' && activeTeamSide === 'away' ? <span className="team-live-indicator-dot" aria-hidden="true" /> : null}
+                                    {awayTeamLogo ? (
+                                      <img src={awayTeamLogo} alt={awayTeamLabel} className="quarter-team-logo" />
+                                    ) : null}
+                                  </span>
                                   <span>{summary.awayScore ?? '—'}</span>
                                 </div>
                                 <div className="board-quarter-score-item">
-                                  {homeTeamLogo ? (
-                                    <img src={homeTeamLogo} alt={homeTeamLabel} className="quarter-team-logo" />
-                                  ) : null}
+                                  <span className="board-quarter-score-team-icon">
+                                    {summary.status === 'active' && activeTeamSide === 'home' ? <span className="team-live-indicator-dot" aria-hidden="true" /> : null}
+                                    {homeTeamLogo ? (
+                                      <img src={homeTeamLogo} alt={homeTeamLabel} className="quarter-team-logo" />
+                                    ) : null}
+                                  </span>
                                   <span>{summary.homeScore ?? '—'}</span>
                                 </div>
                               </div>

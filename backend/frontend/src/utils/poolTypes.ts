@@ -31,7 +31,7 @@ const poolTypeDefinitions: Record<PoolTypeCode, PoolTypeDefinition> = {
     code: 'single_game',
     label: 'Single Game',
     requiresPreferredTeam: true,
-    supportsScheduleImport: false,
+    supportsScheduleImport: true,
     supportsDateWindow: true,
     supportsStructureTemplates: false,
     defaultWinnerLoserMode: false,

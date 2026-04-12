@@ -376,14 +376,12 @@ const buildSportAwareScoresFromCompetition = (
     }
 
     const shouldPopulateFinalInning =
-      primaryFinal != null &&
-      opponentFinal != null &&
-      (state === 'completed' || (state === 'in_progress' && (liveInning ?? 0) >= 9));
+      state === 'completed' || (state === 'in_progress' && (liveInning ?? 0) >= 9);
 
     if (shouldPopulateFinalInning) {
       setQuarterScoresOnInput(scores, 9, {
-        primaryScore: primaryFinal,
-        opponentScore: opponentFinal
+        primaryScore: primaryFinal ?? primaryCumulative[8] ?? null,
+        opponentScore: opponentFinal ?? opponentCumulative[8] ?? null
       });
     }
 
@@ -521,6 +519,16 @@ const scoresEqual = (left: QuarterScoresInput, right: QuarterScoresInput): boole
   left.q9PrimaryScore === right.q9PrimaryScore &&
   left.q9OpponentScore === right.q9OpponentScore
 );
+
+const normalizeClockForStorage = (value: string | null | undefined): string | null => {
+  const normalized = String(value ?? '').trim();
+  if (!normalized) {
+    return null;
+  }
+
+  // football_pool.game.time_remaining_in_quarter is varchar(16)
+  return normalized.slice(0, 16);
+};
 
 const buildScoresByQuarterJson = (scores: QuarterScoresInput): QuarterScoreMap => ({
   '1': { home: scores.q1PrimaryScore, away: scores.q1OpponentScore },
@@ -823,6 +831,14 @@ const buildEspnUpdateFromCompetition = (
 
   const liveQuarter = toNullableScore(competition.status?.period) ?? target.currentQuarter ?? null;
   const scores = buildSportAwareScoresFromCompetition(target, primaryCompetitor, opponentCompetitor, state, liveQuarter);
+  const detailParts = [
+    competition.status?.displayClock,
+    competition.status?.type?.shortDetail,
+    competition.status?.type?.detail
+  ]
+    .map((value) => String(value ?? '').trim())
+    .filter(Boolean)
+  const combinedDetail = detailParts.length > 0 ? Array.from(new Set(detailParts)).join(' • ') : null
 
   return {
     gameId,
@@ -830,12 +846,7 @@ const buildEspnUpdateFromCompetition = (
     scores,
     state,
     currentQuarter: liveQuarter ?? inferCurrentQuarter(scores, target.currentQuarter),
-    timeRemainingInQuarter:
-      competition.status?.displayClock ??
-      competition.status?.type?.shortDetail ??
-      competition.status?.type?.detail ??
-      target.timeRemainingInQuarter ??
-      null,
+    timeRemainingInQuarter: combinedDetail ?? target.timeRemainingInQuarter ?? null,
     espnEventId: eventIdentifiers?.eventId ?? target.espnEventId ?? null,
     espnEventUid: eventIdentifiers?.eventUid ?? target.espnEventUid ?? null,
     detectedAt: new Date().toISOString()
@@ -998,7 +1009,9 @@ const applyGameIngestionUpdateWithClient = async (
   const existingScores = extractScoresFromDbValue(existing.scores_by_quarter, existing.final_score_home, existing.final_score_away);
   const nextState = normalizeGameState(update.state || inferGameStateFromScores(update.scores, existing.league_code));
   const nextQuarter = nextState === 'scheduled' ? null : inferCurrentQuarter(update.scores, update.currentQuarter, existing.league_code);
-  const nextClock = nextState === 'completed' ? '0:00' : nextState === 'scheduled' ? null : update.timeRemainingInQuarter ?? null;
+  const nextClock = normalizeClockForStorage(
+    nextState === 'completed' ? '0:00' : nextState === 'scheduled' ? null : update.timeRemainingInQuarter ?? null
+  );
   const hasActiveScores = activeSegments.some((quarter) => {
     const quarterScores = getQuarterScoresFromInput(update.scores, quarter);
     return quarterScores.primaryScore != null || quarterScores.opponentScore != null;

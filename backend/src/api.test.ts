@@ -2228,6 +2228,220 @@ describe('Football Pool API', () => {
       }
     })
 
+    it('should import exactly one ESPN matchup for an MLB single-game pool date window', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+        const url = String(input)
+
+        if (url.includes('/teams/1/schedule?season=2026&seasontype=2')) {
+          return new Response(
+            JSON.stringify({
+              events: [
+                {
+                  id: '401710001',
+                  uid: 's:10~l:442~e:401710001',
+                  date: '2026-04-10T18:20:00Z',
+                  competitions: [
+                    {
+                      id: '401710001',
+                      date: '2026-04-10T18:20:00Z',
+                      competitors: [
+                        {
+                          team: {
+                            id: '1',
+                            uid: 's:10~l:442~t:1',
+                            displayName: 'Chicago Cubs',
+                            shortDisplayName: 'Cubs',
+                            abbreviation: 'CHC',
+                            slug: 'chicago-cubs'
+                          }
+                        },
+                        {
+                          team: {
+                            id: '2',
+                            uid: 's:10~l:442~t:2',
+                            displayName: 'St. Louis Cardinals',
+                            shortDisplayName: 'Cardinals',
+                            abbreviation: 'STL',
+                            slug: 'st-louis-cardinals'
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  id: '401710002',
+                  uid: 's:10~l:442~e:401710002',
+                  date: '2026-04-12T18:20:00Z',
+                  competitions: [
+                    {
+                      id: '401710002',
+                      date: '2026-04-12T18:20:00Z',
+                      competitors: [
+                        {
+                          team: {
+                            id: '1',
+                            uid: 's:10~l:442~t:1',
+                            displayName: 'Chicago Cubs',
+                            shortDisplayName: 'Cubs',
+                            abbreviation: 'CHC',
+                            slug: 'chicago-cubs'
+                          }
+                        },
+                        {
+                          team: {
+                            id: '3',
+                            uid: 's:10~l:442~t:3',
+                            displayName: 'Milwaukee Brewers',
+                            shortDisplayName: 'Brewers',
+                            abbreviation: 'MIL',
+                            slug: 'milwaukee-brewers'
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  id: '401710003',
+                  uid: 's:10~l:442~e:401710003',
+                  date: '2026-04-14T18:20:00Z',
+                  competitions: [
+                    {
+                      id: '401710003',
+                      date: '2026-04-14T18:20:00Z',
+                      competitors: [
+                        {
+                          team: {
+                            id: '1',
+                            uid: 's:10~l:442~t:1',
+                            displayName: 'Chicago Cubs',
+                            shortDisplayName: 'Cubs',
+                            abbreviation: 'CHC',
+                            slug: 'chicago-cubs'
+                          }
+                        },
+                        {
+                          team: {
+                            id: '4',
+                            uid: 's:10~l:442~t:4',
+                            displayName: 'Pittsburgh Pirates',
+                            shortDisplayName: 'Pirates',
+                            abbreviation: 'PIT',
+                            slug: 'pittsburgh-pirates'
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }),
+            {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' }
+            }
+          )
+        }
+
+        if (url.includes('/sports/baseball/mlb/teams')) {
+          return new Response(
+            JSON.stringify({
+              sports: [
+                {
+                  leagues: [
+                    {
+                      teams: [
+                        {
+                          team: {
+                            id: '1',
+                            uid: 's:10~l:442~t:1',
+                            displayName: 'Chicago Cubs',
+                            shortDisplayName: 'Cubs',
+                            abbreviation: 'CHC',
+                            slug: 'chicago-cubs',
+                            color: '0E3386',
+                            logos: [{ href: 'https://example.com/cubs.png' }]
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }),
+            {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' }
+            }
+          )
+        }
+
+        return new Response('Not found', { status: 404 })
+      })
+
+      try {
+        const teamResponse = await request(app)
+          .post('/api/setup/teams')
+          .set(organizerHeaders)
+          .send({ teamName: `MLB Single Import Team ${Date.now()}` })
+
+        expect(teamResponse.status).toBe(201)
+
+        const poolResponse = await request(app)
+          .post('/api/setup/pools')
+          .set(organizerHeaders)
+          .send({
+            poolName: `MLB Single Import Pool ${Date.now()}`,
+            teamId: teamResponse.body.id,
+            season: 2026,
+            poolType: 'single_game',
+            leagueCode: 'MLB',
+            primaryTeam: 'Chicago Cubs',
+            startDate: '2026-04-12',
+            endDate: '2026-04-12',
+            squareCost: 20,
+            q1Payout: 100,
+            q2Payout: 0,
+            q3Payout: 0,
+            q4Payout: 0
+          })
+
+        expect(poolResponse.status).toBe(201)
+        const importedPoolId = Number(poolResponse.body.id)
+
+        const importResponse = await request(app)
+          .post(`/api/games/import/pool/${importedPoolId}`)
+          .set(organizerHeaders)
+
+        expect(importResponse.status).toBe(200)
+
+        const importedGamesResult = await db.query<{
+          row_numbers: unknown;
+          column_numbers: unknown;
+          game_date: string;
+        }>(
+          `SELECT pg.row_numbers,
+                  pg.column_numbers,
+                  g.game_date::text AS game_date
+           FROM football_pool.pool_game pg
+           JOIN football_pool.game g ON g.id = pg.game_id
+           WHERE pg.pool_id = $1
+           ORDER BY pg.game_id`,
+          [importedPoolId]
+        )
+
+        expect(importedGamesResult.rows.length).toBe(1)
+        expect(Array.isArray(importedGamesResult.rows[0]?.row_numbers)).toBe(true)
+        expect(Array.isArray(importedGamesResult.rows[0]?.column_numbers)).toBe(true)
+        expect((importedGamesResult.rows[0]?.row_numbers as unknown[]).length).toBe(10)
+        expect((importedGamesResult.rows[0]?.column_numbers as unknown[]).length).toBe(10)
+        expect(importedGamesResult.rows[0]?.game_date).toBe('2026-04-12')
+      } finally {
+        fetchSpy.mockRestore()
+      }
+    })
+
     it('should list games for a pool', async () => {
       const response = await request(app)
         .get(`/api/games?poolId=${poolId}`)
