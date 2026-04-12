@@ -1712,6 +1712,21 @@ button:disabled {
     border-bottom: 1px solid #888;
   }
 
+  .pool-board.is-display-only .board-axis-left {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    border-right: 1px solid #888;
+    border-bottom: 0;
+    border-top-right-radius: 10px;
+    border-bottom-right-radius: 10px;
+    padding: 0.6rem 0;
+  }
+
+  .pool-board.is-display-only .board-axis-left .axis-team-logo {
+    order: -1;
+    transform: rotate(90deg);
+  }
+
   .axis-team-logo {
     width: 16px;
     height: 16px;
