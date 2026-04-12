@@ -227,6 +227,7 @@ const DEFAULT_DISPLAY_REFRESH_SECONDS = Math.max(
   Number.parseInt((import.meta.env.VITE_DISPLAY_REFRESH_SECONDS ?? '30').toString(), 10) || 30
 )
 const DEFAULT_DISPLAY_TIME_ZONE = (import.meta.env.VITE_DISPLAY_TIME_ZONE ?? '').toString().trim()
+const MOBILE_KIOSK_MAX_WIDTH = 900
 const DEFAULT_DISPLAY_AD_SETTINGS: DisplayAdSettings = {
   adsEnabled: false,
   frequencySeconds: 180,
@@ -970,6 +971,13 @@ export function LandingPage() {
     return resolveDisplayTimeZone(searchParams.get('tz') ?? DEFAULT_DISPLAY_TIME_ZONE)
   })
   const displayOnlyMode = Boolean(displayToken)
+  const [isMobileKioskView, setIsMobileKioskView] = useState<boolean>(() => {
+    if (typeof window === 'undefined') {
+      return false
+    }
+
+    return window.matchMedia(`(max-width: ${MOBILE_KIOSK_MAX_WIDTH}px)`).matches
+  })
   const [showLogin, setShowLogin] = useState(false)
   const [activePage, setActivePage] = useState<'Squares' | 'Metrics' | 'Marketing' | 'Notifications' | 'Players' | 'Teams' | 'Pools' | 'Schedules' | 'Users'>('Squares')
   const [busy, setBusy] = useState<string | null>(null)
@@ -1063,6 +1071,30 @@ export function LandingPage() {
       setAuthUser(null)
     }
   }
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return
+    }
+
+    if (!displayOnlyMode) {
+      setIsMobileKioskView(false)
+      return
+    }
+
+    const mediaQuery = window.matchMedia(`(max-width: ${MOBILE_KIOSK_MAX_WIDTH}px)`)
+    const updateFromMediaQuery = () => setIsMobileKioskView(mediaQuery.matches)
+
+    updateFromMediaQuery()
+
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', updateFromMediaQuery)
+      return () => mediaQuery.removeEventListener('change', updateFromMediaQuery)
+    }
+
+    mediaQuery.addListener(updateFromMediaQuery)
+    return () => mediaQuery.removeListener(updateFromMediaQuery)
+  }, [displayOnlyMode])
 
   const loadBoard = async (poolId: number, gameId: number | null): Promise<void> => {
     const query = gameId ? `?gameId=${gameId}` : ''
@@ -2273,7 +2305,7 @@ export function LandingPage() {
   }, [board, latestScoredQuarter, primaryTeamIsAway, scoreSegments, selectedGame, selectedPool, simulationStatus])
 
   const hasCompactQuarterSummaryLayout = quarterSummaries.length >= 6
-  const showQuarterSummaries = quarterSummaries.length > 0
+  const showQuarterSummaries = !isMobileKioskView && quarterSummaries.length > 0
   const displayAdScale = Math.min(0.95, Math.max(0.5, displayAdSettings.shrinkPercent / 100))
   const displayAdSidebarCount = Math.min(4, Math.max(0, Number(displayAdSettings.sidebarCount ?? 1) || 0))
   const displayAdBannerCount = Math.min(6, Math.max(0, Number(displayAdSettings.bannerCount ?? 1) || 0))
@@ -2290,7 +2322,7 @@ export function LandingPage() {
     (displayAdSidebarCount > 0 && sidebarDisplayAdItems.length > 0) ||
     (displayAdBannerCount > 0 && (bannerDisplayAdItems.length > 0 || Boolean(displayAdFallbackMessage)))
   )
-  const showDisplayAds = displayOnlyMode && displayAdSettings.adsEnabled && hasDisplayAdContent && displayAdVisible
+  const showDisplayAds = !isMobileKioskView && displayOnlyMode && displayAdSettings.adsEnabled && hasDisplayAdContent && displayAdVisible
   const visibleSidebarAds = useMemo(
     () => (showDisplayAds ? buildDisplayAdWindow(sidebarDisplayAdItems, displayAdSidebarCount, activeDisplayAdIndex) : []),
     [activeDisplayAdIndex, displayAdSidebarCount, showDisplayAds, sidebarDisplayAdItems]
@@ -2333,14 +2365,14 @@ export function LandingPage() {
   const showDisplaySidebar = showDisplayAds && visibleSidebarAds.length > 0 && displayAdSidebarCount > 0
   const showDisplayBanner = showDisplayAds && visibleBannerAds.length > 0 && displayAdBannerCount > 0
   const featuredDisplaySummary = useMemo(() => {
-    if (!displayOnlyMode || quarterSummaries.length === 0) {
+    if (!displayOnlyMode || isMobileKioskView || quarterSummaries.length === 0) {
       return null
     }
 
     return quarterSummaries.find((summary) => summary.status === 'active')
       ?? [...quarterSummaries].reverse().find((summary) => summary.status === 'completed')
       ?? quarterSummaries[0]
-  }, [displayOnlyMode, quarterSummaries])
+  }, [displayOnlyMode, isMobileKioskView, quarterSummaries])
 
   const currentGameIndex = useMemo(
     () => games.findIndex((game) => game.id === selectedGameId),
@@ -2856,7 +2888,7 @@ export function LandingPage() {
                     <div className={`board-display-shell ${showQuarterSummaries ? 'with-quarter-summaries' : ''}`}>
                       <div className="board-display-main">
                         <div className="board-display-logo">
-                          {displayOnlyMode && kioskShareUrl && kioskQrImageUrl ? (
+                          {displayOnlyMode && !isMobileKioskView && kioskShareUrl && kioskQrImageUrl ? (
                             <a
                               className="kiosk-logo-qr"
                               href={kioskShareUrl}
@@ -2995,7 +3027,7 @@ export function LandingPage() {
                     <div className={`board-display-shell ${showQuarterSummaries ? 'with-quarter-summaries' : ''}`}>
                       <div className="board-display-main">
                         <div className="board-display-logo">
-                          {displayOnlyMode && kioskShareUrl && kioskQrImageUrl ? (
+                          {displayOnlyMode && !isMobileKioskView && kioskShareUrl && kioskQrImageUrl ? (
                             <a
                               className="kiosk-logo-qr"
                               href={kioskShareUrl}
