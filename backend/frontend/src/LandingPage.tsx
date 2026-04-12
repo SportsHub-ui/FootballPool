@@ -414,6 +414,38 @@ const resolveSideFromTeamHint = (
   return null
 }
 
+const resolveBaseballBattingSide = (detail: string): ActiveTeamSide => {
+  if (!detail) {
+    return null
+  }
+
+  const normalizedDetail = detail.toLowerCase()
+  const halfInningMatches: Array<{ side: ActiveTeamSide; index: number }> = []
+
+  for (const match of normalizedDetail.matchAll(/\b(top|bot(?:tom)?)\s*(?:of\s*)?\d{1,2}(?:st|nd|rd|th)?\b/g)) {
+    const token = (match[1] ?? '').toLowerCase()
+    halfInningMatches.push({
+      side: token.startsWith('top') ? 'away' : 'home',
+      index: match.index ?? -1
+    })
+  }
+
+  for (const match of normalizedDetail.matchAll(/\b([tb])\s*\d{1,2}\b/g)) {
+    const token = (match[1] ?? '').toLowerCase()
+    halfInningMatches.push({
+      side: token === 't' ? 'away' : 'home',
+      index: match.index ?? -1
+    })
+  }
+
+  if (halfInningMatches.length === 0) {
+    return null
+  }
+
+  halfInningMatches.sort((a, b) => a.index - b.index)
+  return halfInningMatches[halfInningMatches.length - 1]?.side ?? null
+}
+
 const resolveActiveTeamSide = (
   game: LandingGame | null | undefined,
   options: { sportCode?: string | null; leagueCode?: string | null }
@@ -425,15 +457,11 @@ const resolveActiveTeamSide = (
   const sportCode = String(options.sportCode ?? '').trim().toUpperCase()
   const leagueCode = String(options.leagueCode ?? '').trim().toUpperCase()
   const detail = String(game.time_remaining_in_quarter ?? '').trim()
-  const normalizedDetail = detail.toLowerCase()
 
   if (sportCode === 'BASEBALL' || leagueCode === 'MLB') {
-    if (/\btop\b/.test(normalizedDetail)) {
-      return 'away'
-    }
-
-    if (/\bbot(?:tom)?\b/.test(normalizedDetail)) {
-      return 'home'
+    const battingSide = resolveBaseballBattingSide(detail)
+    if (battingSide) {
+      return battingSide
     }
   }
 
