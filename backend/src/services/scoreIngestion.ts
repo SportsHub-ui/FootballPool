@@ -823,6 +823,14 @@ const buildEspnUpdateFromCompetition = (
 
   const liveQuarter = toNullableScore(competition.status?.period) ?? target.currentQuarter ?? null;
   const scores = buildSportAwareScoresFromCompetition(target, primaryCompetitor, opponentCompetitor, state, liveQuarter);
+  const detailParts = [
+    competition.status?.displayClock,
+    competition.status?.type?.shortDetail,
+    competition.status?.type?.detail
+  ]
+    .map((value) => String(value ?? '').trim())
+    .filter(Boolean)
+  const combinedDetail = detailParts.length > 0 ? Array.from(new Set(detailParts)).join(' • ') : null
 
   return {
     gameId,
@@ -830,12 +838,7 @@ const buildEspnUpdateFromCompetition = (
     scores,
     state,
     currentQuarter: liveQuarter ?? inferCurrentQuarter(scores, target.currentQuarter),
-    timeRemainingInQuarter:
-      competition.status?.displayClock ??
-      competition.status?.type?.shortDetail ??
-      competition.status?.type?.detail ??
-      target.timeRemainingInQuarter ??
-      null,
+    timeRemainingInQuarter: combinedDetail ?? target.timeRemainingInQuarter ?? null,
     espnEventId: eventIdentifiers?.eventId ?? target.espnEventId ?? null,
     espnEventUid: eventIdentifiers?.eventUid ?? target.espnEventUid ?? null,
     detectedAt: new Date().toISOString()

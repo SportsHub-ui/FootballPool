@@ -1173,9 +1173,34 @@ button:disabled {
 .board-quarter-score-item {
   min-width: 0;
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr);
+  grid-template-columns: 36px minmax(0, 1fr);
   align-items: center;
   gap: 0.35rem;
+}
+
+.board-quarter-score-team-icon {
+  position: relative;
+  width: 36px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.board-quarter-score-team-icon .team-live-indicator-dot {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.team-live-indicator-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: #1db954;
+  box-shadow: 0 0 0 1px rgba(7, 15, 28, 0.28), 0 0 0 2px rgba(255, 255, 255, 0.42);
+  flex: 0 0 auto;
 }
 
 .quarter-team-logo {
@@ -1244,8 +1269,13 @@ button:disabled {
 }
 
 .board-quarter-summary-panel.is-compact .board-quarter-score-item {
-  grid-template-columns: 18px minmax(0, 1fr);
+  grid-template-columns: 28px minmax(0, 1fr);
   gap: 0.22rem;
+}
+
+.board-quarter-summary-panel.is-compact .board-quarter-score-team-icon {
+  width: 28px;
+  height: 16px;
 }
 
 .board-quarter-summary-panel.is-compact .quarter-team-logo {
