@@ -1015,7 +1015,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
     }
 
     if (!selectedPoolTypeDefinition.supportsScheduleImport) {
-      setError('Fill Schedule currently supports season pools only. Add playoff or tournament matchups manually on the Schedules page.')
+      setError('Fill Schedule currently supports Season and Single Game pools only. Add playoff or tournament matchups manually on the Schedules page.')
       return
     }
 
@@ -1331,7 +1331,7 @@ export function LandingPoolMaintenance({ pools, token, authHeaders, apiBase, onR
                 className="secondary"
                 onClick={onFillSchedule}
                 disabled={saving || simulationBusy !== null || !selectedPoolId || !selectedPoolTypeDefinition.supportsScheduleImport}
-                title={selectedPoolTypeDefinition.supportsScheduleImport ? 'Import the regular-season schedule for the preferred team.' : 'Fill Schedule is currently available for season pools only.'}
+                title={selectedPoolTypeDefinition.supportsScheduleImport ? 'Import matchup data from ESPN for the preferred team.' : 'Fill Schedule is currently available for Season and Single Game pools only.'}
               >
                 {saving ? 'Filling...' : 'Fill Schedule'}
               </button>
