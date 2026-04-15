@@ -10,6 +10,7 @@ import { LandingScheduleMaintenance } from './LandingScheduleMaintenance'
 import { LandingTeamMaintenance } from './LandingTeamMaintenance'
 import { LandingUserMaintenance } from './LandingUserMaintenance'
 import { PayoutSummaryPanel, type BoardPayoutSummary } from './PayoutSummaryPanel'
+import { resolveActiveDisplayQuarter } from './utils/gameStatus'
 import { getScoreSegmentDefinitions, getSimulationStepDescriptor } from './utils/poolLeagues'
 
 type LandingPool = {
@@ -2291,7 +2292,10 @@ export function LandingPage() {
       activeSimulationQuarter == null && !isCompletedGame(selectedGame)
         ? Number(selectedGame.current_quarter ?? 0) || null
         : null
-    const activeDisplayQuarter = activeSimulationQuarter ?? activeLiveQuarter ?? latestScoredQuarter
+    const activeDisplayQuarter = resolveActiveDisplayQuarter(
+      selectedGame,
+      activeSimulationQuarter ?? activeLiveQuarter ?? latestScoredQuarter
+    )
 
     if (latestScoredQuarter == null && activeDisplayQuarter == null) {
       return []
