@@ -1301,6 +1301,69 @@ button:disabled {
   overflow: hidden;
 }
 
+.pool-board.is-display-only .board-quarter-summary-panel {
+  gap: clamp(0.2rem, 0.35vw, 0.45rem);
+}
+
+.pool-board.is-display-only .board-quarter-card {
+  padding: clamp(0.34rem, 0.42vw, 0.55rem);
+  gap: clamp(0.16rem, 0.25vw, 0.34rem);
+  overflow: hidden;
+}
+
+.pool-board.is-display-only .board-quarter-card-header {
+  font-size: clamp(0.58rem, 0.2vw + 0.5rem, 0.74rem);
+  line-height: 1.05;
+}
+
+.pool-board.is-display-only .board-quarter-card-header > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pool-board.is-display-only .board-quarter-card-square {
+  font-size: clamp(0.5rem, 0.15vw + 0.44rem, 0.64rem);
+}
+
+.pool-board.is-display-only .board-quarter-scoreline {
+  gap: clamp(0.15rem, 0.22vw, 0.3rem);
+}
+
+.pool-board.is-display-only .board-quarter-score-item {
+  grid-template-columns: clamp(20px, 1.75vw, 32px) minmax(0, 1fr);
+  gap: clamp(0.14rem, 0.2vw, 0.28rem);
+}
+
+.pool-board.is-display-only .board-quarter-score-team-icon {
+  width: clamp(20px, 1.75vw, 32px);
+  height: clamp(14px, 1.2vw, 20px);
+}
+
+.pool-board.is-display-only .quarter-team-logo {
+  width: clamp(14px, 1.2vw, 20px);
+  height: clamp(14px, 1.2vw, 20px);
+}
+
+.pool-board.is-display-only .team-live-indicator-dot {
+  width: clamp(0.32rem, 0.38vw, 0.48rem);
+  height: clamp(0.32rem, 0.38vw, 0.48rem);
+}
+
+.pool-board.is-display-only .board-quarter-scoreline span {
+  font-size: clamp(0.74rem, 0.32vw + 0.6rem, 0.94rem);
+  line-height: 1;
+}
+
+.pool-board.is-display-only .board-quarter-winner strong {
+  font-size: clamp(0.58rem, 0.2vw + 0.5rem, 0.74rem);
+  line-height: 1.05;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .pool-board.is-display-only.is-ad-mode .board-quarter-card {
   grid-template-rows: auto minmax(0, 1fr);
 }
@@ -2384,7 +2447,7 @@ button:disabled {
   --board-header-height: 54px;
   --board-brand-width: clamp(120px, 10vw, 150px);
   --board-brand-height: clamp(100px, 9vh, 135px);
-  --board-quarter-summary-width: clamp(180px, 18vw, 260px);
+  --board-quarter-summary-width: clamp(170px, 16vw, 240px);
   --board-row-label-width: 60px;
   min-height: 0;
   height: 100%;
@@ -2531,6 +2594,43 @@ button:disabled {
 
 .pool-board.is-display-only .board-row {
   min-height: 0;
+}
+
+@media (max-width: 1500px), (max-height: 900px) {
+  .pool-board.is-display-only {
+    --board-quarter-summary-width: clamp(132px, 12vw, 180px);
+    --board-row-label-width: 54px;
+  }
+
+  .pool-board.is-display-only .pool-board-header {
+    font-size: clamp(0.95rem, 0.72rem + 0.45vw, 1.15rem);
+  }
+
+  .pool-board.is-display-only .board-axis-title {
+    font-size: clamp(0.88rem, 0.68rem + 0.35vw, 1.05rem);
+  }
+
+  .pool-board.is-display-only .digit-cell {
+    font-size: clamp(0.72rem, 0.6rem + 0.25vw, 0.86rem);
+    padding: 0.28rem 0;
+  }
+
+  .pool-board.is-display-only .board-quarter-card {
+    padding: 0.3rem;
+  }
+
+  .pool-board.is-display-only .board-quarter-card-square {
+    font-size: 0.48rem;
+  }
+
+  .pool-board.is-display-only .board-quarter-scoreline span {
+    font-size: 0.72rem;
+  }
+
+  .pool-board.is-display-only .board-quarter-winner strong {
+    font-size: 0.58rem;
+    -webkit-line-clamp: 1;
+  }
 }
 
 .display-scoreboard-spotlight {
@@ -2865,7 +2965,7 @@ button:disabled {
 }
 
 .pool-board.is-display-only .board-quarter-card {
-  padding: 0.85rem;
+  padding: clamp(0.4rem, 0.55vw, 0.75rem);
   border-width: 2px;
   box-shadow: 0 10px 22px rgba(8, 15, 28, 0.28);
 }
@@ -2882,32 +2982,72 @@ button:disabled {
 }
 
 .pool-board.is-display-only .board-quarter-card-header {
-  font-size: 0.86rem;
-  letter-spacing: 0.08em;
+  font-size: clamp(0.62rem, 0.28vw + 0.52rem, 0.82rem);
+  letter-spacing: 0.06em;
 }
 
 .pool-board.is-display-only .board-quarter-scoreline span {
-  font-size: clamp(1.3rem, 1.9vw, 1.7rem);
+  font-size: clamp(0.82rem, 0.5vw + 0.62rem, 1.2rem);
   font-weight: 900;
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
 }
 
 .pool-board.is-display-only .board-quarter-winner-label {
-  font-size: 0.7rem;
-  letter-spacing: 0.08em;
+  font-size: clamp(0.54rem, 0.18vw + 0.46rem, 0.68rem);
+  letter-spacing: 0.06em;
 }
 
 .pool-board.is-display-only .board-quarter-winner strong {
-  font-size: clamp(1rem, 1.15vw, 1.2rem);
+  font-size: clamp(0.64rem, 0.34vw + 0.52rem, 0.96rem);
+  line-height: 1.05;
 }
 
 .pool-board.is-display-only.is-ad-mode .board-quarter-winner strong {
-  font-size: clamp(1.02rem, 1.25vw, 1.28rem);
-  line-height: 1.1;
+  font-size: clamp(0.72rem, 0.4vw + 0.56rem, 1.02rem);
+  line-height: 1.08;
   display: -webkit-box;
+  line-clamp: 3;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+@media (max-width: 1500px), (max-height: 900px) {
+  .pool-board.is-display-only {
+    --board-quarter-summary-width: clamp(128px, 11vw, 176px);
+    --board-row-label-width: 54px;
+  }
+
+  .pool-board.is-display-only .pool-board-header {
+    font-size: clamp(0.95rem, 0.72rem + 0.4vw, 1.12rem);
+  }
+
+  .pool-board.is-display-only .board-axis-title {
+    font-size: clamp(0.84rem, 0.66rem + 0.3vw, 1rem);
+  }
+
+  .pool-board.is-display-only .digit-cell {
+    font-size: clamp(0.7rem, 0.58rem + 0.22vw, 0.84rem);
+    padding: 0.24rem 0;
+  }
+
+  .pool-board.is-display-only .board-quarter-card {
+    padding: 0.28rem;
+  }
+
+  .pool-board.is-display-only .board-quarter-card-header {
+    font-size: 0.58rem;
+  }
+
+  .pool-board.is-display-only .board-quarter-scoreline span {
+    font-size: 0.72rem;
+  }
+
+  .pool-board.is-display-only .board-quarter-winner strong {
+    font-size: 0.58rem;
+    line-clamp: 1;
+    -webkit-line-clamp: 1;
+  }
 }
 
 .pool-board.is-display-only .landing-square-card.win-3,
