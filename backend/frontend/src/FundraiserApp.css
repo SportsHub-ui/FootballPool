@@ -1,0 +1,370 @@
+/* FundraiserApp Styles */
+
+.fundraiser-app {
+  max-width: 1200px;
+  margin: 0 auto;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+  background-color: #f5f5f5;
+  min-height: 100vh;
+}
+
+.app-header {
+  background-color: #1a1a2e;
+  color: white;
+  padding: 1.5rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 1.8rem;
+}
+
+.nav-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.nav-buttons button {
+  background-color: transparent;
+  color: white;
+  border: 2px solid white;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: all 0.2s;
+}
+
+.nav-buttons button:hover {
+  background-color: white;
+  color: #1a1a2e;
+}
+
+.nav-buttons button.active {
+  background-color: #00d4ff;
+  border-color: #00d4ff;
+  color: #1a1a2e;
+}
+
+.app-main {
+  padding: 2rem;
+}
+
+.error-message {
+  background-color: #fee;
+  border: 1px solid #fcc;
+  color: #a00;
+  padding: 1rem;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.error-message button {
+  background-color: transparent;
+  color: #a00;
+  border: none;
+  cursor: pointer;
+  font-weight: bold;
+  padding: 0.25rem 0.5rem;
+}
+
+.loading {
+  text-align: center;
+  padding: 2rem;
+  font-size: 1.1rem;
+  color: #666;
+}
+
+/* Games View */
+
+.games-view {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+}
+
+.games-section h2 {
+  margin-top: 0;
+  margin-bottom: 1rem;
+  color: #1a1a2e;
+  border-bottom: 2px solid #00d4ff;
+  padding-bottom: 0.5rem;
+}
+
+.no-games {
+  color: #999;
+  padding: 1rem;
+  text-align: center;
+  background-color: white;
+  border-radius: 4px;
+}
+
+.games-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.game-card {
+  background-color: white;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 1.5rem;
+  cursor: pointer;
+  transition: all 0.3s;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.game-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transform: translateY(-2px);
+}
+
+.game-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.game-header h3 {
+  margin: 0;
+  color: #1a1a2e;
+  font-size: 1.2rem;
+}
+
+.status {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.status.upcoming {
+  background-color: #e3f2fd;
+  color: #1565c0;
+}
+
+.status.complete {
+  background-color: #e8f5e9;
+  color: #2e7d32;
+}
+
+.game-date {
+  color: #666;
+  font-size: 0.95rem;
+}
+
+/* Board View */
+
+.board-view {
+  background-color: white;
+  padding: 2rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.board-view h2 {
+  margin-top: 0;
+  margin-bottom: 2rem;
+  color: #1a1a2e;
+  text-align: center;
+}
+
+.board-grid {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 0.5rem;
+  margin-bottom: 2rem;
+  background-color: #f9f9f9;
+  padding: 1rem;
+  border-radius: 4px;
+}
+
+.board-square {
+  aspect-ratio: 1;
+  background-color: white;
+  border: 2px solid #ddd;
+  border-radius: 4px;
+  padding: 0.5rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 0.85rem;
+  min-height: 60px;
+}
+
+.board-square .square-number {
+  font-weight: bold;
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.board-square .player-name {
+  font-size: 0.75rem;
+  color: #333;
+  margin-top: 0.25rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.board-square.available:hover {
+  border-color: #00d4ff;
+  background-color: #e0f7ff;
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.3);
+}
+
+.board-square.assigned {
+  background-color: #e8f5e9;
+  border-color: #4caf50;
+}
+
+.board-square.selected {
+  border-color: #ff9800;
+  background-color: #fff3e0;
+  box-shadow: 0 0 8px rgba(255, 152, 0, 0.5);
+}
+
+/* Join Form */
+
+.join-form {
+  background-color: #f0f7ff;
+  border: 2px solid #00d4ff;
+  border-radius: 8px;
+  padding: 2rem;
+  max-width: 400px;
+  margin: 2rem auto;
+}
+
+.join-form h3 {
+  margin-top: 0;
+  color: #1a1a2e;
+  text-align: center;
+}
+
+.join-form input {
+  width: 100%;
+  padding: 0.75rem;
+  font-size: 1rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  margin-bottom: 1rem;
+  box-sizing: border-box;
+}
+
+.join-form input:focus {
+  outline: none;
+  border-color: #00d4ff;
+  box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.1);
+}
+
+.join-form button {
+  width: 100%;
+  padding: 0.75rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-bottom: 0.5rem;
+}
+
+.join-form button:not(.secondary) {
+  background-color: #00d4ff;
+  color: white;
+}
+
+.join-form button:not(.secondary):hover:not(:disabled) {
+  background-color: #00a3cc;
+  box-shadow: 0 2px 8px rgba(0, 212, 255, 0.3);
+}
+
+.join-form button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.join-form button.secondary {
+  background-color: white;
+  color: #666;
+  border: 1px solid #ddd;
+}
+
+.join-form button.secondary:hover {
+  background-color: #f5f5f5;
+}
+
+/* Responsive Design */
+
+@media (max-width: 768px) {
+  .games-view {
+    grid-template-columns: 1fr;
+  }
+
+  .app-header {
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .app-header h1 {
+    font-size: 1.4rem;
+  }
+
+  .board-grid {
+    grid-template-columns: repeat(5, 1fr);
+  }
+
+  .board-square {
+    min-height: 50px;
+    font-size: 0.75rem;
+  }
+
+  .join-form {
+    margin: 1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .app-header h1 {
+    font-size: 1.2rem;
+  }
+
+  .app-main {
+    padding: 1rem;
+  }
+
+  .board-view {
+    padding: 1rem;
+  }
+
+  .board-grid {
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.25rem;
+    padding: 0.5rem;
+  }
+
+  .board-square {
+    min-height: 40px;
+    font-size: 0.65rem;
+  }
+
+  .join-form {
+    padding: 1rem;
+    margin: 1rem 0;
+  }
+}

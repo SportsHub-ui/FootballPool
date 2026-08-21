@@ -1,0 +1,290 @@
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║                   🚀 FUNDRAISER SETUP & RUN GUIDE 🚀                         ║
+║                                                                               ║
+║                    Quick Start for Windows/Mac/Linux                          ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+📦 WHAT YOU HAVE
+================
+✓ Complete backend API (10+ endpoints)
+✓ React frontend UI (mobile responsive)
+✓ Database schema (6 optimized tables)
+✓ All documentation (40+ KB)
+✓ Setup automation scripts
+✓ Test scenarios and examples
+
+
+📋 PREREQUISITES (Install Once)
+================================
+
+Before you start, you need:
+
+  1. Node.js 16+
+     └─ Download: https://nodejs.org/
+     └─ After install, verify: node --version
+     └─ Time: ~5 minutes
+
+  2. PostgreSQL 12+
+     └─ Download: https://www.postgresql.org/download/windows/
+     └─ After install, verify: PostgreSQL running as service
+     └─ Time: ~10 minutes
+
+  3. Git (Optional but recommended)
+     └─ Download: https://git-scm.com/
+
+
+⚙️ SETUP STEPS (One Time Only)
+================================
+
+STEP 1: Create PostgreSQL Database
+──────────────────────────────────
+
+Open Command Prompt and run:
+  
+  psql -U postgres -h localhost
+
+When prompted, enter your PostgreSQL password.
+
+Then copy-paste this SQL (see SETUP_WINDOWS.md for full script):
+
+  CREATE DATABASE football_pool;
+  \c football_pool
+  CREATE SCHEMA IF NOT EXISTS football_pool;
+  CREATE TABLE IF NOT EXISTS football_pool.team ( ... );
+  ... (all table creation SQL)
+
+Time: ~2 minutes
+
+
+STEP 2: Create Configuration File
+───────────────────────────────────
+
+Create file: backend\.env
+
+Content:
+  APP_ENV=development
+  NODE_ENV=development
+  PORT=3000
+  DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@localhost:5432/football_pool
+  FUNDRAISER_ADMIN_KEY=dev-secret-key-change-in-production
+  JWT_SECRET=dev-secret-key
+  JWT_EXPIRES_IN=7d
+  FRONTEND_URL=http://localhost:5173
+  LOG_LEVEL=info
+
+Replace YOUR_PASSWORD with your PostgreSQL password!
+
+Time: ~1 minute
+
+
+STEP 3: Install Dependencies
+───────────────────────────────
+
+Open Command Prompt in project directory:
+
+  cd backend
+  npm install
+  cd frontend
+  npm install
+  cd ..\..
+
+Time: ~3-5 minutes
+
+
+✅ SETUP COMPLETE! (Proceed to next section only once per session)
+
+
+🎬 START THE APPLICATION (Every Time You Want to Use It)
+==========================================================
+
+Open TWO separate Command Prompt windows:
+
+┌─────────────────────────────────────────────────────────┐
+│ WINDOW 1 - BACKEND SERVER                               │
+├─────────────────────────────────────────────────────────┤
+│                                                           │
+│  cd C:\Users\jeffp\Documents\GitHub\FootballPool\       │
+│     worktrees\copilot-worktree-2026-05-18T01-04-53     │
+│  cd backend                                              │
+│  npm run dev                                              │
+│                                                           │
+│  Wait for message: "listening on port 3000"              │
+│                                                           │
+│  Keep this window open! ← IMPORTANT                      │
+│                                                           │
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│ WINDOW 2 - FRONTEND APPLICATION                          │
+├─────────────────────────────────────────────────────────┤
+│                                                           │
+│  cd C:\Users\jeffp\Documents\GitHub\FootballPool\       │
+│     worktrees\copilot-worktree-2026-05-18T01-04-53     │
+│  cd backend\frontend                                     │
+│  npm run dev                                              │
+│                                                           │
+│  Wait for message: "http://localhost:5173/"              │
+│                                                           │
+│  Keep this window open! ← IMPORTANT                      │
+│                                                           │
+└─────────────────────────────────────────────────────────┘
+
+
+🌐 ACCESS THE APPLICATION
+===========================
+
+Open your web browser and go to:
+
+  ➜ http://localhost:5173
+
+You should see:
+  ✓ Page title: "Football Pool Fundraiser"
+  ✓ "Games" and "Board" tabs at top
+  ✓ List of NFL and March Madness games
+  ✓ Click on a game to see the board
+
+
+🧪 TEST IT WORKS
+=================
+
+1. Click on a game
+2. Click on a square (number 1-100)
+3. Enter your name
+4. Click "Join Pool"
+5. Square should show your name
+
+✅ If this works, the application is running correctly!
+
+
+🛑 TO STOP THE APPLICATION
+=============================
+
+In each Command Prompt window, press: Ctrl+C
+
+Or just close the windows.
+
+
+📚 DOCUMENTATION LOCATION
+==========================
+
+All docs are in the project directory:
+
+  START_HERE.md
+    └─ Overview (this file)
+  
+  QUICKSTART.md
+    └─ Simple 3-step guide
+  
+  SETUP_WINDOWS.md
+    └─ Detailed Windows setup with troubleshooting
+  
+  FUNDRAISER_README.md
+    └─ Complete API documentation
+  
+  FUNDRAISER_TESTING.md
+    └─ Test scenarios and examples
+  
+  FUNDRAISER_PROJECT_INDEX.md
+    └─ Complete navigation guide
+
+
+🎯 WHAT'S INCLUDED
+====================
+
+Backend API Endpoints:
+  ✓ GET    /api/games                      - List games
+  ✓ GET    /api/games/:id/squares          - Get board
+  ✓ POST   /api/games/:id/add-player       - Join square
+  ✓ POST   /api/games/:id/remove-player    - Leave square
+  ✓ POST   /api/admin/games/create         - Create game (admin)
+  ✓ POST   /api/admin/games/:id/update-scores  - Update scores (admin)
+  ✓ GET    /api/admin/pool/stats           - View stats (admin)
+
+Frontend Features:
+  ✓ Games list (NFL + March Madness)
+  ✓ Interactive 10x10 board
+  ✓ Join/leave squares
+  ✓ Mobile responsive
+  ✓ Professional UI
+
+
+⚡ COMMON ISSUES
+=================
+
+Q: "PostgreSQL connection failed"
+A: Make sure PostgreSQL is running. Check Windows Services.
+   Verify password in backend\.env matches your PostgreSQL password.
+
+Q: "Port 3000/5173 already in use"
+A: Another app is using that port. Stop it or change PORT in .env
+
+Q: "npm install failed"
+A: Delete node_modules folder and package-lock.json
+   Run npm install again
+
+Q: "Command not found: node"
+A: Node.js not installed or not in PATH
+   Restart Command Prompt after installing Node.js
+
+Q: I see "listening on port 3000" but frontend won't load
+A: The backend is running but frontend might not have started.
+   Wait a moment and try again. Make sure you're on http://localhost:5173
+
+
+📖 NEXT STEPS
+===============
+
+After getting it running:
+
+1. Read QUICKSTART.md for a refresher
+2. Test creating a game (see FUNDRAISER_README.md)
+3. Follow test scenarios (FUNDRAISER_TESTING.md)
+4. Review API documentation (FUNDRAISER_README.md)
+5. Check deployment guide (DEPLOYMENT_CHECKLIST.md)
+
+
+✅ CHECKLIST
+=============
+
+Before running for the first time:
+  ☐ Node.js 16+ installed
+  ☐ PostgreSQL installed and running
+  ☐ Database "football_pool" created
+  ☐ Tables created (run SQL script)
+  ☐ backend\.env file created
+  ☐ npm install completed in backend
+  ☐ npm install completed in backend\frontend
+
+When starting the application:
+  ☐ Open 2 Command Prompt windows
+  ☐ Start backend (npm run dev) in window 1
+  ☐ Start frontend (npm run dev) in window 2
+  ☐ Wait for both to be ready
+  ☐ Open http://localhost:5173 in browser
+
+
+🎉 YOU'RE READY!
+=================
+
+Your FundRaiser application is complete and ready to run.
+
+Start with the 3-step guide above and you'll have it
+running in about 10 minutes.
+
+Any questions? All answers are in the documentation!
+
+
+═══════════════════════════════════════════════════════════════════════════════
+
+                           🏈 HAPPY FUNDRAISING! 🏈
+
+         Project Location: C:\Users\jeffp\Documents\GitHub\FootballPool\
+                     worktrees\copilot-worktree-2026-05-18T01-04-53
+
+                        Read START_HERE.md for overview
+                      Read QUICKSTART.md for quick guide
+                   Read SETUP_WINDOWS.md for detailed setup
+
+═══════════════════════════════════════════════════════════════════════════════
