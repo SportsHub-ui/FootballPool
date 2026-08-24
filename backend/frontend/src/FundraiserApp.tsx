@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './FundraiserApp.css';
+import FundraiserAdminPanel from './FundraiserAdminPanel';
 
 interface Game {
   id: number;
@@ -27,6 +28,7 @@ export default function FundraiserApp() {
   const [squares, setSquares] = useState<Square[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [adminOpen, setAdminOpen] = useState(false);
 
   // Fetch games on mount
   useEffect(() => {
@@ -86,6 +88,7 @@ export default function FundraiserApp() {
               Board
             </button>
           )}
+          <button onClick={() => setAdminOpen(true)} title="Admin">Admin</button>
         </div>
       </header>
 
@@ -107,6 +110,17 @@ export default function FundraiserApp() {
           <BoardView game={selectedGame} squares={squares} onRefresh={() => fetchSquares(selectedGame.id)} />
         )}
       </main>
+
+      {adminOpen && (
+        <FundraiserAdminPanel
+          onCreated={() => {
+            fetchGames();
+            setAdminOpen(false);
+          }}
+          onClose={() => setAdminOpen(false)}
+        />
+      )}
+
     </div>
   );
 }
